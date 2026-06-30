@@ -104,22 +104,40 @@ repository-local `aeg` launcher or `python -m src.cli`.
 ./aeg verify
 ```
 
-## Phase 6A Local Checkout Quickstart
+## Packaging / Install Path v0 Quickstart
 
-Aegis is not a packaged install yet. During Phase 6A, use the local checkout
-launcher from the Aegis repository. If this repository is checked out at
-`/mnt/d/Codex/Aegis`, run Aegis from a separate target repository with either
-of these forms:
+This is not a PyPI/public release yet. Install path v0 is for a local checkout
+or a GitHub-accessible repository checkout. Provider/network access is not
+required for the core loop, and OpenAI/Claude/Gemini accounts are not required.
+
+Local editable install:
 
 ```bash
-PATH="/mnt/d/Codex/Aegis:$PATH" aeg --help
+cd /path/to/Aegis
+python -m pip install -e .
+aeg --help
+```
+
+Optional local `pipx` install, if `pipx` is available:
+
+```bash
+cd /path/to/Aegis
+pipx install .
+aeg --help
+```
+
+Fallback local checkout launcher:
+
+```bash
+PATH="/path/to/Aegis:$PATH" aeg --help
 ```
 
 ```bash
-/mnt/d/Codex/Aegis/aeg --help
+/path/to/Aegis/aeg --help
 ```
 
-The minimum target-repository demo is:
+Use a disposable sandbox repo for unaided run testing. The minimum
+target-repository demo is:
 
 ```bash
 aeg doctor
@@ -138,12 +156,6 @@ Expected contrast:
 - `aeg verify` -> `REPLAY_CONSISTENT`
 - `.aeg/` remains folder-local and git-ignored
 - provider/network access is not required
-
-External-user limitation:
-
-- This is not a packaged install yet.
-- Phase 6B external unaided run should not start until command discovery
-  instructions are explicit.
 
 ## Core Non-Dependencies
 
