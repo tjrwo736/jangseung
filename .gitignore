@@ -1,0 +1,17 @@
+.aeg/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+*.log
+tmp/
+temp/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
