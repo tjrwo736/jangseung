@@ -12,6 +12,18 @@ from src.contracts import (
     CLEAN_CORE,
     COMPLETION_CONTRACT_V0,
     CONTRACT_FIRST_NOOP,
+    CITIZEN_ONE_EVIDENCE_FIELDS,
+    CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED,
+    CITIZEN_ONE_HOLD_REASON_NONE,
+    CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    CITIZEN_ONE_MODE_OFF,
+    CITIZEN_ONE_MODE_PROPOSE,
+    CITIZEN_ONE_NOT_REQUESTED,
+    CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
+    CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
+    CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
+    CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
+    CITIZEN_ONE_STATUSES,
     EVIDENCE_BINDING_V1,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
@@ -25,6 +37,7 @@ from src.contracts import (
     SAFE_DEFAULT,
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     STATUSES,
+    REPORTED_ONLY,
 )
 
 
@@ -66,6 +79,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "executor_created_mutation",
     "protected_path_mutation_detected",
     "mutation_boundary_status",
+    *CITIZEN_ONE_EVIDENCE_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -153,6 +167,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "executor_created_mutation", list, errors)
     _expect(packet, "protected_path_mutation_detected", bool, errors)
     _expect(packet, "mutation_boundary_status", str, errors)
+    _validate_citizen_one_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
         errors.append(f"unsupported aeg_version: {packet.get('aeg_version')}")
@@ -212,6 +227,69 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
             errors.append("INVALID_EVIDENCE: untrusted snapshot boundary cannot be CLEAN_CORE")
 
     return errors
+
+
+def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "citizen_one_requested",
+        "citizen_one_output_present",
+        "citizen_one_reported_only",
+        "provider_network_used",
+        "provider_secret_observed",
+    )
+    string_fields = (
+        "citizen_one_mode",
+        "citizen_one_status",
+        "citizen_one_provider_status",
+        "citizen_one_output_trust_boundary",
+        "citizen_one_hold_reason",
+        "provider_config_source",
+        "model_output_hash_candidate",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("citizen_one_status") not in CITIZEN_ONE_STATUSES:
+        errors.append(f"invalid citizen_one_status: {packet.get('citizen_one_status')}")
+    if packet.get("citizen_one_output_present") is not False:
+        errors.append("INVALID_EVIDENCE: Citizen One output must be absent in provider-not-configured skeleton")
+    if packet.get("citizen_one_output_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: Citizen One output trust boundary must be reported_only")
+    if packet.get("citizen_one_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: Citizen One output must be marked reported_only")
+    if packet.get("provider_network_used") is not False:
+        errors.append("INVALID_EVIDENCE: Citizen One provider_network_used must be false")
+    if packet.get("provider_secret_observed") is not False:
+        errors.append("INVALID_EVIDENCE: Citizen One provider_secret_observed must be false")
+    if packet.get("model_output_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: model_output_hash_candidate must be empty when no model output exists")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("citizen_one_mode") != CITIZEN_ONE_MODE_PROPOSE:
+            errors.append("INVALID_EVIDENCE: requested Citizen One mode must be propose")
+        if packet.get("citizen_one_status") != CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested Citizen One must hold when provider is not configured")
+        if packet.get("citizen_one_provider_status") != CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested Citizen One provider status must be not_configured")
+        if packet.get("citizen_one_hold_reason") != CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested Citizen One hold reason must be provider_not_configured")
+        if packet.get("provider_config_source") != CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: requested Citizen One provider_config_source must be none")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("citizen_one_mode") != CITIZEN_ONE_MODE_OFF:
+            errors.append("INVALID_EVIDENCE: non-requested Citizen One mode must be off")
+        if packet.get("citizen_one_status") != CITIZEN_ONE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested Citizen One status must be CITIZEN_ONE_NOT_REQUESTED")
+        if packet.get("citizen_one_provider_status") != CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested Citizen One provider status must be not_requested")
+        if packet.get("citizen_one_hold_reason") != CITIZEN_ONE_HOLD_REASON_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested Citizen One hold reason must be empty")
+        if packet.get("provider_config_source") != CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested Citizen One provider_config_source must be not_requested")
+    else:
+        errors.append("INVALID_EVIDENCE: citizen_one_requested must be boolean")
 
 
 def validate_evidence_binding_v0(packet: dict[str, Any]) -> list[str]:
