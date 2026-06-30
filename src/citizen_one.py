@@ -15,11 +15,17 @@ from src.contracts import (
     CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
+    CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
+    PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROPOSAL_KIND_NOT_GENERATED,
+    PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROPOSAL_SOURCE_NONE,
+    PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
     REPORTED_ONLY,
 )
 
 
-def build_citizen_one_evidence(requested: bool) -> dict[str, Any]:
+def build_citizen_one_evidence(requested: bool, proposal_requires_user_gate: bool = False) -> dict[str, Any]:
     if not requested:
         return {
             "citizen_one_requested": False,
@@ -49,4 +55,19 @@ def build_citizen_one_evidence(requested: bool) -> dict[str, Any]:
         "provider_network_used": False,
         "provider_secret_observed": False,
         "model_output_hash_candidate": "",
+        "proposal_id": "",
+        "proposal_version": CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
+        "proposal_kind": PROPOSAL_KIND_NOT_GENERATED,
+        "proposal_summary": "",
+        "proposal_steps": [],
+        "proposal_risk_notes": [],
+        "proposal_requires_user_gate": proposal_requires_user_gate,
+        "proposal_trust_boundary": REPORTED_ONLY,
+        "proposal_reported_only": True,
+        "proposal_source": PROPOSAL_SOURCE_NONE,
+        "proposal_output_hash_candidate": "",
+        "proposal_redaction_status": PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        "proposal_status": PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
+        "proposal_present": False,
+        "proposal_hold_reason": PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
     }
