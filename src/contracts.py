@@ -61,3 +61,12 @@ RUNS_DIR = "runs"
 
 CONTRACT_FIRST_NOOP = "contract_first_noop"
 COMPLETION_CONTRACT_V0 = "completion_contract_v0"
+
+RUN_MANIFEST_V1 = "run_manifest_v1"
+EVIDENCE_BINDING_V1 = "evidence_binding_v1"
+BOUND = "BOUND"
+BINDING_STATUSES = (
+    BOUND,
+    INVALID_EVIDENCE,
+    NOT_CHECKED,
+)
