@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.contracts import CLEAN_CORE, HIGH, LOW, MEDIUM, NEEDS_USER_GATE, NOT_CHECKED
+from src.contracts import CLEAN_CORE, HIGH, LOW, MEDIUM, NEEDS_USER_GATE, NOT_CHECKED, NOT_CHECKED_IMPACT_RISKS
 from src.classify import Classification
 
 
@@ -23,12 +23,21 @@ class LawResult:
 def apply_law(classification: Classification) -> LawResult:
     risk = classification.risk_level
     if risk == HIGH:
+        reasons = [
+            "law.high.requires_user_gate",
+            "law.high.irreversible_action_blocked",
+            "law.stop_precedence.provider_cannot_override",
+        ]
+        if classification.impact_risk in NOT_CHECKED_IMPACT_RISKS:
+            reasons.append("law.impact.not_checked_is_not_pass")
+        return LawResult(status=NEEDS_USER_GATE, status_reasons=reasons)
+    if classification.impact_risk in NOT_CHECKED_IMPACT_RISKS:
         return LawResult(
-            status=NEEDS_USER_GATE,
+            status=NOT_CHECKED,
             status_reasons=[
-                "law.high.requires_user_gate",
-                "law.high.irreversible_action_blocked",
-                "law.stop_precedence.provider_cannot_override",
+                "law.impact.changed_files_source_not_checked",
+                "law.not_checked_is_not_pass",
+                "law.safe_default_hold_current_state",
             ],
         )
     if risk == MEDIUM:
