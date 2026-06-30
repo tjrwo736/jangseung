@@ -105,6 +105,10 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         ("changed_files_source", evidence["changed_files_source"]),
         ("risk_level", evidence["risk_level"]),
         ("status", evidence["status"]),
+        ("binding_status", evidence.get("binding_status", "")),
+        ("binding_version", evidence.get("binding_version", "")),
+        ("manifest_hash", _short_hash(evidence.get("bound_manifest_hash", ""))),
+        ("binding_reason_count", str(len(evidence.get("binding_reasons", [])))),
         ("evidence", paths["evidence_path"]),
     ]
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
@@ -132,6 +136,10 @@ def _cmd_verify(cwd: Path) -> int:
                 ("changed_files_source", result.evidence.get("changed_files_source", "")),
                 ("risk_level", result.evidence.get("risk_level", "")),
                 ("status", result.evidence.get("status", "")),
+                ("binding_status", result.evidence.get("binding_status", "")),
+                ("binding_version", result.evidence.get("binding_version", "")),
+                ("manifest_hash", _short_hash(result.evidence.get("bound_manifest_hash", ""))),
+                ("binding_reason_count", str(len(result.evidence.get("binding_reasons", [])))),
             ]
         )
     rows.extend(("check", check) for check in result.checks)
@@ -158,6 +166,12 @@ def _user_gate_rows(card: object) -> list[tuple[str, str]]:
         ("user_gate.protected_paths_touched", protected_paths_value),
         ("user_gate.safe_default", str(card.get("safe_default", ""))),
     ]
+
+
+def _short_hash(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value[:12]
 
 
 def _print_card(title: str, status: str, rows: list[tuple[str, str]], reasons: list[str] | None = None) -> None:
