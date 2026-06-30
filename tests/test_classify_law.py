@@ -11,6 +11,7 @@ from src.contracts import (
     NO_CHANGED_FILES,
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
+    SAFE_DEFAULT,
 )
 from src.law import apply_law
 
@@ -42,6 +43,20 @@ class ClassifyLawTests(unittest.TestCase):
         law = apply_law(classify_task("merge to main and deploy"))
         self.assertEqual(law.status, NEEDS_USER_GATE)
         self.assertIn("law.high.requires_user_gate", law.status_reasons)
+        self.assertIsNotNone(law.user_gate_reason_card)
+        card = law.user_gate_reason_card or {}
+        self.assertEqual(card["risk_level"], HIGH)
+        self.assertEqual(card["status"], NEEDS_USER_GATE)
+        self.assertEqual(card["safe_default"], SAFE_DEFAULT)
+        self.assertTrue(card["irreversible_action_blocked"])
+        self.assertIn("explicit user gate", card["why_gate_is_required"])
+
+    def test_medium_law_is_not_clean_core_by_default(self):
+        law = apply_law(classify_task("do the thing"))
+        self.assertEqual(law.status, NOT_CHECKED)
+        self.assertNotEqual(law.status, CLEAN_CORE)
+        self.assertIn("law.medium.evidence_binding_required", law.status_reasons)
+        self.assertIn("law.medium.completion_contract_placeholder_required", law.status_reasons)
 
     def test_docs_only_change_has_low_impact(self):
         result = classify_task(
