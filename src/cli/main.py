@@ -8,6 +8,7 @@ from pathlib import Path
 
 from src.agents import execute_contract
 from src.classify import classify_task
+from src.contracts import NOT_CHECKED_SOURCE
 from src.evidence import build_evidence_packet, verify_latest
 from src.law import apply_law
 from src.state import git
@@ -74,8 +75,13 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
     try:
         repo = git.repo_root(cwd)
         require_initialized(repo)
-        current_changes = git.changed_files(repo)
-        classification = classify_task(task_text, changed_files=current_changes, no_mutation=True)
+        changed_files, changed_files_source = _runtime_changed_files(repo)
+        classification = classify_task(
+            task_text,
+            changed_files=changed_files,
+            changed_files_source=changed_files_source,
+            no_mutation=False,
+        )
         law_result = apply_law(classification)
         executor_result = execute_contract(task_text, classification, law_result)
         evidence = build_evidence_packet(repo, task_text, classification, law_result, executor_result)
@@ -96,12 +102,20 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         ("run_id", evidence["run_id"]),
         ("intent_risk", evidence["intent_risk"]),
         ("impact_risk", evidence["impact_risk"]),
+        ("changed_files_source", evidence["changed_files_source"]),
         ("risk_level", evidence["risk_level"]),
         ("status", evidence["status"]),
         ("evidence", paths["evidence_path"]),
     ]
     _print_card("Aegis run", evidence["status"], rows, evidence["classification_reasons"] + evidence["status_reasons"])
     return 0
+
+
+def _runtime_changed_files(repo: Path) -> tuple[list[str], str]:
+    try:
+        return git.changed_files_with_source(repo)
+    except git.GitError:
+        return [], NOT_CHECKED_SOURCE
 
 
 def _cmd_verify(cwd: Path) -> int:
@@ -114,6 +128,7 @@ def _cmd_verify(cwd: Path) -> int:
                 ("run_id", result.evidence.get("run_id", "")),
                 ("intent_risk", result.evidence.get("intent_risk", "")),
                 ("impact_risk", result.evidence.get("impact_risk", "")),
+                ("changed_files_source", result.evidence.get("changed_files_source", "")),
                 ("risk_level", result.evidence.get("risk_level", "")),
                 ("status", result.evidence.get("status", "")),
             ]

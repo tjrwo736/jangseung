@@ -27,7 +27,6 @@ def build_evidence_packet(
     run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = git.repo_root(cwd)
-    changed = git.changed_files(repo)
     return {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -37,11 +36,17 @@ def build_evidence_packet(
         "head_sha": git.head_sha(repo),
         "tree_sha": git.tree_sha(repo),
         "is_dirty": git.is_dirty(repo),
-        "changed_files": changed,
+        "changed_files": list(classification.changed_files),
+        "changed_files_source": classification.changed_files_source,
         "intent_risk": classification.intent_risk,
         "impact_risk": classification.impact_risk,
         "risk_level": classification.risk_level,
         "classification_reasons": list(classification.classification_reasons),
+        "impact_reasons": list(classification.impact_reasons),
+        "protected_paths_touched": list(classification.protected_paths_touched),
+        "risk_escalation_applied": classification.risk_escalation_applied,
+        "final_risk_rule": classification.final_risk_rule,
+        "impact_checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "checks": {
             "executor": executor_result,
             "runtime_state_root": STATE_DIR,

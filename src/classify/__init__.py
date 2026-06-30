@@ -1,5 +1,12 @@
-"""Deterministic Day-1 task classification."""
+"""Deterministic task and impact classification."""
 
-from src.classify.rules import Classification, classify_task
+from src.classify.rules import Classification, ImpactClassification, classify_impact, classify_task, is_protected_path, merge_risks
 
-__all__ = ["Classification", "classify_task"]
+__all__ = [
+    "Classification",
+    "ImpactClassification",
+    "classify_impact",
+    "classify_task",
+    "is_protected_path",
+    "merge_risks",
+]
