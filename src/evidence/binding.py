@@ -10,6 +10,7 @@ from typing import Any
 
 from src.contracts import (
     BOUND,
+    CITIZEN_ONE_EVIDENCE_FIELDS,
     EVIDENCE_BINDING_V1,
     RUN_MANIFEST_V1,
     RUNS_DIR,
@@ -65,6 +66,7 @@ def build_run_manifest(
     computed_mutation_delta = _list_field(evidence, "computed_mutation_delta")
     pre_existing_dirty_tree = _list_field(evidence, "pre_existing_dirty_tree")
     executor_created_mutation = _list_field(evidence, "executor_created_mutation")
+    citizen_one_fields = citizen_one_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -99,6 +101,8 @@ def build_run_manifest(
         "risk_level": evidence.get("risk_level", ""),
         "status": evidence.get("status", ""),
         "safe_default": evidence.get("safe_default", SAFE_DEFAULT),
+        **citizen_one_fields,
+        "citizen_one_evidence_hash": sha256_json(citizen_one_fields),
     }
     return manifest
 
@@ -139,3 +143,7 @@ def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:
     if isinstance(value, list):
         return list(value)
     return []
+
+
+def citizen_one_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in CITIZEN_ONE_EVIDENCE_FIELDS}
