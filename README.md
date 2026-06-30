@@ -6,10 +6,11 @@ runtime shape, but it is not a copy of Agent Civitas, DRA, or Hermes.
 Aegis is a small civilization of coding agents governed by risk-proportionate law.
 Zero required external accounts.
 
-Day-0 status: repository bootstrap only. This repository currently contains
-identity, architecture, and minimum project structure for Day-1 bootstrap work.
-It does not implement the CLI, providers, model execution, service
-integrations, release automation, or autonomous loops.
+Day-1 v0.1 status: contract-first runtime spine. This repository implements a
+minimal local CLI, deterministic risk classification, law gates, no-op
+execution, evidence packets, folder-local state, and deterministic verification.
+It does not implement providers, model execution, service integrations, release
+automation, deploy automation, or autonomous loops.
 
 ## Identity
 
@@ -45,9 +46,9 @@ Executor reports are evidence, not truth by themselves. Completion claims must
 be checked against workspace state, Git state, changed files, validation
 results, secret scans, and forbidden-scope scans.
 
-## Day-0 Scope
+## Bootstrap Scope
 
-This bootstrap establishes:
+Repo Bootstrap v0 established:
 
 - canonical README
 - architecture v0 documentation
@@ -55,23 +56,25 @@ This bootstrap establishes:
 - ignore rules for local state, secrets, caches, logs, and editor files
 - Day-1 bootstrap boundary
 
-This bootstrap intentionally does not establish:
+Day-1 v0.1 establishes:
 
 - `aeg init`
 - `aeg doctor`
-- `aeg run`
+- `aeg run "<task>"`
 - `aeg verify`
-- provider implementations
-- model-backed execution
-- autonomous loops
-- external service automation
-- release, publish, or deploy flows
+- deterministic LOW / MEDIUM / HIGH intent classification
+- deterministic law gates
+- contract-first no-op execution
+- evidence packets and ledger records under `.aeg/`
 
-Bootstrap v0 keeps a single entry point, future folder-local state under
-`.aeg/`, and zero required external accounts. Aegis does not copy Agent
-Civitas, DRA, or Hermes; it discards Slack, WSL, and multi-process plumbing as
-core requirements. OpenAI, Claude, and Gemini providers are not core
-dependencies.
+This bootstrap intentionally does not establish provider implementations,
+model-backed execution, autonomous loops, external service automation, or
+release, publish, or deploy flows.
+
+Day-1 v0.1 keeps a single entry point, folder-local state under `.aeg/`, and
+zero required external accounts. Aegis does not copy Agent Civitas, DRA, or
+Hermes; it discards Slack, WSL, and multi-process plumbing as core
+requirements. OpenAI, Claude, and Gemini providers are not core dependencies.
 
 ## Project Layout
 
@@ -91,8 +94,15 @@ Aegis/
   .gitignore
 ```
 
-Empty directories are kept with `.gitkeep` placeholders until Day-1 work adds
-real modules and tests.
+The Day-1 modules are standard-library Python and can be exercised through the
+repository-local `aeg` launcher or `python -m src.cli`.
+
+```bash
+./aeg init
+./aeg doctor
+./aeg run "fix typo in README"
+./aeg verify
+```
 
 ## Core Non-Dependencies
 
@@ -111,18 +121,17 @@ Aegis core must not require the following as runtime dependencies:
 - Gemini runtime
 
 Provider integrations may be considered only in later, explicitly scoped work.
-They are not part of Repo Bootstrap v0 and are not core dependencies.
+They are not part of Day-1 v0.1 and are not core dependencies.
 
 ## Local State Boundary
 
-Aegis is expected to use folder-local `.aeg/` state in future work. The `.aeg/`
-directory is local runtime state and must not be committed. This repository
-tracks only the contract documentation until a later scoped task defines the
-state schema and CLI behavior.
+Aegis uses folder-local `.aeg/` state for runtime records. The `.aeg/`
+directory is local runtime state and must not be committed. Day-1 state records
+include `config.json`, `ledger.jsonl`, and per-run `run.json` /
+`evidence.json` files under `.aeg/runs/<run_id>/`.
 
 ## Day-1 Bootstrap Boundary
 
-The next safe work is Day-1 bootstrap planning and implementation inside this
-repository. It should remain small and explicit: define CLI contracts and local
-state contracts before adding execution behavior. The safe default remains
+The next safe work after Day-1 v0.1 is to broaden validation and impact-risk
+taxonomy before any mutating executor is introduced. The safe default remains
 `hold_current_state`.
