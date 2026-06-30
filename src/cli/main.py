@@ -79,6 +79,11 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
             task_text,
             changed_files=changed_files,
             changed_files_source=changed_files_source,
+            # The Day-1 executor is no-op and does not mutate files. The CLI still
+            # scans the current working tree for pre-existing impact risk.
+            # no_mutation=False means "do not skip impact scanning", not "the
+            # executor mutated files". Future model-backed execution must split
+            # pre_run_changed_files and post_run_changed_files.
             no_mutation=False,
         )
         law_result = apply_law(classification)
@@ -124,8 +129,11 @@ def _runtime_changed_files(repo: Path) -> tuple[list[str], str]:
 
 def _cmd_verify(cwd: Path) -> int:
     result = verify_latest(cwd)
-    status = "PASS" if result.ok else "FAIL"
-    rows = []
+    status = "REPLAY_CONSISTENT" if result.ok else "REPLAY_FAILED"
+    rows = [
+        ("verification_scope", "deterministic_replay_and_binding_validation"),
+        ("independent_oracle", "false"),
+    ]
     if result.evidence:
         rows.extend(
             [
@@ -134,7 +142,7 @@ def _cmd_verify(cwd: Path) -> int:
                 ("impact_risk", result.evidence.get("impact_risk", "")),
                 ("changed_files_source", result.evidence.get("changed_files_source", "")),
                 ("risk_level", result.evidence.get("risk_level", "")),
-                ("status", result.evidence.get("status", "")),
+                ("evidence_status_value", result.evidence.get("status", "")),
                 ("binding_status", result.evidence.get("binding_status", "")),
                 ("binding_version", result.evidence.get("binding_version", "")),
                 ("manifest_hash", _short_hash(result.evidence.get("bound_manifest_hash", ""))),

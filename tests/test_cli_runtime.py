@@ -204,7 +204,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_completion_contract_v0(evidence), [])
         verify = self._aeg("verify")
-        self.assertIn("status: PASS", verify.stdout)
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
         self.assertIn("binding_status: BOUND", verify.stdout)
         self.assertIn("evidence binding v1 valid", verify.stdout)
         self.assertIn("LOW risk remained CLEAN_CORE", verify.stdout)
@@ -263,7 +264,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(completion_contract["network_calls"])
 
         verify = self._aeg("verify")
-        self.assertIn("status: PASS", verify.stdout)
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: NOT_CHECKED", verify.stdout)
         self.assertIn("evidence binding v0 valid", verify.stdout)
         self.assertIn("evidence binding v1 valid", verify.stdout)
         self.assertIn("completion contract v0 valid", verify.stdout)
@@ -296,7 +298,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(card["protected_paths_touched"], [])
         self.assertEqual(card["safe_default"], SAFE_DEFAULT)
         verify = self._aeg("verify")
-        self.assertIn("status: PASS", verify.stdout)
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: NEEDS_USER_GATE", verify.stdout)
         self.assertIn("binding_status: BOUND", verify.stdout)
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
         self.assertIn("HIGH user gate reason card valid", verify.stdout)
@@ -318,7 +321,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
 
         verify = self._aeg("verify")
-        self.assertIn("status: PASS", verify.stdout)
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: NEEDS_USER_GATE", verify.stdout)
         self.assertIn("impact_risk replay matched: HIGH", verify.stdout)
         self.assertIn("risk_escalation_applied replay matched: True", verify.stdout)
 
@@ -339,7 +343,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NOT_CHECKED)
 
         verify = self._aeg("verify")
-        self.assertIn("status: PASS", verify.stdout)
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: NOT_CHECKED", verify.stdout)
         self.assertIn("impact_risk replay matched: MEDIUM", verify.stdout)
         self.assertIn("law status replay matched: NOT_CHECKED", verify.stdout)
 
@@ -395,7 +400,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
-        self.assertIn("status: FAIL", verify.stdout)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: changed_files mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: bound_changed_files_hash mismatch", verify.stdout)
 
@@ -408,7 +413,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
-        self.assertIn("status: FAIL", verify.stdout)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: risk_level mismatch: evidence=MEDIUM replay=LOW", verify.stdout)
 
     def test_verify_rejects_missing_completion_contract(self):
@@ -420,7 +425,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
-        self.assertIn("status: FAIL", verify.stdout)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: missing completion_contract_v0", verify.stdout)
         self.assertNotIn("status: CLEAN_CORE", verify.stdout)
 
@@ -433,7 +438,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
-        self.assertIn("status: FAIL", verify.stdout)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: law status mismatch: evidence=CLEAN_CORE replay=NOT_CHECKED", verify.stdout)
 
     def test_verify_rejects_missing_changed_files_source_as_not_checked(self):
@@ -445,6 +450,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("missing required field: changed_files_source", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: missing evidence binding field: changed_files_source", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: manifest changed_files_source mismatch", verify.stdout)
@@ -457,6 +463,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: manifest missing", verify.stdout)
 
     def test_verify_rejects_manifest_hash_mismatch(self):
@@ -468,6 +475,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: manifest hash mismatch", verify.stdout)
 
     def test_verify_rejects_run_id_mismatch(self):
@@ -479,6 +487,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: manifest run_id mismatch", verify.stdout)
 
     def test_verify_rejects_changed_files_mismatch(self):
@@ -490,6 +499,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: changed_files mismatch", verify.stdout)
 
     def test_verify_rejects_changed_files_hash_mismatch(self):
@@ -501,6 +511,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: bound_changed_files_hash mismatch", verify.stdout)
 
     def test_verify_rejects_evidence_path_mismatch(self):
@@ -512,6 +523,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: manifest evidence_path mismatch", verify.stdout)
 
     def test_verify_rejects_run_path_mismatch(self):
@@ -523,6 +535,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: manifest run_path mismatch", verify.stdout)
 
     def test_verify_rejects_missing_binding_fields(self):
@@ -535,6 +548,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: missing evidence binding v1 field: binding_version", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: missing evidence binding v1 field: bound_head_sha", verify.stdout)
 
@@ -547,6 +561,7 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: binding_status must be BOUND for judgment basis", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: CLEAN_CORE requires binding_status BOUND", verify.stdout)
         self.assertNotIn("status: PASS", verify.stdout)
@@ -561,8 +576,21 @@ class CliRuntimeTests(unittest.TestCase):
 
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
         self.assertIn("INVALID_EVIDENCE: reported_only evidence is not judgment basis", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: reported_only cannot be judgment basis", verify.stdout)
+
+    def _assert_verify_consistent(self, verify):
+        self.assertIn("status: REPLAY_CONSISTENT", verify.stdout)
+        self.assertIn("verification_scope: deterministic_replay_and_binding_validation", verify.stdout)
+        self.assertIn("independent_oracle: false", verify.stdout)
+        self.assertNotIn("status: PASS", verify.stdout)
+
+    def _assert_verify_failed(self, verify):
+        self.assertIn("status: REPLAY_FAILED", verify.stdout)
+        self.assertIn("verification_scope: deterministic_replay_and_binding_validation", verify.stdout)
+        self.assertIn("independent_oracle: false", verify.stdout)
+        self.assertNotIn("status: PASS", verify.stdout)
 
     def _aeg(self, *args, check=True):
         env = os.environ.copy()
