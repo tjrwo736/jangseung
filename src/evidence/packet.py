@@ -24,9 +24,11 @@ def build_evidence_packet(
     classification: Classification,
     law_result: LawResult,
     executor_result: dict[str, Any],
+    mutation_boundary: dict[str, Any] | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = git.repo_root(cwd)
+    boundary = mutation_boundary or {}
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -60,6 +62,26 @@ def build_evidence_packet(
         "status_reasons": list(law_result.status_reasons),
         "safe_default": SAFE_DEFAULT,
     }
+    packet.update(
+        {
+            "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
+            "post_run_changed_files": list(boundary.get("post_run_changed_files", [])),
+            "pre_snapshot_source": boundary.get("pre_snapshot_source", ""),
+            "post_snapshot_source": boundary.get("post_snapshot_source", ""),
+            "snapshot_collector": boundary.get("snapshot_collector", ""),
+            "snapshot_trust_boundary": dict(boundary.get("snapshot_trust_boundary", {})),
+            "executor_reported_changed_files": list(boundary.get("executor_reported_changed_files", [])),
+            "executor_reported_changed_files_source": boundary.get("executor_reported_changed_files_source", ""),
+            "executor_reported_mutation_delta": list(boundary.get("executor_reported_mutation_delta", [])),
+            "executor_reported_mutation_delta_source": boundary.get("executor_reported_mutation_delta_source", ""),
+            "computed_mutation_delta": list(boundary.get("computed_mutation_delta", [])),
+            "mutation_delta_source": boundary.get("mutation_delta_source", ""),
+            "pre_existing_dirty_tree": list(boundary.get("pre_existing_dirty_tree", [])),
+            "executor_created_mutation": list(boundary.get("executor_created_mutation", [])),
+            "protected_path_mutation_detected": boundary.get("protected_path_mutation_detected") is True,
+            "mutation_boundary_status": boundary.get("mutation_boundary_status", ""),
+        }
+    )
     if law_result.user_gate_reason_card is not None:
         packet["user_gate_reason_card"] = dict(law_result.user_gate_reason_card)
     return packet
