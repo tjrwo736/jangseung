@@ -1,0 +1,86 @@
+"""Small git helpers used by the local runtime."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+
+class GitError(RuntimeError):
+    """Raised when a git command needed for evidence binding fails."""
+
+
+def git_available() -> bool:
+    return shutil.which("git") is not None
+
+
+def run_git(args: list[str], cwd: str | Path, check: bool = True) -> subprocess.CompletedProcess[str]:
+    command = ["git", *args]
+    completed = subprocess.run(
+        command,
+        cwd=str(cwd),
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if check and completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise GitError(f"{' '.join(command)} failed: {detail}")
+    return completed
+
+
+def repo_root(cwd: str | Path) -> Path:
+    completed = run_git(["rev-parse", "--show-toplevel"], cwd)
+    return Path(completed.stdout.strip()).resolve()
+
+
+def inside_work_tree(cwd: str | Path) -> bool:
+    completed = run_git(["rev-parse", "--is-inside-work-tree"], cwd, check=False)
+    return completed.returncode == 0 and completed.stdout.strip() == "true"
+
+
+def head_sha(repo: str | Path) -> str:
+    return run_git(["rev-parse", "HEAD"], repo).stdout.strip()
+
+
+def tree_sha(repo: str | Path) -> str:
+    return run_git(["rev-parse", "HEAD^{tree}"], repo).stdout.strip()
+
+
+def branch_name(repo: str | Path) -> str:
+    branch = run_git(["branch", "--show-current"], repo).stdout.strip()
+    return branch or "HEAD"
+
+
+def status_porcelain(repo: str | Path) -> list[str]:
+    completed = run_git(["status", "--porcelain=v1"], repo)
+    return [line for line in completed.stdout.splitlines() if line.strip()]
+
+
+def is_dirty(repo: str | Path) -> bool:
+    return bool(status_porcelain(repo))
+
+
+def changed_files(repo: str | Path) -> list[str]:
+    files: list[str] = []
+    for line in status_porcelain(repo):
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path:
+            files.append(path)
+    return sorted(dict.fromkeys(files))
+
+
+def is_ignored(repo: str | Path, path: str) -> bool:
+    completed = run_git(["check-ignore", "-q", path], repo, check=False)
+    return completed.returncode == 0
+
+
+def object_exists(repo: str | Path, object_name: str, object_type: str) -> bool:
+    if not object_name:
+        return False
+    completed = run_git(["cat-file", "-e", f"{object_name}^{{{object_type}}}"], repo, check=False)
+    return completed.returncode == 0

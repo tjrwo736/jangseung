@@ -1,7 +1,7 @@
 # Aegis Architecture v0
 
-This document defines the Day-0 architecture boundary for Aegis. It is a
-bootstrap architecture, not a runtime implementation.
+This document defines the Day-1 v0.1 architecture boundary for Aegis. It is a
+contract-first runtime spine, not a model-backed executor.
 
 ## Purpose
 
@@ -21,22 +21,22 @@ CLI entry point, and folder-local state.
 - Main merge, release, publish, deploy, provider integration, and autonomous
   execution require explicit user-gated scope.
 
-## Initial Module Boundaries
+## Module Boundaries
 
-The Day-0 source layout reserves module areas without implementing behavior:
+The Day-1 source layout keeps the module areas small and explicit:
 
 | Path | Boundary |
 | --- | --- |
-| `src/cli/` | Future single CLI entry point and command contracts. |
+| `src/cli/` | Single CLI entry point and command dispatch for `init`, `doctor`, `run`, and `verify`. |
 | `src/classify/` | CLASSIFY is the heart. This module classifies each task or action as LOW, MEDIUM, or HIGH risk before gates or execution are selected. |
-| `src/law/` | LAW selects gate thickness by risk. This module uses the classified risk level to choose how much review, validation, or user approval is required. |
-| `src/agents/` | AGENTS are in-process citizens. They are future executor abstractions inside the single Aegis process, not separate services in Bootstrap v0. |
-| `src/evidence/` | EVIDENCE writes bound packets. This module will record evidence packets bound to commit, tree, changed files, and status. |
-| `src/state/` | .aeg/ is folder-local state and ledger. This module owns future contracts for folder-local runtime state and ledger records under `.aeg/`. |
-| `tests/` | Future tests for contracts and behavior. |
+| `src/law/` | LAW selects gate thickness by risk and keeps deterministic STOP precedence. |
+| `src/agents/` | AGENTS contains the Day-1 contract-first no-op executor. It does not mutate repository files. |
+| `src/evidence/` | EVIDENCE writes and verifies bound packets tied to repo, branch, commit, tree, changed files, risk, and status. |
+| `src/state/` | `.aeg/` is folder-local state and ledger. This module owns runtime state and ledger records under `.aeg/`. |
+| `tests/` | Contract and behavior tests for classification, law, state, evidence, and verification. |
 
-These directories are placeholders only. Bootstrap v0 does not define Python
-packages, executable commands, provider adapters, or model-backed execution.
+Day-1 v0.1 defines Python packages and executable commands. It does not define
+provider adapters or model-backed execution.
 
 ## Runtime Shape
 
@@ -47,20 +47,26 @@ user intent
   -> single Aegis CLI
   -> CLASSIFY is the heart: classify task/action risk as LOW, MEDIUM, or HIGH
   -> LAW selects gate thickness by risk
-  -> bounded in-process citizen execution
+  -> contract-first no-op execution
   -> EVIDENCE writes bound packets
-  -> validation report
+  -> STATE appends .aeg/ ledger records
+  -> VERIFY replays deterministic classification and law
   -> user-gated decisions where required
 ```
 
-This shape is a design boundary. No autonomous loop or model-backed executor is
-implemented in Repo Bootstrap v0.
+This shape is implemented only as a local no-op contract. No autonomous loop or
+model-backed executor is implemented in Day-1 v0.1.
 
 ## Local State
 
-Future Aegis runtime state should be folder-local under `.aeg/`. That directory
-is local operational state and is ignored by Git. A future scoped task should
-define the state schema before any command writes to it.
+Runtime state is folder-local under `.aeg/`. That directory is local
+operational state and is ignored by Git. Day-1 writes only:
+
+- `.aeg/config.json`
+- `.aeg/ledger.jsonl`
+- `.aeg/runs/<run_id>/run.json`
+- `.aeg/runs/<run_id>/evidence.json`
+
 .aeg/ is folder-local state and ledger: it is the intended home for runtime
 state and ledger records, never a committed artifact.
 
@@ -72,7 +78,7 @@ Expected future state categories may include:
 - validation summaries
 - local runtime cache
 
-Bootstrap v0 creates no `.aeg/` directory and commits no local state.
+Day-1 v0.1 creates `.aeg/` only at runtime. No `.aeg/` content is committed.
 
 ## Evidence and Validation
 
@@ -94,14 +100,10 @@ Bound packets should connect claims to concrete repository facts: commit, tree,
 changed files, and status. Without those bindings, evidence is only narrative
 and cannot carry a gate decision.
 
-## Forbidden Scope in Bootstrap v0
+## Forbidden Scope in Day-1 v0.1
 
-Repo Bootstrap v0 does not implement or connect:
+Day-1 v0.1 does not implement or connect:
 
-- `aeg init`
-- `aeg doctor`
-- `aeg run`
-- `aeg verify`
 - OpenAI, Claude, or Gemini providers
 - OpenAI API calls or any model API calls
 - model-backed executor
@@ -113,9 +115,9 @@ Repo Bootstrap v0 does not implement or connect:
 - release, publish, or deploy flow
 - secret, token, API key, or actual `.env` value handling
 
-## Day-1 Readiness
+## Day-1 Runtime Boundary
 
-Day-1 work can begin from this repository by defining contracts before behavior:
+Day-1 v0.1 defines contracts before mutating behavior:
 
 1. CLI command contract.
 2. Local `.aeg/` state contract.
@@ -123,9 +125,9 @@ Day-1 work can begin from this repository by defining contracts before behavior:
 4. Risk classification contract.
 5. Validation strategy.
 
-v0.1 minimum cut is Citizen One. The first minimum cut should remain an
-executor stub and contract-first spine: enough structure to prove the CLI,
-classification, law, evidence, and state contracts before adding provider-backed
+v0.1 minimum cut is Citizen One. It remains an executor stub and
+contract-first spine: enough structure to prove the CLI, classification, law,
+evidence, state, and verification contracts before adding provider-backed
 execution.
 
 The safe default for ambiguous or high-risk actions remains:
