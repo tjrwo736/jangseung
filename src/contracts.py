@@ -58,3 +58,6 @@ STATE_DIR = ".aeg"
 CONFIG_FILE = "config.json"
 LEDGER_FILE = "ledger.jsonl"
 RUNS_DIR = "runs"
+
+CONTRACT_FIRST_NOOP = "contract_first_noop"
+COMPLETION_CONTRACT_V0 = "completion_contract_v0"

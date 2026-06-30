@@ -107,6 +107,7 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         ("status", evidence["status"]),
         ("evidence", paths["evidence_path"]),
     ]
+    rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
     _print_card("Aegis run", evidence["status"], rows, evidence["classification_reasons"] + evidence["status_reasons"])
     return 0
 
@@ -137,6 +138,26 @@ def _cmd_verify(cwd: Path) -> int:
     rows.extend(("error", error) for error in result.errors)
     _print_card("Aegis verify", status, rows)
     return 0 if result.ok else 1
+
+
+def _user_gate_rows(card: object) -> list[tuple[str, str]]:
+    if not isinstance(card, dict):
+        return []
+    protected_paths = card.get("protected_paths_touched", [])
+    if isinstance(protected_paths, list):
+        protected_paths_value = ",".join(str(path) for path in protected_paths) or "[]"
+    else:
+        protected_paths_value = str(protected_paths)
+    return [
+        ("user_gate.risk_level", str(card.get("risk_level", ""))),
+        ("user_gate.status", str(card.get("status", ""))),
+        ("user_gate.why", str(card.get("why_gate_is_required", ""))),
+        ("user_gate.irreversible_action_blocked", str(card.get("irreversible_action_blocked", ""))),
+        ("user_gate.intent_risk", str(card.get("intent_risk", ""))),
+        ("user_gate.impact_risk", str(card.get("impact_risk", ""))),
+        ("user_gate.protected_paths_touched", protected_paths_value),
+        ("user_gate.safe_default", str(card.get("safe_default", ""))),
+    ]
 
 
 def _print_card(title: str, status: str, rows: list[tuple[str, str]], reasons: list[str] | None = None) -> None:
