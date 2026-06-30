@@ -38,6 +38,12 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn('printf ".aeg/\\n.env\\n.env.*\\n" > .gitignore', readme)
         self.assertIn('git add README.md .gitignore', readme)
         self.assertIn('git commit -m "init sandbox repo"', readme)
+        self.assertIn("python3 -m pip install -e .", readme)
+        self.assertIn(
+            "For a disposable local test, you may install inside a temporary virtual\n"
+            "environment instead of your system Python.",
+            readme,
+        )
         self.assertIn(
             "Aegis writes\n"
             "folder-local runtime state under `.aeg/`; the target repository must\n"
@@ -45,8 +51,19 @@ class PackagingMetadataTests(unittest.TestCase):
             readme,
         )
         self.assertIn(
+            "`.aeg/` is local runtime state. Keep it in the\n"
+            "target repo folder, but do not commit it.",
+            readme,
+        )
+        self.assertIn(
             "If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a\n"
             "problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.",
+            readme,
+        )
+        self.assertIn(
+            "`REPLAY_CONSISTENT` means Aegis replayed the recorded evidence and binding\n"
+            "deterministically. It is not an external oracle and does not mean the requested\n"
+            "task was actually executed.",
             readme,
         )
 
