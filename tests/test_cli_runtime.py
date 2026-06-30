@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -5,8 +7,23 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from src.contracts import CLEAN_CORE, HIGH, LOW, NEEDS_USER_GATE, NO_CHANGED_FILES, NO_CHANGED_FILES_SOURCE
+import src.state.git as git_state
+from src.cli.main import _cmd_run
+from src.contracts import (
+    CLEAN_CORE,
+    GIT_STAGED,
+    GIT_WORKING_TREE,
+    HIGH,
+    LOW,
+    MEDIUM,
+    NEEDS_USER_GATE,
+    NO_CHANGED_FILES,
+    NO_CHANGED_FILES_SOURCE,
+    NOT_CHECKED,
+    NOT_CHECKED_SOURCE,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +38,10 @@ class CliRuntimeTests(unittest.TestCase):
         self._git("config", "user.name", "Aegis Test")
         (self.repo / ".gitignore").write_text(".aeg/\n", encoding="utf-8")
         (self.repo / "README.md").write_text("# Test\n", encoding="utf-8")
+        (self.repo / "src" / "agents").mkdir(parents=True)
+        (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (self.repo / "src" / "classify").mkdir(parents=True)
+        (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 1\n", encoding="utf-8")
         self._git("add", ".")
         self._git("commit", "-m", "init")
 
@@ -58,6 +79,78 @@ class CliRuntimeTests(unittest.TestCase):
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
+
+    def test_protected_working_tree_change_escalates_runtime_risk(self):
+        self._aeg("init")
+        (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+        run = self._aeg("run", "fix typo in README")
+        self.assertIn("status: NEEDS_USER_GATE", run.stdout)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["intent_risk"], LOW)
+        self.assertEqual(evidence["impact_risk"], HIGH)
+        self.assertEqual(evidence["risk_level"], HIGH)
+        self.assertEqual(evidence["changed_files"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["changed_files_source"], GIT_WORKING_TREE)
+        self.assertEqual(evidence["protected_paths_touched"], ["src/classify/rules.py"])
+        self.assertTrue(evidence["risk_escalation_applied"])
+        self.assertEqual(evidence["status"], NEEDS_USER_GATE)
+
+        verify = self._aeg("verify")
+        self.assertIn("status: PASS", verify.stdout)
+        self.assertIn("impact_risk replay matched: HIGH", verify.stdout)
+        self.assertIn("risk_escalation_applied replay matched: True", verify.stdout)
+
+    def test_non_protected_working_tree_change_sets_medium_runtime_impact(self):
+        self._aeg("init")
+        (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+        run = self._aeg("run", "fix typo in README")
+        self.assertIn("status: NOT_CHECKED", run.stdout)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["intent_risk"], LOW)
+        self.assertEqual(evidence["impact_risk"], MEDIUM)
+        self.assertEqual(evidence["risk_level"], MEDIUM)
+        self.assertEqual(evidence["changed_files"], ["src/agents/executor.py"])
+        self.assertEqual(evidence["changed_files_source"], GIT_WORKING_TREE)
+        self.assertEqual(evidence["protected_paths_touched"], [])
+        self.assertTrue(evidence["risk_escalation_applied"])
+        self.assertEqual(evidence["status"], NOT_CHECKED)
+
+        verify = self._aeg("verify")
+        self.assertIn("status: PASS", verify.stdout)
+        self.assertIn("impact_risk replay matched: MEDIUM", verify.stdout)
+        self.assertIn("law status replay matched: NOT_CHECKED", verify.stdout)
+
+    def test_staged_changed_file_uses_staged_source(self):
+        self._aeg("init")
+        (self.repo / "README.md").write_text("# Test\n\nTypo fix\n", encoding="utf-8")
+        self._git("add", "README.md")
+
+        self._aeg("run", "fix typo in README")
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["changed_files"], ["README.md"])
+        self.assertEqual(evidence["changed_files_source"], GIT_STAGED)
+        self.assertEqual(evidence["impact_risk"], LOW)
+        self.assertEqual(evidence["risk_level"], LOW)
+
+    def test_changed_files_source_failure_is_not_checked(self):
+        self._aeg("init")
+        with patch(
+            "src.cli.main.git.changed_files_with_source",
+            side_effect=git_state.GitError("status unavailable"),
+        ):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README")
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["intent_risk"], LOW)
+        self.assertEqual(evidence["changed_files"], [])
+        self.assertEqual(evidence["changed_files_source"], NOT_CHECKED_SOURCE)
+        self.assertEqual(evidence["impact_risk"], NOT_CHECKED)
+        self.assertEqual(evidence["risk_level"], LOW)
+        self.assertEqual(evidence["status"], NOT_CHECKED)
 
     def test_aeg_state_is_ignored_and_no_tracked_mutation(self):
         self._aeg("init")

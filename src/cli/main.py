@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.agents import execute_contract
 from src.classify import classify_task
-from src.contracts import NO_CHANGED_FILES_SOURCE
+from src.contracts import NOT_CHECKED_SOURCE
 from src.evidence import build_evidence_packet, verify_latest
 from src.law import apply_law
 from src.state import git
@@ -75,7 +75,13 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
     try:
         repo = git.repo_root(cwd)
         require_initialized(repo)
-        classification = classify_task(task_text, changed_files=[], changed_files_source=NO_CHANGED_FILES_SOURCE)
+        changed_files, changed_files_source = _runtime_changed_files(repo)
+        classification = classify_task(
+            task_text,
+            changed_files=changed_files,
+            changed_files_source=changed_files_source,
+            no_mutation=False,
+        )
         law_result = apply_law(classification)
         executor_result = execute_contract(task_text, classification, law_result)
         evidence = build_evidence_packet(repo, task_text, classification, law_result, executor_result)
@@ -103,6 +109,13 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
     ]
     _print_card("Aegis run", evidence["status"], rows, evidence["classification_reasons"] + evidence["status_reasons"])
     return 0
+
+
+def _runtime_changed_files(repo: Path) -> tuple[list[str], str]:
+    try:
+        return git.changed_files_with_source(repo)
+    except git.GitError:
+        return [], NOT_CHECKED_SOURCE
 
 
 def _cmd_verify(cwd: Path) -> int:
