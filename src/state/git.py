@@ -101,6 +101,15 @@ def is_ignored(repo: str | Path, path: str) -> bool:
     return completed.returncode == 0
 
 
+def ls_files(repo: str | Path, pathspec: str) -> list[str]:
+    completed = run_git(["ls-files", "--", pathspec], repo)
+    return [line for line in completed.stdout.splitlines() if line.strip()]
+
+
+def tracked_file_count(repo: str | Path, pathspec: str) -> int:
+    return len(ls_files(repo, pathspec))
+
+
 def object_exists(repo: str | Path, object_name: str, object_type: str) -> bool:
     if not object_name:
         return False
