@@ -5,11 +5,23 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from src.agents import execute_contract
 from src.classify import classify_task
-from src.contracts import NOT_CHECKED_SOURCE, SAFE_DEFAULT
+from src.contracts import (
+    GIT_WORKING_TREE,
+    MUTATION_BOUNDARY_DELTA_DETECTED,
+    MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
+    NOT_CHECKED_SOURCE,
+    SAFE_DEFAULT,
+)
 from src.evidence import build_evidence_packet, verify_latest
+from src.evidence.mutation_boundary import (
+    build_mutation_boundary,
+    capture_mutation_snapshot,
+    mutation_delta_paths,
+)
 from src.law import apply_law
 from src.state import git
 from src.state.doctor import DoctorCheck, doctor_status, run_doctor
@@ -74,7 +86,8 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
     try:
         repo = git.repo_root(cwd)
         require_initialized(repo)
-        changed_files, changed_files_source = _runtime_changed_files(repo)
+        pre_snapshot = capture_mutation_snapshot(repo)
+        changed_files, changed_files_source = _runtime_changed_files(pre_snapshot.changed_files)
         classification = classify_task(
             task_text,
             changed_files=changed_files,
@@ -88,7 +101,18 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         )
         law_result = apply_law(classification)
         executor_result = execute_contract(task_text, classification, law_result)
-        evidence = build_evidence_packet(repo, task_text, classification, law_result, executor_result)
+        post_snapshot = capture_mutation_snapshot(repo)
+        mutation_boundary = build_mutation_boundary(pre_snapshot, post_snapshot, executor_result)
+        classification = _classification_after_mutation_boundary(task_text, classification, mutation_boundary)
+        law_result = apply_law(classification)
+        evidence = build_evidence_packet(
+            repo,
+            task_text,
+            classification,
+            law_result,
+            executor_result,
+            mutation_boundary=mutation_boundary,
+        )
         run_payload = {
             "run_id": evidence["run_id"],
             "task_text": task_text,
@@ -107,6 +131,8 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         ("intent_risk", evidence["intent_risk"]),
         ("impact_risk", evidence["impact_risk"]),
         ("changed_files_source", evidence["changed_files_source"]),
+        ("mutation_boundary_status", evidence["mutation_boundary_status"]),
+        ("mutation_delta_source", evidence["mutation_delta_source"]),
         ("risk_level", evidence["risk_level"]),
         ("status", evidence["status"]),
         ("binding_status", evidence.get("binding_status", "")),
@@ -120,11 +146,37 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
     return 0
 
 
-def _runtime_changed_files(repo: Path) -> tuple[list[str], str]:
-    try:
-        return git.changed_files_with_source(repo)
-    except git.GitError:
-        return [], NOT_CHECKED_SOURCE
+def _runtime_changed_files(snapshot: list[dict[str, object]]) -> tuple[list[str], str]:
+    return git.changed_files_from_snapshot(snapshot), git.changed_files_source_from_snapshot(snapshot)
+
+
+def _classification_after_mutation_boundary(task_text: str, classification, mutation_boundary: dict[str, object]):
+    boundary_status = mutation_boundary.get("mutation_boundary_status")
+    if boundary_status == MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT:
+        return classify_task(
+            task_text,
+            changed_files=[],
+            changed_files_source=NOT_CHECKED_SOURCE,
+            no_mutation=False,
+        )
+    if boundary_status != MUTATION_BOUNDARY_DELTA_DETECTED:
+        return classification
+
+    pre_paths = git.changed_files_from_snapshot(_snapshot_entries(mutation_boundary.get("pre_run_changed_files")))
+    delta_paths = mutation_delta_paths(_snapshot_entries(mutation_boundary.get("computed_mutation_delta")))
+    changed_files = sorted(dict.fromkeys([*pre_paths, *delta_paths]))
+    return classify_task(
+        task_text,
+        changed_files=changed_files,
+        changed_files_source=GIT_WORKING_TREE,
+        no_mutation=False,
+    )
+
+
+def _snapshot_entries(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _cmd_verify(cwd: Path) -> int:

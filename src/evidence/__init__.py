@@ -5,6 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from src.evidence.binding import changed_files_hash, manifest_hash
+from src.evidence.mutation_boundary import (
+    build_mutation_boundary,
+    capture_mutation_snapshot,
+    compute_mutation_delta,
+    mutation_delta_paths,
+)
 from src.evidence.packet import build_evidence_packet, new_run_id
 from src.evidence.schema import (
     validate_completion_contract_v0,
@@ -31,8 +37,12 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "VerifyResult",
     "build_evidence_packet",
+    "build_mutation_boundary",
+    "capture_mutation_snapshot",
     "changed_files_hash",
+    "compute_mutation_delta",
     "manifest_hash",
+    "mutation_delta_paths",
     "new_run_id",
     "validate_completion_contract_v0",
     "validate_evidence_binding_v0",
