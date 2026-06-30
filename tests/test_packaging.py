@@ -32,6 +32,35 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertEqual(pyproject["project"]["requires-python"], ">=3.10")
         self.assertGreaterEqual(sys.version_info, (3, 10))
 
+    def test_readme_sandbox_quickstart_preseeds_runtime_ignores(self):
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn('printf ".aeg/\\n.env\\n.env.*\\n" > .gitignore', readme)
+        self.assertIn('git add README.md .gitignore', readme)
+        self.assertIn('git commit -m "init sandbox repo"', readme)
+        self.assertIn(
+            "Aegis writes\n"
+            "folder-local runtime state under `.aeg/`; the target repository must\n"
+            "git-ignore `.aeg/` before running Aegis.",
+            readme,
+        )
+        self.assertIn(
+            "If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a\n"
+            "problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.",
+            readme,
+        )
+
+        self.assertIn(
+            "aeg doctor\n"
+            "aeg init\n"
+            "aeg doctor\n"
+            'aeg run "fix typo in README"\n'
+            "aeg verify\n"
+            'aeg run "merge to main and deploy"\n'
+            "aeg verify",
+            readme,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

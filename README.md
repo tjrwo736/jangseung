@@ -136,8 +136,22 @@ PATH="/path/to/Aegis:$PATH" aeg --help
 /path/to/Aegis/aeg --help
 ```
 
-Use a disposable sandbox repo for unaided run testing. The minimum
-target-repository demo is:
+Use a disposable sandbox repo for unaided run testing. Aegis writes
+folder-local runtime state under `.aeg/`; the target repository must
+git-ignore `.aeg/` before running Aegis. Target repositories should also
+ignore `.env` and `.env.*`.
+
+```bash
+mkdir -p /tmp/aegis-sandbox
+cd /tmp/aegis-sandbox
+git init
+printf "# Sandbox\n" > README.md
+printf ".aeg/\n.env\n.env.*\n" > .gitignore
+git add README.md .gitignore
+git commit -m "init sandbox repo"
+```
+
+Then run the installed `aeg` command in the sandbox repo:
 
 ```bash
 aeg doctor
@@ -156,6 +170,9 @@ Expected contrast:
 - `aeg verify` -> `REPLAY_CONSISTENT`
 - `.aeg/` remains folder-local and git-ignored
 - provider/network access is not required
+
+If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a
+problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.
 
 ## Core Non-Dependencies
 
