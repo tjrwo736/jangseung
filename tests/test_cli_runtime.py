@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import src.state.git as git_state
-from src.cli.main import _cmd_run
+from src.cli.main import _cmd_doctor, _cmd_run
 from src.contracts import (
     BOUND,
     CLEAN_CORE,
@@ -59,6 +59,129 @@ class CliRuntimeTests(unittest.TestCase):
 
     def tearDown(self):
         self.tempdir.cleanup()
+
+    def test_doctor_passes_inside_initialized_repo(self):
+        self._aeg("init")
+
+        doctor = self._aeg("doctor")
+
+        self.assertIn("status: PASS", doctor.stdout)
+        self.assertIn("overall_status: PASS", doctor.stdout)
+        self.assertIn("repo_root:", doctor.stdout)
+        self.assertIn("state_path:", doctor.stdout)
+        self.assertIn(f"safe_default: {SAFE_DEFAULT}", doctor.stdout)
+        self.assertIn("[PASS] git command available", doctor.stdout)
+        self.assertIn("[PASS] inside git repo", doctor.stdout)
+        self.assertIn("[PASS] repo root detected", doctor.stdout)
+        self.assertIn("[PASS] HEAD SHA readable", doctor.stdout)
+        self.assertIn("[PASS] tree SHA readable", doctor.stdout)
+        self.assertIn("[PASS] .aeg/ exists", doctor.stdout)
+        self.assertIn("[PASS] .aeg/ writable", doctor.stdout)
+        self.assertIn("[PASS] .aeg/ git ignored", doctor.stdout)
+        self.assertIn("[PASS] .aeg/ tracked file count", doctor.stdout)
+        self.assertIn("[PASS] .env tracked file count", doctor.stdout)
+        self.assertIn("[PASS] network not required", doctor.stdout)
+        self.assertIn("[PASS] provider not required", doctor.stdout)
+        self.assertIn("[PASS] OpenAI / Claude / Gemini not required", doctor.stdout)
+        self.assertIn("External provider credentials are not required", doctor.stdout)
+        self.assertIn("Network access is not required", doctor.stdout)
+
+    def test_doctor_gives_readable_failure_outside_git_repo(self):
+        with tempfile.TemporaryDirectory() as outside:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT)
+            doctor = subprocess.run(
+                [sys.executable, "-m", "src.cli", "doctor"],
+                cwd=outside,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        combined = doctor.stdout + doctor.stderr
+        self.assertNotEqual(doctor.returncode, 0)
+        self.assertIn("status: FAIL", doctor.stdout)
+        self.assertIn("[FAIL] inside git repo", doctor.stdout)
+        self.assertIn("[FAIL] repo root detected", doctor.stdout)
+        self.assertIn("fix_hint: Run aeg doctor from inside a Git repository", doctor.stdout)
+        self.assertIn("[PASS] network not required", doctor.stdout)
+        self.assertIn("[PASS] provider not required", doctor.stdout)
+        self.assertNotIn("Traceback", combined)
+
+    def test_doctor_warns_when_aeg_state_is_missing_and_suggests_init(self):
+        doctor = self._aeg("doctor")
+
+        self.assertEqual(doctor.returncode, 0)
+        self.assertIn("status: PASS_WITH_WARNINGS", doctor.stdout)
+        self.assertIn("[WARN] .aeg/ exists", doctor.stdout)
+        self.assertIn("fix_hint: Run aeg init", doctor.stdout)
+        self.assertIn("[PASS] provider not required", doctor.stdout)
+        self.assertIn("[PASS] network not required", doctor.stdout)
+
+    def test_doctor_reports_missing_git_command_readably(self):
+        with patch("src.state.doctor.git.git_available", return_value=False):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                exit_code = _cmd_doctor(self.repo)
+
+        self.assertEqual(exit_code, 1)
+        stdout = output.getvalue()
+        self.assertIn("status: FAIL", stdout)
+        self.assertIn("[FAIL] git command available", stdout)
+        self.assertIn("fix_hint: Install Git", stdout)
+        self.assertIn("[PASS] provider not required", stdout)
+        self.assertIn("[PASS] network not required", stdout)
+
+    def test_doctor_reports_unwritable_aeg_state_readably(self):
+        self._aeg("init")
+
+        with patch("src.state.doctor._state_dir_writable", return_value=False):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                exit_code = _cmd_doctor(self.repo)
+
+        self.assertEqual(exit_code, 1)
+        stdout = output.getvalue()
+        self.assertIn("status: FAIL", stdout)
+        self.assertIn("[FAIL] .aeg/ writable", stdout)
+        self.assertIn("Fix filesystem permissions or ownership", stdout)
+
+    def test_doctor_flags_unignored_aeg_state(self):
+        (self.repo / ".gitignore").write_text("", encoding="utf-8")
+        self._aeg("init")
+
+        doctor = self._aeg("doctor", check=False)
+
+        self.assertNotEqual(doctor.returncode, 0)
+        self.assertIn("status: FAIL", doctor.stdout)
+        self.assertIn("[FAIL] .aeg/ git ignored", doctor.stdout)
+        self.assertIn("fix_hint: Add .aeg/ to .gitignore", doctor.stdout)
+
+    def test_doctor_flags_tracked_aeg_state(self):
+        self._aeg("init")
+        (self.repo / ".aeg" / "tracked.txt").write_text("runtime\n", encoding="utf-8")
+        self._git("add", "-f", ".aeg/tracked.txt")
+
+        doctor = self._aeg("doctor", check=False)
+
+        self.assertNotEqual(doctor.returncode, 0)
+        self.assertIn("status: FAIL", doctor.stdout)
+        self.assertIn("[FAIL] .aeg/ tracked file count", doctor.stdout)
+        self.assertIn("tracked_count: 1", doctor.stdout)
+        self.assertIn("git rm --cached -r .aeg", doctor.stdout)
+
+    def test_doctor_flags_tracked_env_file(self):
+        self._aeg("init")
+        (self.repo / ".env").write_text("PLACEHOLDER=1\n", encoding="utf-8")
+        self._git("add", "-f", ".env")
+
+        doctor = self._aeg("doctor", check=False)
+
+        self.assertNotEqual(doctor.returncode, 0)
+        self.assertIn("status: FAIL", doctor.stdout)
+        self.assertIn("[FAIL] .env tracked file count", doctor.stdout)
+        self.assertIn("tracked_count: 1", doctor.stdout)
+        self.assertIn("keep real secrets out of Git", doctor.stdout)
 
     def test_low_run_and_verify(self):
         self._aeg("init")

@@ -8,11 +8,11 @@ from pathlib import Path
 
 from src.agents import execute_contract
 from src.classify import classify_task
-from src.contracts import NOT_CHECKED_SOURCE
+from src.contracts import NOT_CHECKED_SOURCE, SAFE_DEFAULT
 from src.evidence import build_evidence_packet, verify_latest
 from src.law import apply_law
 from src.state import git
-from src.state.doctor import doctor_status, run_doctor
+from src.state.doctor import DoctorCheck, doctor_status, run_doctor
 from src.state.store import ensure_initialized, require_initialized, save_run
 
 
@@ -66,8 +66,7 @@ def _cmd_init(cwd: Path) -> int:
 def _cmd_doctor(cwd: Path) -> int:
     checks = run_doctor(cwd)
     status = doctor_status(checks)
-    rows = [(check.name, f"{check.status} {check.detail}") for check in checks]
-    _print_card("Aegis doctor", status, rows)
+    _print_doctor_card(status, checks)
     return 1 if status == "FAIL" else 0
 
 
@@ -183,6 +182,33 @@ def _print_card(title: str, status: str, rows: list[tuple[str, str]], reasons: l
         print("reasons:")
         for reason in reasons:
             print(f"- {reason}")
+
+
+def _print_doctor_card(status: str, checks: list[DoctorCheck]) -> None:
+    print("Aegis doctor")
+    print(f"status: {status}")
+    print(f"overall_status: {status}")
+    print(f"repo_root: {_doctor_detail(checks, 'repo_root')}")
+    print(f"state_path: {_doctor_detail(checks, 'state_path')}")
+    print(f"safe_default: {SAFE_DEFAULT}")
+    print("checks:")
+    for check in checks:
+        print(f"- [{check.status}] {check.name}")
+        print(f"  message: {check.message}")
+        if check.fix_hint:
+            print(f"  fix_hint: {check.fix_hint}")
+        if check.next_step:
+            print(f"  next_step: {check.next_step}")
+        for key, value in check.details:
+            print(f"  {key}: {value}")
+
+
+def _doctor_detail(checks: list[DoctorCheck], key: str) -> str:
+    for check in checks:
+        for detail_key, detail_value in check.details:
+            if detail_key == key:
+                return detail_value
+    return "NOT_AVAILABLE"
 
 
 if __name__ == "__main__":
