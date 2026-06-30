@@ -118,6 +118,15 @@ python -m pip install -e .
 aeg --help
 ```
 
+If your environment does not provide `python`, use `python3` instead:
+
+```bash
+python3 -m pip install -e .
+```
+
+For a disposable local test, you may install inside a temporary virtual
+environment instead of your system Python.
+
 Optional local `pipx` install, if `pipx` is available:
 
 ```bash
@@ -139,7 +148,8 @@ PATH="/path/to/Aegis:$PATH" aeg --help
 Use a disposable sandbox repo for unaided run testing. Aegis writes
 folder-local runtime state under `.aeg/`; the target repository must
 git-ignore `.aeg/` before running Aegis. Target repositories should also
-ignore `.env` and `.env.*`.
+ignore `.env` and `.env.*`. `.aeg/` is local runtime state. Keep it in the
+target repo folder, but do not commit it.
 
 ```bash
 mkdir -p /tmp/aegis-sandbox
@@ -170,6 +180,10 @@ Expected contrast:
 - `aeg verify` -> `REPLAY_CONSISTENT`
 - `.aeg/` remains folder-local and git-ignored
 - provider/network access is not required
+
+`REPLAY_CONSISTENT` means Aegis replayed the recorded evidence and binding
+deterministically. It is not an external oracle and does not mean the requested
+task was actually executed.
 
 If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a
 problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.
