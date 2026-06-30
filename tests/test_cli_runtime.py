@@ -13,6 +13,7 @@ import src.state.git as git_state
 from src.cli.main import _cmd_run
 from src.contracts import (
     CLEAN_CORE,
+    CONTRACT_FIRST_NOOP,
     GIT_STAGED,
     GIT_WORKING_TREE,
     HIGH,
@@ -23,6 +24,12 @@ from src.contracts import (
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
+    SAFE_DEFAULT,
+)
+from src.evidence import (
+    validate_completion_contract_v0,
+    validate_evidence_binding_v0,
+    validate_user_gate_reason_card_v1,
 )
 
 
@@ -61,14 +68,52 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["protected_paths_touched"], [])
         self.assertFalse(evidence["risk_escalation_applied"])
         self.assertEqual(evidence["status"], CLEAN_CORE)
+        self.assertEqual(validate_evidence_binding_v0(evidence), [])
+        self.assertEqual(validate_completion_contract_v0(evidence), [])
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
         self.assertIn("LOW risk remained CLEAN_CORE", verify.stdout)
+
+    def test_medium_run_records_not_checked_with_binding_and_completion_contract(self):
+        self._aeg("init")
+        run = self._aeg("run", "do the thing")
+        self.assertIn("intent_risk: MEDIUM", run.stdout)
+        self.assertIn("impact_risk: NO_CHANGED_FILES", run.stdout)
+        self.assertIn("risk_level: MEDIUM", run.stdout)
+        self.assertIn("status: NOT_CHECKED", run.stdout)
+        self.assertNotIn("status: CLEAN_CORE", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["intent_risk"], MEDIUM)
+        self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
+        self.assertEqual(evidence["risk_level"], MEDIUM)
+        self.assertEqual(evidence["status"], NOT_CHECKED)
+        self.assertEqual(validate_evidence_binding_v0(evidence), [])
+        self.assertEqual(validate_completion_contract_v0(evidence), [])
+
+        executor = evidence["checks"]["executor"]
+        completion_contract = executor["completion_contract"]
+        self.assertEqual(executor["executor"], CONTRACT_FIRST_NOOP)
+        self.assertEqual(completion_contract["executor_mode"], CONTRACT_FIRST_NOOP)
+        self.assertTrue(completion_contract["completion_reported"])
+        self.assertFalse(completion_contract["completion_satisfied"])
+        self.assertNotEqual(completion_contract["completion_reported"], completion_contract["completion_satisfied"])
+        self.assertFalse(completion_contract["file_mutation"])
+        self.assertFalse(completion_contract["provider_calls"])
+        self.assertFalse(completion_contract["network_calls"])
+
+        verify = self._aeg("verify")
+        self.assertIn("status: PASS", verify.stdout)
+        self.assertIn("evidence binding v0 valid", verify.stdout)
+        self.assertIn("completion contract v0 valid", verify.stdout)
+        self.assertIn("law status replay matched: NOT_CHECKED", verify.stdout)
 
     def test_high_run_and_verify(self):
         self._aeg("init")
         run = self._aeg("run", "merge to main and deploy")
         self.assertIn("status: NEEDS_USER_GATE", run.stdout)
+        self.assertIn("user_gate.why: High-risk task requires an explicit user gate before execution.", run.stdout)
+        self.assertIn("user_gate.safe_default: hold_current_state", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], HIGH)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -76,9 +121,20 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["changed_files_source"], NO_CHANGED_FILES_SOURCE)
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
+        self.assertEqual(validate_user_gate_reason_card_v1(evidence), [])
+        card = evidence["user_gate_reason_card"]
+        self.assertEqual(card["risk_level"], HIGH)
+        self.assertEqual(card["status"], NEEDS_USER_GATE)
+        self.assertIn("explicit user gate", card["why_gate_is_required"])
+        self.assertTrue(card["irreversible_action_blocked"])
+        self.assertEqual(card["intent_risk"], HIGH)
+        self.assertEqual(card["impact_risk"], NO_CHANGED_FILES)
+        self.assertEqual(card["protected_paths_touched"], [])
+        self.assertEqual(card["safe_default"], SAFE_DEFAULT)
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
+        self.assertIn("HIGH user gate reason card valid", verify.stdout)
 
     def test_protected_working_tree_change_escalates_runtime_risk(self):
         self._aeg("init")
@@ -178,6 +234,43 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: protected path touched but saved risk_level is LOW", verify.stdout)
         self.assertIn("risk_level mismatch", verify.stdout)
 
+    def test_verify_rejects_saved_risk_level_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["risk_level"] = MEDIUM
+        path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("status: FAIL", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: risk_level mismatch: evidence=MEDIUM replay=LOW", verify.stdout)
+
+    def test_verify_rejects_missing_completion_contract(self):
+        self._aeg("init")
+        self._aeg("run", "do the thing")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["checks"]["executor"]["completion_contract"]
+        path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("status: FAIL", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: missing completion_contract_v0", verify.stdout)
+        self.assertNotIn("status: CLEAN_CORE", verify.stdout)
+
+    def test_verify_rejects_not_checked_promoted_to_clean_core(self):
+        self._aeg("init")
+        self._aeg("run", "do the thing")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["status"] = CLEAN_CORE
+        path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("status: FAIL", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: law status mismatch: evidence=CLEAN_CORE replay=NOT_CHECKED", verify.stdout)
+
     def test_verify_rejects_missing_changed_files_source_as_not_checked(self):
         self._aeg("init")
         self._aeg("run", "fix typo in README")
@@ -188,6 +281,7 @@ class CliRuntimeTests(unittest.TestCase):
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
         self.assertIn("missing required field: changed_files_source", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: missing evidence binding field: changed_files_source", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: NOT_CHECKED impact cannot be CLEAN_CORE", verify.stdout)
 
     def _aeg(self, *args, check=True):

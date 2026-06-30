@@ -8,7 +8,12 @@ from typing import Any
 
 from src.classify import classify_task
 from src.contracts import CLEAN_CORE, HIGH, LOW, NEEDS_USER_GATE, NOT_CHECKED_IMPACT_RISKS
-from src.evidence.schema import validate_evidence_packet
+from src.evidence.schema import (
+    validate_completion_contract_v0,
+    validate_evidence_binding_v0,
+    validate_evidence_packet,
+    validate_user_gate_reason_card_v1,
+)
 from src.law import apply_law
 from src.state import git
 from src.state.store import load_latest_evidence, state_root
@@ -50,6 +55,31 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     else:
         checks.append("evidence schema valid")
 
+    binding_errors = validate_evidence_binding_v0(evidence)
+    if binding_errors:
+        errors.extend(binding_errors)
+    else:
+        checks.append("evidence binding v0 valid")
+
+    completion_errors = validate_completion_contract_v0(evidence)
+    if completion_errors:
+        errors.extend(completion_errors)
+    else:
+        checks.append("completion contract v0 valid")
+
+    gate_card_errors = validate_user_gate_reason_card_v1(evidence)
+    if gate_card_errors:
+        errors.extend(gate_card_errors)
+    elif evidence.get("risk_level") == HIGH:
+        checks.append("HIGH user gate reason card valid")
+
+    evidence_repo_root = evidence.get("repo_root")
+    if isinstance(evidence_repo_root, str) and evidence_repo_root.strip():
+        if Path(evidence_repo_root).resolve() == repo:
+            checks.append("repo_root is bound to current repository")
+        else:
+            errors.append(f"INVALID_EVIDENCE: repo_root mismatch: evidence={evidence_repo_root} replay={repo}")
+
     if evidence and git.object_exists(repo, evidence.get("head_sha", ""), "commit"):
         checks.append("head_sha is readable")
     else:
@@ -65,8 +95,11 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
         saved_changed_files = evidence.get("changed_files", [])
         if not isinstance(saved_changed_files, list):
             saved_changed_files = []
+        task_text = evidence.get("task_text", "")
+        if not isinstance(task_text, str):
+            task_text = ""
         replay = classify_task(
-            evidence.get("task_text", ""),
+            task_text,
             changed_files=list(saved_changed_files),
             changed_files_source=evidence.get("changed_files_source"),
             no_mutation=False,
@@ -75,28 +108,28 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
         if evidence.get("intent_risk") == replay.intent_risk:
             checks.append(f"intent_risk replay matched: {replay.intent_risk}")
         else:
-            errors.append(f"intent_risk mismatch: evidence={evidence.get('intent_risk')} replay={replay.intent_risk}")
+            errors.append(f"INVALID_EVIDENCE: intent_risk mismatch: evidence={evidence.get('intent_risk')} replay={replay.intent_risk}")
 
         if evidence.get("risk_level") == replay.risk_level:
             checks.append(f"risk_level replay matched: {replay.risk_level}")
         else:
-            errors.append(f"risk_level mismatch: evidence={evidence.get('risk_level')} replay={replay.risk_level}")
+            errors.append(f"INVALID_EVIDENCE: risk_level mismatch: evidence={evidence.get('risk_level')} replay={replay.risk_level}")
 
         if evidence.get("impact_risk") == replay.impact_risk:
             checks.append(f"impact_risk replay matched: {replay.impact_risk}")
         else:
-            errors.append(f"impact_risk mismatch: evidence={evidence.get('impact_risk')} replay={replay.impact_risk}")
+            errors.append(f"INVALID_EVIDENCE: impact_risk mismatch: evidence={evidence.get('impact_risk')} replay={replay.impact_risk}")
 
         if evidence.get("impact_reasons", []) == replay.impact_reasons:
             checks.append("impact_reasons replay matched")
         else:
-            errors.append(f"impact_reasons mismatch: evidence={evidence.get('impact_reasons')} replay={replay.impact_reasons}")
+            errors.append(f"INVALID_EVIDENCE: impact_reasons mismatch: evidence={evidence.get('impact_reasons')} replay={replay.impact_reasons}")
 
         if evidence.get("changed_files_source") == replay.changed_files_source:
             checks.append(f"changed_files_source replay matched: {replay.changed_files_source}")
         else:
             errors.append(
-                "changed_files_source mismatch: "
+                "INVALID_EVIDENCE: changed_files_source mismatch: "
                 f"evidence={evidence.get('changed_files_source')} replay={replay.changed_files_source}"
             )
 
@@ -104,7 +137,7 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
             checks.append("protected_paths_touched replay matched")
         else:
             errors.append(
-                "protected_paths_touched mismatch: "
+                "INVALID_EVIDENCE: protected_paths_touched mismatch: "
                 f"evidence={evidence.get('protected_paths_touched')} replay={replay.protected_paths_touched}"
             )
 
@@ -112,16 +145,19 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
             checks.append(f"risk_escalation_applied replay matched: {replay.risk_escalation_applied}")
         else:
             errors.append(
-                "risk_escalation_applied mismatch: "
+                "INVALID_EVIDENCE: risk_escalation_applied mismatch: "
                 f"evidence={evidence.get('risk_escalation_applied')} replay={replay.risk_escalation_applied}"
             )
 
         if evidence.get("final_risk_rule") == replay.final_risk_rule:
             checks.append(f"final_risk_rule replay matched: {replay.final_risk_rule}")
         else:
-            errors.append(f"final_risk_rule mismatch: evidence={evidence.get('final_risk_rule')} replay={replay.final_risk_rule}")
+            errors.append(f"INVALID_EVIDENCE: final_risk_rule mismatch: evidence={evidence.get('final_risk_rule')} replay={replay.final_risk_rule}")
 
-        if replay.protected_paths_touched and evidence.get("risk_level") == LOW:
+        saved_protected_paths = evidence.get("protected_paths_touched", [])
+        if not isinstance(saved_protected_paths, list):
+            saved_protected_paths = []
+        if (replay.protected_paths_touched or saved_protected_paths) and evidence.get("risk_level") == LOW:
             errors.append("INVALID_EVIDENCE: protected path touched but saved risk_level is LOW")
 
         if replay.impact_risk in NOT_CHECKED_IMPACT_RISKS and status == CLEAN_CORE:
@@ -143,12 +179,12 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
             checks.append("NOT_CHECKED was not promoted to PASS")
 
         if status != replay_law.status:
-            errors.append(f"law status mismatch: evidence={status} replay={replay_law.status}")
+            errors.append(f"INVALID_EVIDENCE: law status mismatch: evidence={status} replay={replay_law.status}")
         else:
             checks.append(f"law status replay matched: {replay_law.status}")
 
         root = state_root(repo).resolve()
-        run_id = evidence.get("run_id", "")
+        run_id = str(evidence.get("run_id", ""))
         run_path = root / "runs" / run_id / "run.json"
         resolved_evidence = evidence_path.resolve()
         if _is_under(root, run_path) and _is_under(root, resolved_evidence):

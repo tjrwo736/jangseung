@@ -27,7 +27,7 @@ def build_evidence_packet(
     run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = git.repo_root(cwd)
-    return {
+    packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
         "task_text": task_text,
@@ -49,6 +49,8 @@ def build_evidence_packet(
         "impact_checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "checks": {
             "executor": executor_result,
+            "completion_contract_v0_required": True,
+            "evidence_binding_v0_required": True,
             "runtime_state_root": STATE_DIR,
             "runtime_artifacts_under_state": True,
             "not_checked_is_not_pass": True,
@@ -58,3 +60,6 @@ def build_evidence_packet(
         "status_reasons": list(law_result.status_reasons),
         "safe_default": SAFE_DEFAULT,
     }
+    if law_result.user_gate_reason_card is not None:
+        packet["user_gate_reason_card"] = dict(law_result.user_gate_reason_card)
+    return packet
