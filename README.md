@@ -104,22 +104,54 @@ repository-local `aeg` launcher or `python -m src.cli`.
 ./aeg verify
 ```
 
-## Phase 6A Local Checkout Quickstart
+## Packaging / Install Path v0 Quickstart
 
-Aegis is not a packaged install yet. During Phase 6A, use the local checkout
-launcher from the Aegis repository. If this repository is checked out at
-`/mnt/d/Codex/Aegis`, run Aegis from a separate target repository with either
-of these forms:
+This is not a PyPI/public release yet. Install path v0 is for a local checkout
+or a GitHub-accessible repository checkout. Provider/network access is not
+required for the core loop, and OpenAI/Claude/Gemini accounts are not required.
+
+Local editable install:
 
 ```bash
-PATH="/mnt/d/Codex/Aegis:$PATH" aeg --help
+cd /path/to/Aegis
+python -m pip install -e .
+aeg --help
+```
+
+Optional local `pipx` install, if `pipx` is available:
+
+```bash
+cd /path/to/Aegis
+pipx install .
+aeg --help
+```
+
+Fallback local checkout launcher:
+
+```bash
+PATH="/path/to/Aegis:$PATH" aeg --help
 ```
 
 ```bash
-/mnt/d/Codex/Aegis/aeg --help
+/path/to/Aegis/aeg --help
 ```
 
-The minimum target-repository demo is:
+Use a disposable sandbox repo for unaided run testing. Aegis writes
+folder-local runtime state under `.aeg/`; the target repository must
+git-ignore `.aeg/` before running Aegis. Target repositories should also
+ignore `.env` and `.env.*`.
+
+```bash
+mkdir -p /tmp/aegis-sandbox
+cd /tmp/aegis-sandbox
+git init
+printf "# Sandbox\n" > README.md
+printf ".aeg/\n.env\n.env.*\n" > .gitignore
+git add README.md .gitignore
+git commit -m "init sandbox repo"
+```
+
+Then run the installed `aeg` command in the sandbox repo:
 
 ```bash
 aeg doctor
@@ -139,11 +171,8 @@ Expected contrast:
 - `.aeg/` remains folder-local and git-ignored
 - provider/network access is not required
 
-External-user limitation:
-
-- This is not a packaged install yet.
-- Phase 6B external unaided run should not start until command discovery
-  instructions are explicit.
+If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a
+problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.
 
 ## Core Non-Dependencies
 
