@@ -12,6 +12,7 @@ from src.contracts import (
     BOUND,
     CITIZEN_ONE_EVIDENCE_FIELDS,
     EVIDENCE_BINDING_V1,
+    PROPOSAL_CONTRACT_FIELDS,
     RUN_MANIFEST_V1,
     RUNS_DIR,
     SAFE_DEFAULT,
@@ -67,6 +68,7 @@ def build_run_manifest(
     pre_existing_dirty_tree = _list_field(evidence, "pre_existing_dirty_tree")
     executor_created_mutation = _list_field(evidence, "executor_created_mutation")
     citizen_one_fields = citizen_one_manifest_fields(evidence)
+    proposal_fields = proposal_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -104,6 +106,9 @@ def build_run_manifest(
         **citizen_one_fields,
         "citizen_one_evidence_hash": sha256_json(citizen_one_fields),
     }
+    if proposal_fields:
+        manifest.update(proposal_fields)
+        manifest["proposal_evidence_hash"] = sha256_json(proposal_fields)
     return manifest
 
 
@@ -147,3 +152,9 @@ def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:
 
 def citizen_one_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in CITIZEN_ONE_EVIDENCE_FIELDS}
+
+
+def proposal_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    if not any(field in evidence for field in PROPOSAL_CONTRACT_FIELDS):
+        return {}
+    return {field: evidence.get(field) for field in PROPOSAL_CONTRACT_FIELDS}

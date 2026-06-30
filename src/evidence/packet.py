@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from src.classify import Classification
 from src.citizen_one import build_citizen_one_evidence
-from src.contracts import AEG_VERSION, SAFE_DEFAULT, STATE_DIR
+from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
 from src.law import LawResult
 from src.state import git
 
@@ -31,7 +31,10 @@ def build_evidence_packet(
 ) -> dict[str, Any]:
     repo = git.repo_root(cwd)
     boundary = mutation_boundary or {}
-    citizen_one = build_citizen_one_evidence(citizen_one_requested)
+    citizen_one = build_citizen_one_evidence(
+        citizen_one_requested,
+        proposal_requires_user_gate=law_result.status == NEEDS_USER_GATE,
+    )
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -62,6 +65,8 @@ def build_evidence_packet(
             "deterministic_law_replay_required": True,
             "citizen_one_control_plane_v0_required": True,
             "citizen_one_reported_only_is_not_judgment_basis": True,
+            "citizen_one_proposal_contract_v0_required": citizen_one_requested,
+            "proposal_reported_only_is_not_judgment_basis": citizen_one_requested,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),

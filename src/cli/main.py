@@ -155,6 +155,7 @@ def _cmd_run(cwd: Path, task_text: str, citizen_one_requested: bool = False) -> 
         ("binding_reason_count", str(len(evidence.get("binding_reasons", [])))),
         ("evidence", paths["evidence_path"]),
     ]
+    rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
     _print_card("Aegis run", evidence["status"], rows, evidence["classification_reasons"] + evidence["status_reasons"])
     return 0
@@ -222,6 +223,7 @@ def _cmd_verify(cwd: Path) -> int:
                 ("binding_reason_count", str(len(result.evidence.get("binding_reasons", [])))),
             ]
         )
+        rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
     rows.extend(("error", error) for error in result.errors)
     _print_card("Aegis verify", status, rows)
@@ -245,6 +247,26 @@ def _user_gate_rows(card: object) -> list[tuple[str, str]]:
         ("user_gate.impact_risk", str(card.get("impact_risk", ""))),
         ("user_gate.protected_paths_touched", protected_paths_value),
         ("user_gate.safe_default", str(card.get("safe_default", ""))),
+    ]
+
+
+def _proposal_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    if "proposal_present" not in evidence:
+        return []
+    steps = evidence.get("proposal_steps", [])
+    risk_notes = evidence.get("proposal_risk_notes", [])
+    return [
+        ("proposal_present", str(evidence.get("proposal_present", "")).lower()),
+        ("proposal_status", str(evidence.get("proposal_status", ""))),
+        ("proposal_hold_reason", str(evidence.get("proposal_hold_reason", ""))),
+        ("proposal_reported_only", str(evidence.get("proposal_reported_only", "")).lower()),
+        ("proposal_trust_boundary", str(evidence.get("proposal_trust_boundary", ""))),
+        ("proposal_requires_user_gate", str(evidence.get("proposal_requires_user_gate", "")).lower()),
+        ("proposal_source", str(evidence.get("proposal_source", ""))),
+        ("proposal_redaction_status", str(evidence.get("proposal_redaction_status", ""))),
+        ("proposal_output_hash_candidate", str(evidence.get("proposal_output_hash_candidate", ""))),
+        ("proposal_step_count", str(len(steps) if isinstance(steps, list) else "")),
+        ("proposal_risk_note_count", str(len(risk_notes) if isinstance(risk_notes, list) else "")),
     ]
 
 
