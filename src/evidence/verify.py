@@ -11,8 +11,15 @@ from src.classify import classify_task
 from src.contracts import (
     BOUND,
     CLEAN_CORE,
+    GIT_STATUS_PORCELAIN_V1,
     HIGH,
     LOW,
+    MUTATION_BOUNDARY_CLEAN,
+    MUTATION_BOUNDARY_DELTA_DETECTED,
+    MUTATION_BOUNDARY_DIRTY_PREEXISTING,
+    MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
+    MUTATION_DELTA_SOURCE_COMPUTED,
+    SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
     NOT_CHECKED_IMPACT_RISKS,
     RUN_MANIFEST_V1,
@@ -22,8 +29,10 @@ from src.evidence.binding import (
     expected_artifact_path,
     manifest_hash,
     repo_relative_path,
+    sha256_json,
     sha256_text,
 )
+from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
     validate_completion_contract_v0,
     validate_evidence_binding_v0,
@@ -87,6 +96,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     manifest, manifest_checks, manifest_errors = _verify_manifest_binding(repo, evidence, evidence_path, ledger_entry)
     checks.extend(manifest_checks)
     errors.extend(manifest_errors)
+
+    mutation_checks, mutation_errors = _verify_mutation_boundary(evidence, manifest)
+    checks.extend(mutation_checks)
+    errors.extend(mutation_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -329,6 +342,24 @@ def _verify_manifest_binding(
     _check_equal(checks, errors, "manifest risk_level", manifest.get("risk_level"), evidence.get("risk_level"))
     _check_equal(checks, errors, "manifest status", manifest.get("status"), evidence.get("status"))
     _check_equal(checks, errors, "manifest safe_default", manifest.get("safe_default"), evidence.get("safe_default"))
+    _check_equal(checks, errors, "manifest pre_snapshot_source", manifest.get("pre_snapshot_source"), evidence.get("pre_snapshot_source"))
+    _check_equal(checks, errors, "manifest post_snapshot_source", manifest.get("post_snapshot_source"), evidence.get("post_snapshot_source"))
+    _check_equal(checks, errors, "manifest snapshot_collector", manifest.get("snapshot_collector"), evidence.get("snapshot_collector"))
+    _check_equal(checks, errors, "manifest mutation_delta_source", manifest.get("mutation_delta_source"), evidence.get("mutation_delta_source"))
+    _check_equal(
+        checks,
+        errors,
+        "manifest protected_path_mutation_detected",
+        manifest.get("protected_path_mutation_detected"),
+        evidence.get("protected_path_mutation_detected"),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "manifest mutation_boundary_status",
+        manifest.get("mutation_boundary_status"),
+        evidence.get("mutation_boundary_status"),
+    )
     _check_equal(checks, errors, "bound_run_id", evidence.get("bound_run_id"), run_id)
     _check_equal(checks, errors, "bound_repo_root", evidence.get("bound_repo_root"), manifest.get("repo_root"))
     _check_equal(checks, errors, "bound_branch", evidence.get("bound_branch"), manifest.get("branch"))
@@ -372,6 +403,76 @@ def _verify_manifest_binding(
     )
     _check_equal(checks, errors, "changed_files hash", evidence_changed_files_hash, manifest_changed_files_hash)
 
+    for field in (
+        "pre_run_changed_files",
+        "post_run_changed_files",
+        "computed_mutation_delta",
+        "pre_existing_dirty_tree",
+        "executor_created_mutation",
+    ):
+        evidence_value = evidence.get(field)
+        manifest_value = manifest.get(field)
+        if not isinstance(evidence_value, list):
+            errors.append(f"INVALID_EVIDENCE: evidence {field} must be list")
+            evidence_value = []
+        if not isinstance(manifest_value, list):
+            errors.append(f"INVALID_EVIDENCE: manifest {field} must be list")
+            manifest_value = []
+        if evidence_value == manifest_value:
+            checks.append(f"manifest {field} matched evidence")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} mismatch: evidence={evidence_value} manifest={manifest_value}")
+        expected_hash = sha256_json(manifest_value)
+        _check_equal(checks, errors, f"manifest {field}_hash", manifest.get(f"{field}_hash"), expected_hash)
+
+    snapshot_trust_boundary = evidence.get("snapshot_trust_boundary")
+    manifest_snapshot_trust_boundary = manifest.get("snapshot_trust_boundary")
+    if not isinstance(snapshot_trust_boundary, dict):
+        errors.append("INVALID_EVIDENCE: snapshot_trust_boundary must be object")
+        snapshot_trust_boundary = {}
+    if not isinstance(manifest_snapshot_trust_boundary, dict):
+        errors.append("INVALID_EVIDENCE: manifest snapshot_trust_boundary must be object")
+        manifest_snapshot_trust_boundary = {}
+    if snapshot_trust_boundary == manifest_snapshot_trust_boundary:
+        checks.append("manifest snapshot_trust_boundary matched evidence")
+    else:
+        errors.append("INVALID_EVIDENCE: snapshot_trust_boundary mismatch")
+    _check_equal(
+        checks,
+        errors,
+        "manifest snapshot_trust_boundary_hash",
+        manifest.get("snapshot_trust_boundary_hash"),
+        sha256_json(manifest_snapshot_trust_boundary),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_pre_run_changed_files_hash",
+        evidence.get("bound_pre_run_changed_files_hash"),
+        sha256_json(evidence.get("pre_run_changed_files", [])),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_post_run_changed_files_hash",
+        evidence.get("bound_post_run_changed_files_hash"),
+        sha256_json(evidence.get("post_run_changed_files", [])),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_computed_mutation_delta_hash",
+        evidence.get("bound_computed_mutation_delta_hash"),
+        sha256_json(evidence.get("computed_mutation_delta", [])),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_snapshot_trust_boundary_hash",
+        evidence.get("bound_snapshot_trust_boundary_hash"),
+        sha256_json(snapshot_trust_boundary),
+    )
+
     task_text = evidence.get("task_text")
     if isinstance(task_text, str):
         _check_equal(checks, errors, "manifest task_text_hash", manifest.get("task_text_hash"), sha256_text(task_text))
@@ -386,6 +487,97 @@ def _verify_manifest_binding(
     return manifest, checks, errors
 
 
+def _verify_mutation_boundary(evidence: dict[str, Any], manifest: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    pre_snapshot = evidence.get("pre_run_changed_files")
+    post_snapshot = evidence.get("post_run_changed_files")
+    if not _is_object_list(pre_snapshot):
+        errors.append("INVALID_EVIDENCE: pre_run_changed_files must be list of objects")
+        pre_snapshot = []
+    if not _is_object_list(post_snapshot):
+        errors.append("INVALID_EVIDENCE: post_run_changed_files must be list of objects")
+        post_snapshot = []
+
+    recomputed_delta = compute_mutation_delta(pre_snapshot, post_snapshot)
+    saved_delta = evidence.get("computed_mutation_delta")
+    if not _is_object_list(saved_delta):
+        errors.append("INVALID_EVIDENCE: computed_mutation_delta must be list of objects")
+        saved_delta = []
+    if saved_delta == recomputed_delta:
+        checks.append("computed_mutation_delta replay matched independent snapshots")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: computed_mutation_delta mismatch: "
+            f"evidence={saved_delta} replay={recomputed_delta}"
+        )
+
+    boundary = evidence.get("snapshot_trust_boundary")
+    if not isinstance(boundary, dict):
+        errors.append("INVALID_EVIDENCE: snapshot_trust_boundary must be object")
+        boundary = {}
+    trusted = (
+        evidence.get("pre_snapshot_source") == GIT_STATUS_PORCELAIN_V1
+        and evidence.get("post_snapshot_source") == GIT_STATUS_PORCELAIN_V1
+        and evidence.get("snapshot_collector") == SNAPSHOT_COLLECTOR_GIT_STATUS_V1
+        and boundary.get("executor_controlled") is False
+        and boundary.get("pre_captured_before_executor") is True
+        and boundary.get("post_captured_after_executor") is True
+        and boundary.get("same_collector") is True
+        and boundary.get("trust_boundary_satisfied") is True
+    )
+    if trusted:
+        checks.append("mutation boundary snapshot trust satisfied")
+    else:
+        errors.append("INVALID_EVIDENCE: mutation boundary snapshot trust not satisfied")
+
+    expected_status = _expected_mutation_boundary_status(trusted, pre_snapshot, recomputed_delta)
+    if evidence.get("mutation_boundary_status") == expected_status:
+        checks.append(f"mutation_boundary_status replay matched: {expected_status}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: mutation_boundary_status mismatch: "
+            f"evidence={evidence.get('mutation_boundary_status')} replay={expected_status}"
+        )
+
+    expected_delta_source = MUTATION_DELTA_SOURCE_COMPUTED if trusted else evidence.get("mutation_delta_source")
+    if trusted and evidence.get("mutation_delta_source") != expected_delta_source:
+        errors.append(
+            "INVALID_EVIDENCE: mutation_delta_source mismatch: "
+            f"evidence={evidence.get('mutation_delta_source')} replay={expected_delta_source}"
+        )
+    elif trusted:
+        checks.append(f"mutation_delta_source replay matched: {expected_delta_source}")
+
+    if evidence.get("mutation_boundary_status") == MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT:
+        errors.append("INVALID_EVIDENCE: untrusted snapshot boundary cannot be replay-clean")
+
+    if evidence.get("status") == "PASS":
+        errors.append("INVALID_EVIDENCE: mutation boundary cannot promote status PASS")
+
+    if manifest is not None and manifest.get("computed_mutation_delta") == recomputed_delta:
+        checks.append("manifest computed_mutation_delta replay matched")
+    elif manifest is not None:
+        errors.append("INVALID_EVIDENCE: manifest computed_mutation_delta mismatch with replay")
+
+    return checks, errors
+
+
+def _expected_mutation_boundary_status(
+    trusted: bool,
+    pre_snapshot: list[dict[str, Any]],
+    computed_delta: list[dict[str, Any]],
+) -> str:
+    if not trusted:
+        return MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT
+    if computed_delta:
+        return MUTATION_BOUNDARY_DELTA_DETECTED
+    if pre_snapshot:
+        return MUTATION_BOUNDARY_DIRTY_PREEXISTING
+    return MUTATION_BOUNDARY_CLEAN
+
+
 def _check_equal(checks: list[str], errors: list[str], label: str, actual: Any, expected: Any) -> None:
     if actual == expected:
         checks.append(f"{label} matched")
@@ -395,6 +587,10 @@ def _check_equal(checks: list[str], errors: list[str], label: str, actual: Any, 
 
 def _is_string_list(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_object_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
 
 
 def _string_list(value: Any) -> list[str]:

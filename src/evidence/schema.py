@@ -13,11 +13,17 @@ from src.contracts import (
     COMPLETION_CONTRACT_V0,
     CONTRACT_FIRST_NOOP,
     EVIDENCE_BINDING_V1,
+    GIT_STATUS_PORCELAIN_V1,
     HIGH,
     IMPACT_RISKS,
     NEEDS_USER_GATE,
+    MUTATION_BOUNDARY_STATUSES,
+    MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
+    MUTATION_DELTA_SOURCE_COMPUTED,
+    MUTATION_DELTA_SOURCE_UNTRUSTED,
     RISK_LEVELS,
     SAFE_DEFAULT,
+    SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     STATUSES,
 )
 
@@ -46,6 +52,20 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "status",
     "status_reasons",
     "safe_default",
+    "pre_run_changed_files",
+    "post_run_changed_files",
+    "pre_snapshot_source",
+    "post_snapshot_source",
+    "snapshot_collector",
+    "snapshot_trust_boundary",
+    "executor_reported_changed_files",
+    "executor_reported_mutation_delta",
+    "computed_mutation_delta",
+    "mutation_delta_source",
+    "pre_existing_dirty_tree",
+    "executor_created_mutation",
+    "protected_path_mutation_detected",
+    "mutation_boundary_status",
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -70,6 +90,10 @@ BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
     "bound_head_sha",
     "bound_tree_sha",
     "bound_changed_files_hash",
+    "bound_pre_run_changed_files_hash",
+    "bound_post_run_changed_files_hash",
+    "bound_computed_mutation_delta_hash",
+    "bound_snapshot_trust_boundary_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
     "bound_at",
@@ -115,6 +139,20 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "checks", dict, errors)
     _expect(packet, "status_reasons", list, errors)
     _expect(packet, "safe_default", str, errors)
+    _expect(packet, "pre_run_changed_files", list, errors)
+    _expect(packet, "post_run_changed_files", list, errors)
+    _expect(packet, "pre_snapshot_source", str, errors)
+    _expect(packet, "post_snapshot_source", str, errors)
+    _expect(packet, "snapshot_collector", str, errors)
+    _expect(packet, "snapshot_trust_boundary", dict, errors)
+    _expect(packet, "executor_reported_changed_files", list, errors)
+    _expect(packet, "executor_reported_mutation_delta", list, errors)
+    _expect(packet, "computed_mutation_delta", list, errors)
+    _expect(packet, "mutation_delta_source", str, errors)
+    _expect(packet, "pre_existing_dirty_tree", list, errors)
+    _expect(packet, "executor_created_mutation", list, errors)
+    _expect(packet, "protected_path_mutation_detected", bool, errors)
+    _expect(packet, "mutation_boundary_status", str, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
         errors.append(f"unsupported aeg_version: {packet.get('aeg_version')}")
@@ -130,6 +168,16 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
         errors.append(f"invalid changed_files_source: {packet.get('changed_files_source')}")
     if packet.get("status") not in STATUSES:
         errors.append(f"invalid status: {packet.get('status')}")
+    if packet.get("mutation_boundary_status") not in MUTATION_BOUNDARY_STATUSES:
+        errors.append(f"invalid mutation_boundary_status: {packet.get('mutation_boundary_status')}")
+    if packet.get("pre_snapshot_source") != GIT_STATUS_PORCELAIN_V1:
+        errors.append(f"invalid pre_snapshot_source: {packet.get('pre_snapshot_source')}")
+    if packet.get("post_snapshot_source") != GIT_STATUS_PORCELAIN_V1:
+        errors.append(f"invalid post_snapshot_source: {packet.get('post_snapshot_source')}")
+    if packet.get("snapshot_collector") != SNAPSHOT_COLLECTOR_GIT_STATUS_V1:
+        errors.append(f"invalid snapshot_collector: {packet.get('snapshot_collector')}")
+    if packet.get("mutation_delta_source") not in (MUTATION_DELTA_SOURCE_COMPUTED, MUTATION_DELTA_SOURCE_UNTRUSTED):
+        errors.append(f"invalid mutation_delta_source: {packet.get('mutation_delta_source')}")
     if packet.get("status") == "PASS":
         errors.append("PASS is not a valid Day-1 status")
     if not all(isinstance(item, str) for item in packet.get("changed_files", [])):
@@ -142,6 +190,26 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
         errors.append("protected_paths_touched must contain only strings")
     if not all(isinstance(item, str) for item in packet.get("status_reasons", [])):
         errors.append("status_reasons must contain only strings")
+    if not all(isinstance(item, dict) for item in packet.get("pre_run_changed_files", [])):
+        errors.append("pre_run_changed_files must contain only objects")
+    if not all(isinstance(item, dict) for item in packet.get("post_run_changed_files", [])):
+        errors.append("post_run_changed_files must contain only objects")
+    if not all(isinstance(item, dict) for item in packet.get("computed_mutation_delta", [])):
+        errors.append("computed_mutation_delta must contain only objects")
+    if not all(isinstance(item, dict) for item in packet.get("pre_existing_dirty_tree", [])):
+        errors.append("pre_existing_dirty_tree must contain only objects")
+    if not all(isinstance(item, dict) for item in packet.get("executor_created_mutation", [])):
+        errors.append("executor_created_mutation must contain only objects")
+
+    trust_boundary = packet.get("snapshot_trust_boundary")
+    if isinstance(trust_boundary, dict):
+        if trust_boundary.get("executor_controlled") is not False:
+            errors.append("INVALID_EVIDENCE: snapshot collector must be outside executor control")
+        if trust_boundary.get("trust_boundary_satisfied") is not True:
+            if packet.get("mutation_boundary_status") != MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT:
+                errors.append("INVALID_EVIDENCE: untrusted snapshot boundary must not be marked clean")
+        if packet.get("mutation_boundary_status") == MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT and packet.get("status") == CLEAN_CORE:
+            errors.append("INVALID_EVIDENCE: untrusted snapshot boundary cannot be CLEAN_CORE")
 
     return errors
 
@@ -196,6 +264,10 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_head_sha",
         "bound_tree_sha",
         "bound_changed_files_hash",
+        "bound_pre_run_changed_files_hash",
+        "bound_post_run_changed_files_hash",
+        "bound_computed_mutation_delta_hash",
+        "bound_snapshot_trust_boundary_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
         "bound_at",
@@ -222,7 +294,14 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
     if packet.get("judgment_basis") == "reported_only":
         errors.append("INVALID_EVIDENCE: reported_only cannot be judgment basis")
 
-    for field in ("bound_changed_files_hash", "bound_manifest_hash"):
+    for field in (
+        "bound_changed_files_hash",
+        "bound_pre_run_changed_files_hash",
+        "bound_post_run_changed_files_hash",
+        "bound_computed_mutation_delta_hash",
+        "bound_snapshot_trust_boundary_hash",
+        "bound_manifest_hash",
+    ):
         value = packet.get(field)
         if isinstance(value, str) and not _is_sha256_hex(value):
             errors.append(f"INVALID_EVIDENCE: {field} must be sha256 hex")

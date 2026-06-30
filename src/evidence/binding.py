@@ -60,6 +60,11 @@ def build_run_manifest(
     changed_files = evidence.get("changed_files", [])
     if not isinstance(changed_files, list):
         changed_files = []
+    pre_run_changed_files = _list_field(evidence, "pre_run_changed_files")
+    post_run_changed_files = _list_field(evidence, "post_run_changed_files")
+    computed_mutation_delta = _list_field(evidence, "computed_mutation_delta")
+    pre_existing_dirty_tree = _list_field(evidence, "pre_existing_dirty_tree")
+    executor_created_mutation = _list_field(evidence, "executor_created_mutation")
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -70,6 +75,24 @@ def build_run_manifest(
         "changed_files": list(changed_files),
         "changed_files_source": evidence.get("changed_files_source", ""),
         "changed_files_hash": changed_files_hash(changed_files),
+        "pre_run_changed_files": list(pre_run_changed_files),
+        "post_run_changed_files": list(post_run_changed_files),
+        "pre_run_changed_files_hash": sha256_json(pre_run_changed_files),
+        "post_run_changed_files_hash": sha256_json(post_run_changed_files),
+        "pre_snapshot_source": evidence.get("pre_snapshot_source", ""),
+        "post_snapshot_source": evidence.get("post_snapshot_source", ""),
+        "snapshot_collector": evidence.get("snapshot_collector", ""),
+        "snapshot_trust_boundary": evidence.get("snapshot_trust_boundary", {}),
+        "snapshot_trust_boundary_hash": sha256_json(evidence.get("snapshot_trust_boundary", {})),
+        "computed_mutation_delta": list(computed_mutation_delta),
+        "computed_mutation_delta_hash": sha256_json(computed_mutation_delta),
+        "mutation_delta_source": evidence.get("mutation_delta_source", ""),
+        "pre_existing_dirty_tree": list(pre_existing_dirty_tree),
+        "pre_existing_dirty_tree_hash": sha256_json(pre_existing_dirty_tree),
+        "executor_created_mutation": list(executor_created_mutation),
+        "executor_created_mutation_hash": sha256_json(executor_created_mutation),
+        "protected_path_mutation_detected": evidence.get("protected_path_mutation_detected", False),
+        "mutation_boundary_status": evidence.get("mutation_boundary_status", ""),
         "evidence_path": repo_relative_path(repo_root, evidence_path),
         "run_path": repo_relative_path(repo_root, run_path),
         "task_text_hash": sha256_text(task_text),
@@ -95,6 +118,10 @@ def bind_evidence_to_manifest(
     evidence["bound_head_sha"] = manifest.get("head_sha", "")
     evidence["bound_tree_sha"] = manifest.get("tree_sha", "")
     evidence["bound_changed_files_hash"] = manifest.get("changed_files_hash", "")
+    evidence["bound_pre_run_changed_files_hash"] = manifest.get("pre_run_changed_files_hash", "")
+    evidence["bound_post_run_changed_files_hash"] = manifest.get("post_run_changed_files_hash", "")
+    evidence["bound_computed_mutation_delta_hash"] = manifest.get("computed_mutation_delta_hash", "")
+    evidence["bound_snapshot_trust_boundary_hash"] = manifest.get("snapshot_trust_boundary_hash", "")
     evidence["bound_manifest_hash"] = bound_manifest_hash
     evidence["bound_manifest_path"] = manifest_path
     evidence["bound_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -104,3 +131,11 @@ def bind_evidence_to_manifest(
     if isinstance(checks, dict):
         checks["evidence_binding_v1_required"] = True
         checks["reported_only_is_not_judgment_basis"] = True
+        checks["mutation_boundary_v1_required"] = True
+
+
+def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:
+    value = evidence.get(field, [])
+    if isinstance(value, list):
+        return list(value)
+    return []

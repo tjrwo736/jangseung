@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import src.state.git as git_state
+from src.agents.noop import execute_contract as noop_execute_contract
 from src.cli.main import _cmd_doctor, _cmd_run
 from src.contracts import (
     BOUND,
@@ -21,6 +22,11 @@ from src.contracts import (
     HIGH,
     LOW,
     MEDIUM,
+    MUTATION_BOUNDARY_CLEAN,
+    MUTATION_BOUNDARY_DELTA_DETECTED,
+    MUTATION_BOUNDARY_DIRTY_PREEXISTING,
+    MUTATION_DELTA_SOURCE_COMPUTED,
+    REPORTED_ONLY,
     NEEDS_USER_GATE,
     NO_CHANGED_FILES,
     NO_CHANGED_FILES_SOURCE,
@@ -29,6 +35,7 @@ from src.contracts import (
     RUN_MANIFEST_V1,
     SAFE_DEFAULT,
 )
+from src.evidence.binding import sha256_json
 from src.evidence import (
     manifest_hash,
     validate_completion_contract_v0,
@@ -198,6 +205,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["protected_paths_touched"], [])
         self.assertFalse(evidence["risk_escalation_applied"])
         self.assertEqual(evidence["status"], CLEAN_CORE)
+        self.assertEqual(evidence["pre_run_changed_files"], [])
+        self.assertEqual(evidence["post_run_changed_files"], [])
+        self.assertEqual(evidence["pre_existing_dirty_tree"], [])
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["executor_created_mutation"], [])
+        self.assertFalse(evidence["protected_path_mutation_detected"])
+        self.assertEqual(evidence["mutation_delta_source"], MUTATION_DELTA_SOURCE_COMPUTED)
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
@@ -226,6 +241,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(manifest["tree_sha"], evidence["tree_sha"])
         self.assertEqual(manifest["changed_files"], evidence["changed_files"])
         self.assertEqual(manifest["changed_files_source"], evidence["changed_files_source"])
+        self.assertEqual(manifest["pre_run_changed_files"], evidence["pre_run_changed_files"])
+        self.assertEqual(manifest["post_run_changed_files"], evidence["post_run_changed_files"])
+        self.assertEqual(manifest["computed_mutation_delta"], evidence["computed_mutation_delta"])
+        self.assertEqual(manifest["mutation_boundary_status"], evidence["mutation_boundary_status"])
         self.assertEqual(manifest["risk_level"], evidence["risk_level"])
         self.assertEqual(manifest["status"], evidence["status"])
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -363,7 +382,7 @@ class CliRuntimeTests(unittest.TestCase):
     def test_changed_files_source_failure_is_not_checked(self):
         self._aeg("init")
         with patch(
-            "src.cli.main.git.changed_files_with_source",
+            "src.evidence.mutation_boundary.git.changed_file_snapshot",
             side_effect=git_state.GitError("status unavailable"),
         ):
             with contextlib.redirect_stdout(io.StringIO()):
@@ -378,9 +397,90 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], LOW)
         self.assertEqual(evidence["status"], NOT_CHECKED)
 
+    def test_dirty_pre_tree_noop_records_preexisting_without_executor_mutation(self):
+        self._aeg("init")
+        (self.repo / "README.md").write_text("# Test\n\nTypo fix\n", encoding="utf-8")
+
+        self._aeg("run", "fix typo in README")
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["changed_files"], ["README.md"])
+        self.assertEqual(evidence["pre_existing_dirty_tree"][0]["path"], "README.md")
+        self.assertEqual(evidence["pre_run_changed_files"], evidence["post_run_changed_files"])
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["executor_created_mutation"], [])
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_DIRTY_PREEXISTING)
+
+    def test_post_run_new_tracked_diff_detects_computed_mutation_delta(self):
+        self._aeg("init")
+
+        def mutating_executor(task_text, classification, law_result):
+            (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 2\n", encoding="utf-8")
+            return noop_execute_contract(task_text, classification, law_result)
+
+        with patch("src.cli.main.execute_contract", side_effect=mutating_executor):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README")
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_DELTA_DETECTED)
+        self.assertEqual(evidence["computed_mutation_delta"][0]["path"], "src/agents/executor.py")
+        self.assertEqual(evidence["executor_created_mutation"], evidence["computed_mutation_delta"])
+        self.assertEqual(evidence["risk_level"], MEDIUM)
+        self.assertEqual(evidence["status"], NOT_CHECKED)
+
+    def test_post_run_protected_path_mutation_escalates_low_task(self):
+        self._aeg("init")
+
+        def mutating_executor(task_text, classification, law_result):
+            (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
+            return noop_execute_contract(task_text, classification, law_result)
+
+        with patch("src.cli.main.execute_contract", side_effect=mutating_executor):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README")
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["intent_risk"], LOW)
+        self.assertEqual(evidence["risk_level"], HIGH)
+        self.assertEqual(evidence["status"], NEEDS_USER_GATE)
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_DELTA_DETECTED)
+        self.assertTrue(evidence["protected_path_mutation_detected"])
+        self.assertEqual(evidence["protected_paths_touched"], ["src/classify/rules.py"])
+
+    def test_executor_reported_mutation_is_reported_only_not_judgment_basis(self):
+        self._aeg("init")
+
+        def reporting_executor(task_text, classification, law_result):
+            result = noop_execute_contract(task_text, classification, law_result)
+            result["changed_files"] = ["src/classify/rules.py"]
+            result["mutation_delta"] = [{"path": "src/classify/rules.py"}]
+            return result
+
+        with patch("src.cli.main.execute_contract", side_effect=reporting_executor):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README")
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["executor_reported_changed_files"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["executor_reported_changed_files_source"], REPORTED_ONLY)
+        self.assertEqual(evidence["executor_reported_mutation_delta"], [{"path": "src/classify/rules.py"}])
+        self.assertEqual(evidence["executor_reported_mutation_delta_source"], REPORTED_ONLY)
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self.assertEqual(evidence["risk_level"], LOW)
+        self.assertEqual(evidence["status"], CLEAN_CORE)
+
     def test_aeg_state_is_ignored_and_no_tracked_mutation(self):
         self._aeg("init")
         self._aeg("run", "fix typo in README")
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        for field in ("pre_run_changed_files", "post_run_changed_files"):
+            self.assertFalse(any(entry["path"].startswith(".aeg/") for entry in evidence[field]))
         tracked_status = self._git("status", "--porcelain=v1").stdout.strip()
         self.assertEqual(tracked_status, "")
         tracked_aeg = self._git("ls-files", ".aeg").stdout.strip()
@@ -580,6 +680,41 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: reported_only evidence is not judgment basis", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: reported_only cannot be judgment basis", verify.stdout)
 
+    def test_verify_rejects_untrusted_snapshot_collector(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["snapshot_collector"] = "executor_controlled_collector"
+        manifest["snapshot_collector"] = evidence["snapshot_collector"]
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("invalid snapshot_collector", verify.stdout)
+        self.assertIn("mutation boundary snapshot trust not satisfied", verify.stdout)
+
+    def test_verify_recomputes_mutation_delta_from_snapshots_not_executor_report(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        fake_delta = [{"path": "src/classify/rules.py", "transition": "executor_reported_only"}]
+        evidence["executor_reported_mutation_delta"] = fake_delta
+        evidence["computed_mutation_delta"] = fake_delta
+        evidence["bound_computed_mutation_delta_hash"] = sha256_json(fake_delta)
+        manifest["computed_mutation_delta"] = fake_delta
+        manifest["computed_mutation_delta_hash"] = sha256_json(fake_delta)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("computed_mutation_delta mismatch", verify.stdout)
+
     def _assert_verify_consistent(self, verify):
         self.assertIn("status: REPLAY_CONSISTENT", verify.stdout)
         self.assertIn("verification_scope: deterministic_replay_and_binding_validation", verify.stdout)
@@ -636,6 +771,11 @@ class CliRuntimeTests(unittest.TestCase):
     def _write_manifest_and_rebind_hash(self, manifest_path, manifest):
         self._write_json(manifest_path, manifest)
         evidence, evidence_path = self._latest_evidence_with_path()
+        evidence["bound_manifest_hash"] = manifest_hash(manifest)
+        self._write_json(evidence_path, evidence)
+
+    def _write_evidence_and_manifest_with_bound_hash(self, evidence_path, evidence, manifest_path, manifest):
+        self._write_json(manifest_path, manifest)
         evidence["bound_manifest_hash"] = manifest_hash(manifest)
         self._write_json(evidence_path, evidence)
 
