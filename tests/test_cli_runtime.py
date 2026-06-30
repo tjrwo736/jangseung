@@ -12,8 +12,10 @@ from unittest.mock import patch
 import src.state.git as git_state
 from src.cli.main import _cmd_run
 from src.contracts import (
+    BOUND,
     CLEAN_CORE,
     CONTRACT_FIRST_NOOP,
+    EVIDENCE_BINDING_V1,
     GIT_STAGED,
     GIT_WORKING_TREE,
     HIGH,
@@ -24,11 +26,14 @@ from src.contracts import (
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
+    RUN_MANIFEST_V1,
     SAFE_DEFAULT,
 )
 from src.evidence import (
+    manifest_hash,
     validate_completion_contract_v0,
     validate_evidence_binding_v0,
+    validate_evidence_binding_v1,
     validate_user_gate_reason_card_v1,
 )
 
@@ -59,6 +64,8 @@ class CliRuntimeTests(unittest.TestCase):
         self._aeg("init")
         run = self._aeg("run", "fix typo in README")
         self.assertIn("status: CLEAN_CORE", run.stdout)
+        self.assertIn("binding_status: BOUND", run.stdout)
+        self.assertIn("binding_version: evidence_binding_v1", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -68,11 +75,38 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["protected_paths_touched"], [])
         self.assertFalse(evidence["risk_escalation_applied"])
         self.assertEqual(evidence["status"], CLEAN_CORE)
+        self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
+        self.assertEqual(evidence["binding_status"], BOUND)
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
+        self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_completion_contract_v0(evidence), [])
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
+        self.assertIn("binding_status: BOUND", verify.stdout)
+        self.assertIn("evidence binding v1 valid", verify.stdout)
         self.assertIn("LOW risk remained CLEAN_CORE", verify.stdout)
+
+    def test_run_creates_manifest_with_deterministic_binding_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+
+        evidence, _ = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+
+        self.assertTrue(manifest_path.exists())
+        self.assertEqual(manifest["manifest_version"], RUN_MANIFEST_V1)
+        self.assertEqual(manifest["run_id"], evidence["run_id"])
+        self.assertEqual(manifest["repo_root"], evidence["repo_root"])
+        self.assertEqual(manifest["branch"], evidence["branch"])
+        self.assertEqual(manifest["head_sha"], evidence["head_sha"])
+        self.assertEqual(manifest["tree_sha"], evidence["tree_sha"])
+        self.assertEqual(manifest["changed_files"], evidence["changed_files"])
+        self.assertEqual(manifest["changed_files_source"], evidence["changed_files_source"])
+        self.assertEqual(manifest["risk_level"], evidence["risk_level"])
+        self.assertEqual(manifest["status"], evidence["status"])
+        self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
+        self.assertEqual(evidence["bound_manifest_hash"], manifest_hash(manifest))
+        self.assertEqual(manifest_hash(manifest), manifest_hash(json.loads(json.dumps(manifest, sort_keys=True))))
 
     def test_medium_run_records_not_checked_with_binding_and_completion_contract(self):
         self._aeg("init")
@@ -81,6 +115,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("impact_risk: NO_CHANGED_FILES", run.stdout)
         self.assertIn("risk_level: MEDIUM", run.stdout)
         self.assertIn("status: NOT_CHECKED", run.stdout)
+        self.assertIn("binding_status: BOUND", run.stdout)
         self.assertNotIn("status: CLEAN_CORE", run.stdout)
 
         evidence = self._latest_evidence()
@@ -88,7 +123,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
         self.assertEqual(evidence["risk_level"], MEDIUM)
         self.assertEqual(evidence["status"], NOT_CHECKED)
+        self.assertEqual(evidence["binding_status"], BOUND)
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
+        self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_completion_contract_v0(evidence), [])
 
         executor = evidence["checks"]["executor"]
@@ -105,6 +142,7 @@ class CliRuntimeTests(unittest.TestCase):
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
         self.assertIn("evidence binding v0 valid", verify.stdout)
+        self.assertIn("evidence binding v1 valid", verify.stdout)
         self.assertIn("completion contract v0 valid", verify.stdout)
         self.assertIn("law status replay matched: NOT_CHECKED", verify.stdout)
 
@@ -120,7 +158,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], HIGH)
         self.assertEqual(evidence["changed_files_source"], NO_CHANGED_FILES_SOURCE)
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
+        self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
+        self.assertEqual(evidence["binding_status"], BOUND)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
+        self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_user_gate_reason_card_v1(evidence), [])
         card = evidence["user_gate_reason_card"]
         self.assertEqual(card["risk_level"], HIGH)
@@ -133,6 +174,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(card["safe_default"], SAFE_DEFAULT)
         verify = self._aeg("verify")
         self.assertIn("status: PASS", verify.stdout)
+        self.assertIn("binding_status: BOUND", verify.stdout)
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
         self.assertIn("HIGH user gate reason card valid", verify.stdout)
 
@@ -231,8 +273,8 @@ class CliRuntimeTests(unittest.TestCase):
         verify = self._aeg("verify", check=False)
         self.assertNotEqual(verify.returncode, 0)
         self.assertIn("status: FAIL", verify.stdout)
-        self.assertIn("INVALID_EVIDENCE: protected path touched but saved risk_level is LOW", verify.stdout)
-        self.assertIn("risk_level mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: changed_files mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: bound_changed_files_hash mismatch", verify.stdout)
 
     def test_verify_rejects_saved_risk_level_mismatch(self):
         self._aeg("init")
@@ -282,7 +324,122 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertNotEqual(verify.returncode, 0)
         self.assertIn("missing required field: changed_files_source", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: missing evidence binding field: changed_files_source", verify.stdout)
-        self.assertIn("INVALID_EVIDENCE: NOT_CHECKED impact cannot be CLEAN_CORE", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest changed_files_source mismatch", verify.stdout)
+
+    def test_verify_rejects_missing_manifest(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        _, manifest_path = self._latest_manifest_with_path()
+        manifest_path.unlink()
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: manifest missing", verify.stdout)
+
+    def test_verify_rejects_manifest_hash_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["status"] = NOT_CHECKED
+        self._write_json(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: manifest hash mismatch", verify.stdout)
+
+    def test_verify_rejects_run_id_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["run_id"] = "tampered-run-id"
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: manifest run_id mismatch", verify.stdout)
+
+    def test_verify_rejects_changed_files_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["changed_files"] = ["README.md"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: changed_files mismatch", verify.stdout)
+
+    def test_verify_rejects_changed_files_hash_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["bound_changed_files_hash"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: bound_changed_files_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_evidence_path_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["evidence_path"] = ".aeg/runs/other/evidence.json"
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: manifest evidence_path mismatch", verify.stdout)
+
+    def test_verify_rejects_run_path_mismatch(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["run_path"] = ".aeg/runs/other/run.json"
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: manifest run_path mismatch", verify.stdout)
+
+    def test_verify_rejects_missing_binding_fields(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["binding_version"]
+        del evidence["bound_head_sha"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: missing evidence binding v1 field: binding_version", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: missing evidence binding v1 field: bound_head_sha", verify.stdout)
+
+    def test_verify_rejects_non_bound_clean_core(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["binding_status"] = NOT_CHECKED
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: binding_status must be BOUND for judgment basis", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: CLEAN_CORE requires binding_status BOUND", verify.stdout)
+        self.assertNotIn("status: PASS", verify.stdout)
+
+    def test_verify_rejects_reported_only_as_judgment_basis(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["reported_only"] = True
+        evidence["judgment_basis"] = "reported_only"
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("INVALID_EVIDENCE: reported_only evidence is not judgment basis", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: reported_only cannot be judgment basis", verify.stdout)
 
     def _aeg(self, *args, check=True):
         env = os.environ.copy()
@@ -317,6 +474,22 @@ class CliRuntimeTests(unittest.TestCase):
         entry = json.loads(line)
         path = self.repo / ".aeg" / "runs" / entry["run_id"] / "evidence.json"
         return json.loads(path.read_text(encoding="utf-8")), path
+
+    def _latest_manifest_with_path(self):
+        ledger = self.repo / ".aeg" / "ledger.jsonl"
+        line = [line for line in ledger.read_text(encoding="utf-8").splitlines() if line][-1]
+        entry = json.loads(line)
+        path = self.repo / ".aeg" / "runs" / entry["run_id"] / "manifest.json"
+        return json.loads(path.read_text(encoding="utf-8")), path
+
+    def _write_manifest_and_rebind_hash(self, manifest_path, manifest):
+        self._write_json(manifest_path, manifest)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        evidence["bound_manifest_hash"] = manifest_hash(manifest)
+        self._write_json(evidence_path, evidence)
+
+    def _write_json(self, path, payload):
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

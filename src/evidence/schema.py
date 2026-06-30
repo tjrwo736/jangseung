@@ -6,9 +6,13 @@ from typing import Any
 
 from src.contracts import (
     AEG_VERSION,
+    BINDING_STATUSES,
+    BOUND,
     CHANGED_FILES_SOURCES,
+    CLEAN_CORE,
     COMPLETION_CONTRACT_V0,
     CONTRACT_FIRST_NOOP,
+    EVIDENCE_BINDING_V1,
     HIGH,
     IMPACT_RISKS,
     NEEDS_USER_GATE,
@@ -54,6 +58,21 @@ BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
     "risk_level",
     "status",
     "run_id",
+)
+
+BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
+    "binding_version",
+    "binding_status",
+    "binding_reasons",
+    "bound_run_id",
+    "bound_repo_root",
+    "bound_branch",
+    "bound_head_sha",
+    "bound_tree_sha",
+    "bound_changed_files_hash",
+    "bound_manifest_hash",
+    "bound_manifest_path",
+    "bound_at",
 )
 
 USER_GATE_REASON_CARD_FIELDS: tuple[str, ...] = (
@@ -154,6 +173,74 @@ def validate_evidence_binding_v0(packet: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for field in BINDING_V1_REQUIRED_FIELDS:
+        if field not in packet:
+            errors.append(f"INVALID_EVIDENCE: missing evidence binding v1 field: {field}")
+
+    if errors:
+        return errors
+
+    if packet.get("binding_version") != EVIDENCE_BINDING_V1:
+        errors.append(f"INVALID_EVIDENCE: binding_version must be {EVIDENCE_BINDING_V1}")
+    if packet.get("binding_status") not in BINDING_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid binding_status: {packet.get('binding_status')}")
+
+    string_fields = (
+        "binding_version",
+        "binding_status",
+        "bound_run_id",
+        "bound_repo_root",
+        "bound_branch",
+        "bound_head_sha",
+        "bound_tree_sha",
+        "bound_changed_files_hash",
+        "bound_manifest_hash",
+        "bound_manifest_path",
+        "bound_at",
+    )
+    for field in string_fields:
+        value = packet.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"INVALID_EVIDENCE: evidence binding v1 field must be non-empty string: {field}")
+
+    binding_reasons = packet.get("binding_reasons")
+    if not isinstance(binding_reasons, list):
+        errors.append("INVALID_EVIDENCE: binding_reasons must be list")
+    elif not all(isinstance(item, str) for item in binding_reasons):
+        errors.append("INVALID_EVIDENCE: binding_reasons must contain only strings")
+
+    if packet.get("binding_status") != BOUND:
+        errors.append("INVALID_EVIDENCE: binding_status must be BOUND for judgment basis")
+    if packet.get("status") == "PASS":
+        errors.append("INVALID_EVIDENCE: binding_status cannot promote evidence to PASS")
+    if packet.get("status") == CLEAN_CORE and packet.get("binding_status") != BOUND:
+        errors.append("INVALID_EVIDENCE: CLEAN_CORE requires binding_status BOUND")
+    if packet.get("reported_only") is True:
+        errors.append("INVALID_EVIDENCE: reported_only evidence is not judgment basis")
+    if packet.get("judgment_basis") == "reported_only":
+        errors.append("INVALID_EVIDENCE: reported_only cannot be judgment basis")
+
+    for field in ("bound_changed_files_hash", "bound_manifest_hash"):
+        value = packet.get(field)
+        if isinstance(value, str) and not _is_sha256_hex(value):
+            errors.append(f"INVALID_EVIDENCE: {field} must be sha256 hex")
+
+    if packet.get("bound_run_id") != packet.get("run_id"):
+        errors.append("INVALID_EVIDENCE: bound_run_id mismatch")
+    if packet.get("bound_repo_root") != packet.get("repo_root"):
+        errors.append("INVALID_EVIDENCE: bound_repo_root mismatch")
+    if packet.get("bound_branch") != packet.get("branch"):
+        errors.append("INVALID_EVIDENCE: bound_branch mismatch")
+    if packet.get("bound_head_sha") != packet.get("head_sha"):
+        errors.append("INVALID_EVIDENCE: bound_head_sha mismatch")
+    if packet.get("bound_tree_sha") != packet.get("tree_sha"):
+        errors.append("INVALID_EVIDENCE: bound_tree_sha mismatch")
+
+    return errors
+
+
 def validate_completion_contract_v0(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     task_text = packet.get("task_text")
@@ -247,3 +334,7 @@ def validate_user_gate_reason_card_v1(packet: dict[str, Any]) -> list[str]:
 def _expect(packet: dict[str, Any], field: str, expected: type, errors: list[str]) -> None:
     if field in packet and not isinstance(packet[field], expected):
         errors.append(f"{field} must be {expected.__name__}")
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(char in "0123456789abcdefABCDEF" for char in value)

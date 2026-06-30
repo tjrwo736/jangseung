@@ -15,6 +15,12 @@ from src.contracts import (
     SAFE_DEFAULT,
     STATE_DIR,
 )
+from src.evidence.binding import (
+    bind_evidence_to_manifest,
+    build_run_manifest,
+    manifest_hash,
+    repo_relative_path,
+)
 
 
 def state_root(repo_root: str | Path) -> Path:
@@ -91,8 +97,19 @@ def save_run(repo_root: str | Path, evidence: dict[str, Any], run_payload: dict[
 
     run_path = _assert_under_state(repo_root, run_dir / "run.json")
     evidence_path = _assert_under_state(repo_root, run_dir / "evidence.json")
+    manifest_path = _assert_under_state(repo_root, run_dir / "manifest.json")
+
+    manifest = build_run_manifest(repo_root, evidence, run_path, evidence_path)
+    bound_manifest_hash = manifest_hash(manifest)
+    bind_evidence_to_manifest(
+        evidence,
+        manifest,
+        repo_relative_path(repo_root, manifest_path),
+        bound_manifest_hash,
+    )
 
     _write_json(run_path, run_payload)
+    _write_json(manifest_path, manifest)
     _write_json(evidence_path, evidence)
 
     append_ledger(
@@ -107,10 +124,17 @@ def save_run(repo_root: str | Path, evidence: dict[str, Any], run_payload: dict[
             "tree_sha": evidence["tree_sha"],
             "evidence_path": str(evidence_path.relative_to(Path(repo_root).resolve())),
             "run_path": str(run_path.relative_to(Path(repo_root).resolve())),
+            "manifest_path": str(manifest_path.relative_to(Path(repo_root).resolve())),
+            "manifest_hash": bound_manifest_hash,
         },
     )
 
-    return {"run_path": str(run_path), "evidence_path": str(evidence_path)}
+    return {
+        "run_path": str(run_path),
+        "evidence_path": str(evidence_path),
+        "manifest_path": str(manifest_path),
+        "manifest_hash": bound_manifest_hash,
+    }
 
 
 def latest_run_entry(repo_root: str | Path) -> dict[str, Any] | None:
