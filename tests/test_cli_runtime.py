@@ -16,6 +16,16 @@ from src.contracts import (
     BOUND,
     CLEAN_CORE,
     CONTRACT_FIRST_NOOP,
+    CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED,
+    CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    CITIZEN_ONE_MODE_OFF,
+    CITIZEN_ONE_MODE_PROPOSE,
+    CITIZEN_ONE_NOT_REQUESTED,
+    CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
+    CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
+    CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
+    CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
+    CITIZEN_ONE_STATUSES,
     EVIDENCE_BINDING_V1,
     GIT_STAGED,
     GIT_WORKING_TREE,
@@ -215,6 +225,17 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
+        self.assertFalse(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_mode"], CITIZEN_ONE_MODE_OFF)
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_NOT_REQUESTED)
+        self.assertEqual(evidence["citizen_one_provider_status"], CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED)
+        self.assertFalse(evidence["citizen_one_output_present"])
+        self.assertEqual(evidence["citizen_one_output_trust_boundary"], REPORTED_ONLY)
+        self.assertTrue(evidence["citizen_one_reported_only"])
+        self.assertEqual(evidence["provider_config_source"], CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED)
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertEqual(evidence["model_output_hash_candidate"], "")
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
         self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_completion_contract_v0(evidence), [])
@@ -224,6 +245,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("binding_status: BOUND", verify.stdout)
         self.assertIn("evidence binding v1 valid", verify.stdout)
         self.assertIn("LOW risk remained CLEAN_CORE", verify.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_NOT_REQUESTED", verify.stdout)
+        self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
 
     def test_run_creates_manifest_with_deterministic_binding_hash(self):
         self._aeg("init")
@@ -247,6 +270,15 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(manifest["mutation_boundary_status"], evidence["mutation_boundary_status"])
         self.assertEqual(manifest["risk_level"], evidence["risk_level"])
         self.assertEqual(manifest["status"], evidence["status"])
+        self.assertEqual(manifest["citizen_one_requested"], evidence["citizen_one_requested"])
+        self.assertEqual(manifest["citizen_one_status"], evidence["citizen_one_status"])
+        self.assertEqual(manifest["provider_network_used"], evidence["provider_network_used"])
+        self.assertEqual(manifest["provider_secret_observed"], evidence["provider_secret_observed"])
+        self.assertEqual(manifest["model_output_hash_candidate"], evidence["model_output_hash_candidate"])
+        self.assertEqual(
+            manifest["citizen_one_evidence_hash"],
+            sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
+        )
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
         self.assertEqual(evidence["bound_manifest_hash"], manifest_hash(manifest))
         self.assertEqual(manifest_hash(manifest), manifest_hash(json.loads(json.dumps(manifest, sort_keys=True))))
@@ -267,6 +299,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], MEDIUM)
         self.assertEqual(evidence["status"], NOT_CHECKED)
         self.assertEqual(evidence["binding_status"], BOUND)
+        self.assertFalse(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_NOT_REQUESTED)
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
         self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_completion_contract_v0(evidence), [])
@@ -304,6 +338,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
+        self.assertFalse(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_NOT_REQUESTED)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
         self.assertEqual(validate_evidence_binding_v1(evidence), [])
         self.assertEqual(validate_user_gate_reason_card_v1(evidence), [])
@@ -322,6 +358,126 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("binding_status: BOUND", verify.stdout)
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
         self.assertIn("HIGH user gate reason card valid", verify.stdout)
+
+    def test_citizen_one_opt_in_without_provider_holds_without_output_or_mutation(self):
+        self._aeg("init")
+        run = self._aeg("run", "--citizen-one", "fix typo in README")
+
+        self.assertIn("status: CLEAN_CORE", run.stdout)
+        self.assertIn("citizen_one_requested: true", run.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", run.stdout)
+        self.assertIn("provider_network_used: false", run.stdout)
+        self.assertIn("provider_secret_observed: false", run.stdout)
+        self.assertNotIn("status: PASS", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["status"], CLEAN_CORE)
+        self.assertTrue(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_mode"], CITIZEN_ONE_MODE_PROPOSE)
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+        self.assertIn(evidence["citizen_one_status"], CITIZEN_ONE_STATUSES)
+        self.assertEqual(evidence["citizen_one_provider_status"], CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED)
+        self.assertFalse(evidence["citizen_one_output_present"])
+        self.assertEqual(evidence["citizen_one_output_trust_boundary"], REPORTED_ONLY)
+        self.assertTrue(evidence["citizen_one_reported_only"])
+        self.assertEqual(evidence["citizen_one_hold_reason"], CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["provider_config_source"], CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE)
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["executor_created_mutation"], [])
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self.assertFalse(evidence["checks"]["executor"]["provider_calls"])
+        self.assertFalse(evidence["checks"]["executor"]["network_calls"])
+        self.assertFalse(evidence["checks"]["executor"]["file_mutation"])
+
+        manifest, _ = self._latest_manifest_with_path()
+        for field in self._citizen_one_fields():
+            self.assertEqual(manifest[field], evidence[field])
+
+        tracked_status = self._git("status", "--porcelain=v1").stdout.strip()
+        self.assertEqual(tracked_status, "")
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", verify.stdout)
+        self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
+
+    def test_citizen_one_opt_in_without_provider_does_not_call_network(self):
+        self._aeg("init")
+
+        with patch("socket.socket", side_effect=AssertionError("network call attempted")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README", citizen_one_requested=True)
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+
+    def test_citizen_one_opt_in_without_provider_does_not_require_api_key(self):
+        self._aeg("init")
+        provider_keys = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY")
+
+        with patch.dict(os.environ, {}, clear=False):
+            for key in provider_keys:
+                os.environ.pop(key, None)
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = _cmd_run(self.repo, "fix typo in README", citizen_one_requested=True)
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["provider_config_source"], CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE)
+        self.assertFalse(evidence["provider_secret_observed"])
+
+    def test_citizen_one_opt_in_without_provider_logs_no_secret(self):
+        self._aeg("init")
+        dummy_provider_value = "DUMMY_PROVIDER_VALUE_SHOULD_NOT_APPEAR"
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": dummy_provider_value}, clear=False):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                exit_code = _cmd_run(self.repo, "fix typo in README", citizen_one_requested=True)
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertNotIn(dummy_provider_value, output.getvalue())
+        self.assertNotIn(dummy_provider_value, json.dumps(evidence, sort_keys=True))
+        self.assertFalse(evidence["provider_secret_observed"])
+
+    def test_citizen_one_opt_in_high_remains_user_gated(self):
+        self._aeg("init")
+        run = self._aeg("run", "--citizen-one", "merge to main and deploy")
+
+        self.assertIn("status: NEEDS_USER_GATE", run.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["risk_level"], HIGH)
+        self.assertEqual(evidence["status"], NEEDS_USER_GATE)
+        self.assertTrue(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+        self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
+
+    def test_verify_rejects_tampered_citizen_one_fields(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["provider_network_used"] = True
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("Citizen One provider_network_used must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest provider_network_used mismatch", verify.stdout)
 
     def test_protected_working_tree_change_escalates_runtime_risk(self):
         self._aeg("init")
@@ -781,6 +937,22 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _write_json(self, path, payload):
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _citizen_one_fields(self):
+        return (
+            "citizen_one_requested",
+            "citizen_one_mode",
+            "citizen_one_status",
+            "citizen_one_provider_status",
+            "citizen_one_output_present",
+            "citizen_one_output_trust_boundary",
+            "citizen_one_reported_only",
+            "citizen_one_hold_reason",
+            "provider_config_source",
+            "provider_network_used",
+            "provider_secret_observed",
+            "model_output_hash_candidate",
+        )
 
 
 if __name__ == "__main__":

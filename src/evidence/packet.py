@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from src.classify import Classification
+from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, SAFE_DEFAULT, STATE_DIR
 from src.law import LawResult
 from src.state import git
@@ -25,10 +26,12 @@ def build_evidence_packet(
     law_result: LawResult,
     executor_result: dict[str, Any],
     mutation_boundary: dict[str, Any] | None = None,
+    citizen_one_requested: bool = False,
     run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = git.repo_root(cwd)
     boundary = mutation_boundary or {}
+    citizen_one = build_citizen_one_evidence(citizen_one_requested)
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -57,11 +60,14 @@ def build_evidence_packet(
             "runtime_artifacts_under_state": True,
             "not_checked_is_not_pass": True,
             "deterministic_law_replay_required": True,
+            "citizen_one_control_plane_v0_required": True,
+            "citizen_one_reported_only_is_not_judgment_basis": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
         "safe_default": SAFE_DEFAULT,
     }
+    packet.update(citizen_one)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),

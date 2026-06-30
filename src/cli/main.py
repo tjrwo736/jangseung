@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("init", help="initialize folder-local .aeg/ state")
     subparsers.add_parser("doctor", help="check local runtime prerequisites")
     run_parser = subparsers.add_parser("run", help="record a contract-first no-op run")
+    run_parser.add_argument(
+        "--citizen-one",
+        action="store_true",
+        help="opt in to the Citizen One control plane skeleton",
+    )
     run_parser.add_argument("task", help="task text to classify and gate")
     subparsers.add_parser("verify", help="verify latest evidence with deterministic replay")
 
@@ -44,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _cmd_doctor(Path.cwd())
     if args.command == "run":
-        return _cmd_run(Path.cwd(), args.task)
+        return _cmd_run(Path.cwd(), args.task, citizen_one_requested=args.citizen_one)
     if args.command == "verify":
         return _cmd_verify(Path.cwd())
     parser.error(f"unknown command: {args.command}")
@@ -82,7 +87,7 @@ def _cmd_doctor(cwd: Path) -> int:
     return 1 if status == "FAIL" else 0
 
 
-def _cmd_run(cwd: Path, task_text: str) -> int:
+def _cmd_run(cwd: Path, task_text: str, citizen_one_requested: bool = False) -> int:
     try:
         repo = git.repo_root(cwd)
         require_initialized(repo)
@@ -112,6 +117,7 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
             law_result,
             executor_result,
             mutation_boundary=mutation_boundary,
+            citizen_one_requested=citizen_one_requested,
         )
         run_payload = {
             "run_id": evidence["run_id"],
@@ -135,6 +141,14 @@ def _cmd_run(cwd: Path, task_text: str) -> int:
         ("mutation_delta_source", evidence["mutation_delta_source"]),
         ("risk_level", evidence["risk_level"]),
         ("status", evidence["status"]),
+        ("citizen_one_requested", str(evidence["citizen_one_requested"]).lower()),
+        ("citizen_one_mode", evidence["citizen_one_mode"]),
+        ("citizen_one_status", evidence["citizen_one_status"]),
+        ("citizen_one_provider_status", evidence["citizen_one_provider_status"]),
+        ("citizen_one_output_present", str(evidence["citizen_one_output_present"]).lower()),
+        ("citizen_one_output_trust_boundary", evidence["citizen_one_output_trust_boundary"]),
+        ("provider_network_used", str(evidence["provider_network_used"]).lower()),
+        ("provider_secret_observed", str(evidence["provider_secret_observed"]).lower()),
         ("binding_status", evidence.get("binding_status", "")),
         ("binding_version", evidence.get("binding_version", "")),
         ("manifest_hash", _short_hash(evidence.get("bound_manifest_hash", ""))),
@@ -195,6 +209,13 @@ def _cmd_verify(cwd: Path) -> int:
                 ("changed_files_source", result.evidence.get("changed_files_source", "")),
                 ("risk_level", result.evidence.get("risk_level", "")),
                 ("evidence_status_value", result.evidence.get("status", "")),
+                ("citizen_one_requested", str(result.evidence.get("citizen_one_requested", "")).lower()),
+                ("citizen_one_mode", result.evidence.get("citizen_one_mode", "")),
+                ("citizen_one_status", result.evidence.get("citizen_one_status", "")),
+                ("citizen_one_provider_status", result.evidence.get("citizen_one_provider_status", "")),
+                ("citizen_one_output_present", str(result.evidence.get("citizen_one_output_present", "")).lower()),
+                ("provider_network_used", str(result.evidence.get("provider_network_used", "")).lower()),
+                ("provider_secret_observed", str(result.evidence.get("provider_secret_observed", "")).lower()),
                 ("binding_status", result.evidence.get("binding_status", "")),
                 ("binding_version", result.evidence.get("binding_version", "")),
                 ("manifest_hash", _short_hash(result.evidence.get("bound_manifest_hash", ""))),

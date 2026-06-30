@@ -11,6 +11,7 @@ from src.classify import classify_task
 from src.contracts import (
     BOUND,
     CLEAN_CORE,
+    CITIZEN_ONE_EVIDENCE_FIELDS,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
     LOW,
@@ -31,6 +32,7 @@ from src.evidence.binding import (
     repo_relative_path,
     sha256_json,
     sha256_text,
+    citizen_one_manifest_fields,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -342,6 +344,21 @@ def _verify_manifest_binding(
     _check_equal(checks, errors, "manifest risk_level", manifest.get("risk_level"), evidence.get("risk_level"))
     _check_equal(checks, errors, "manifest status", manifest.get("status"), evidence.get("status"))
     _check_equal(checks, errors, "manifest safe_default", manifest.get("safe_default"), evidence.get("safe_default"))
+    evidence_citizen_one = citizen_one_manifest_fields(evidence)
+    manifest_citizen_one = citizen_one_manifest_fields(manifest)
+    for field in CITIZEN_ONE_EVIDENCE_FIELDS:
+        _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+    _check_equal(
+        checks,
+        errors,
+        "manifest citizen_one_evidence_hash",
+        manifest.get("citizen_one_evidence_hash"),
+        sha256_json(manifest_citizen_one),
+    )
+    if evidence_citizen_one == manifest_citizen_one:
+        checks.append("citizen one evidence fields matched manifest")
+    else:
+        errors.append("INVALID_EVIDENCE: citizen one evidence fields mismatch")
     _check_equal(checks, errors, "manifest pre_snapshot_source", manifest.get("pre_snapshot_source"), evidence.get("pre_snapshot_source"))
     _check_equal(checks, errors, "manifest post_snapshot_source", manifest.get("post_snapshot_source"), evidence.get("post_snapshot_source"))
     _check_equal(checks, errors, "manifest snapshot_collector", manifest.get("snapshot_collector"), evidence.get("snapshot_collector"))
