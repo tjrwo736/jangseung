@@ -28,11 +28,11 @@ The Day-0 source layout reserves module areas without implementing behavior:
 | Path | Boundary |
 | --- | --- |
 | `src/cli/` | Future single CLI entry point and command contracts. |
-| `src/classify/` | Future risk and task classification logic. |
-| `src/law/` | Future governance rules, policy evaluation, and gates. |
-| `src/agents/` | Future executor abstractions, without provider implementations in v0. |
-| `src/evidence/` | Future evidence capture, validation, and reporting contracts. |
-| `src/state/` | Future folder-local `.aeg/` state contracts. |
+| `src/classify/` | CLASSIFY is the heart. This module classifies each task or action as LOW, MEDIUM, or HIGH risk before gates or execution are selected. |
+| `src/law/` | LAW selects gate thickness by risk. This module uses the classified risk level to choose how much review, validation, or user approval is required. |
+| `src/agents/` | AGENTS are in-process citizens. They are future executor abstractions inside the single Aegis process, not separate services in Bootstrap v0. |
+| `src/evidence/` | EVIDENCE writes bound packets. This module will record evidence packets bound to commit, tree, changed files, and status. |
+| `src/state/` | .aeg/ is folder-local state and ledger. This module owns future contracts for folder-local runtime state and ledger records under `.aeg/`. |
 | `tests/` | Future tests for contracts and behavior. |
 
 These directories are placeholders only. Bootstrap v0 does not define Python
@@ -45,10 +45,10 @@ The intended runtime shape is:
 ```text
 user intent
   -> single Aegis CLI
-  -> classification
-  -> governance and risk gates
-  -> bounded execution
-  -> evidence capture
+  -> CLASSIFY is the heart: classify task/action risk as LOW, MEDIUM, or HIGH
+  -> LAW selects gate thickness by risk
+  -> bounded in-process citizen execution
+  -> EVIDENCE writes bound packets
   -> validation report
   -> user-gated decisions where required
 ```
@@ -61,6 +61,8 @@ implemented in Repo Bootstrap v0.
 Future Aegis runtime state should be folder-local under `.aeg/`. That directory
 is local operational state and is ignored by Git. A future scoped task should
 define the state schema before any command writes to it.
+.aeg/ is folder-local state and ledger: it is the intended home for runtime
+state and ledger records, never a committed artifact.
 
 Expected future state categories may include:
 
@@ -87,6 +89,10 @@ Aegis completion claims should be backed by direct evidence:
 Reported-only evidence is not sufficient by itself. Not-checked evidence is not
 a pass. DRA or other executor self-report is input to review, not the source of
 truth.
+
+Bound packets should connect claims to concrete repository facts: commit, tree,
+changed files, and status. Without those bindings, evidence is only narrative
+and cannot carry a gate decision.
 
 ## Forbidden Scope in Bootstrap v0
 
@@ -116,6 +122,11 @@ Day-1 work can begin from this repository by defining contracts before behavior:
 3. Evidence packet contract.
 4. Risk classification contract.
 5. Validation strategy.
+
+v0.1 minimum cut is Citizen One. The first minimum cut should remain an
+executor stub and contract-first spine: enough structure to prove the CLI,
+classification, law, evidence, and state contracts before adding provider-backed
+execution.
 
 The safe default for ambiguous or high-risk actions remains:
 

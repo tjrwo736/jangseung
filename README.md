@@ -3,6 +3,8 @@
 Aegis is a greenfield project for a portable governed coding-agent runtime.
 It carries the governance semantics of Agent Civitas into a standalone
 runtime shape, but it is not a copy of Agent Civitas, DRA, or Hermes.
+Aegis is a small civilization of coding agents governed by risk-proportionate law.
+Zero required external accounts.
 
 Day-0 status: repository bootstrap only. This repository currently contains
 identity, architecture, and minimum project structure for Day-1 bootstrap work.
@@ -11,19 +13,18 @@ integrations, release automation, or autonomous loops.
 
 ## Identity
 
-Aegis is built around five day-0 identity points:
+Aegis is built around six day-0 identity points:
 
 - small civilization
 - risk-proportional governance
 - single CLI
 - folder-local state
 - evidence-first operation
+- zero required external accounts
 
 One-line promise:
 
-```text
-the executor is not the source of truth
-```
+The executor is not the source of truth.
 
 Safe default:
 
@@ -65,6 +66,12 @@ This bootstrap intentionally does not establish:
 - autonomous loops
 - external service automation
 - release, publish, or deploy flows
+
+Bootstrap v0 keeps a single entry point, future folder-local state under
+`.aeg/`, and zero required external accounts. Aegis does not copy Agent
+Civitas, DRA, or Hermes; it discards Slack, WSL, and multi-process plumbing as
+core requirements. OpenAI, Claude, and Gemini providers are not core
+dependencies.
 
 ## Project Layout
 
