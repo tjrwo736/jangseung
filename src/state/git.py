@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from src.contracts import GIT_STAGED, GIT_TRACKED_DIFF, GIT_WORKING_TREE, NO_CHANGED_FILES_SOURCE
+
 
 class GitError(RuntimeError):
     """Raised when a git command needed for evidence binding fails."""
@@ -72,6 +74,26 @@ def changed_files(repo: str | Path) -> list[str]:
         if path:
             files.append(path)
     return sorted(dict.fromkeys(files))
+
+
+def changed_files_with_source(repo: str | Path) -> tuple[list[str], str]:
+    lines = status_porcelain(repo)
+    files = changed_files(repo)
+    if not files:
+        return [], NO_CHANGED_FILES_SOURCE
+
+    has_worktree_change = any(line[:2] == "??" or line[1] != " " for line in lines)
+    if has_worktree_change:
+        return files, GIT_WORKING_TREE
+    return files, GIT_STAGED
+
+
+def changed_files_against(repo: str | Path, base_ref: str) -> tuple[list[str], str]:
+    completed = run_git(["diff", "--name-only", base_ref, "--"], repo)
+    files = sorted(dict.fromkeys(line.strip() for line in completed.stdout.splitlines() if line.strip()))
+    if not files:
+        return [], NO_CHANGED_FILES_SOURCE
+    return files, GIT_TRACKED_DIFF
 
 
 def is_ignored(repo: str | Path, path: str) -> bool:

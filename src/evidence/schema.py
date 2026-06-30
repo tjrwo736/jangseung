@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.contracts import AEG_VERSION, IMPACT_RISKS, RISK_LEVELS, SAFE_DEFAULT, STATUSES
+from src.contracts import AEG_VERSION, CHANGED_FILES_SOURCES, IMPACT_RISKS, RISK_LEVELS, SAFE_DEFAULT, STATUSES
 
 
 REQUIRED_FIELDS: tuple[str, ...] = (
@@ -17,10 +17,16 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "tree_sha",
     "is_dirty",
     "changed_files",
+    "changed_files_source",
     "intent_risk",
     "impact_risk",
     "risk_level",
     "classification_reasons",
+    "impact_reasons",
+    "protected_paths_touched",
+    "risk_escalation_applied",
+    "final_risk_rule",
+    "impact_checked_at",
     "checks",
     "status",
     "status_reasons",
@@ -46,7 +52,13 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "tree_sha", str, errors)
     _expect(packet, "is_dirty", bool, errors)
     _expect(packet, "changed_files", list, errors)
+    _expect(packet, "changed_files_source", str, errors)
     _expect(packet, "classification_reasons", list, errors)
+    _expect(packet, "impact_reasons", list, errors)
+    _expect(packet, "protected_paths_touched", list, errors)
+    _expect(packet, "risk_escalation_applied", bool, errors)
+    _expect(packet, "final_risk_rule", str, errors)
+    _expect(packet, "impact_checked_at", str, errors)
     _expect(packet, "checks", dict, errors)
     _expect(packet, "status_reasons", list, errors)
     _expect(packet, "safe_default", str, errors)
@@ -61,6 +73,8 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
         errors.append(f"invalid risk_level: {packet.get('risk_level')}")
     if packet.get("impact_risk") not in IMPACT_RISKS:
         errors.append(f"invalid impact_risk: {packet.get('impact_risk')}")
+    if packet.get("changed_files_source") not in CHANGED_FILES_SOURCES:
+        errors.append(f"invalid changed_files_source: {packet.get('changed_files_source')}")
     if packet.get("status") not in STATUSES:
         errors.append(f"invalid status: {packet.get('status')}")
     if packet.get("status") == "PASS":
@@ -69,6 +83,10 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
         errors.append("changed_files must contain only strings")
     if not all(isinstance(item, str) for item in packet.get("classification_reasons", [])):
         errors.append("classification_reasons must contain only strings")
+    if not all(isinstance(item, str) for item in packet.get("impact_reasons", [])):
+        errors.append("impact_reasons must contain only strings")
+    if not all(isinstance(item, str) for item in packet.get("protected_paths_touched", [])):
+        errors.append("protected_paths_touched must contain only strings")
     if not all(isinstance(item, str) for item in packet.get("status_reasons", [])):
         errors.append("status_reasons must contain only strings")
 
