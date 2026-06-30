@@ -116,6 +116,36 @@ CITIZEN_ONE_EVIDENCE_FIELDS = (
     "model_output_hash_candidate",
 )
 
+CITIZEN_ONE_PROPOSAL_CONTRACT_V0 = "citizen_one_proposal_contract_v0"
+PROPOSAL_KIND_NOT_GENERATED = "not_generated"
+PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROPOSAL_SOURCE_NONE = "none"
+PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED = "no_raw_prompt_or_response_stored"
+PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROPOSAL_STATUSES = (
+    PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
+)
+PROPOSAL_REDACTION_STATUSES = (
+    PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+)
+PROPOSAL_CONTRACT_FIELDS = (
+    "proposal_id",
+    "proposal_version",
+    "proposal_kind",
+    "proposal_summary",
+    "proposal_steps",
+    "proposal_risk_notes",
+    "proposal_requires_user_gate",
+    "proposal_trust_boundary",
+    "proposal_reported_only",
+    "proposal_source",
+    "proposal_output_hash_candidate",
+    "proposal_redaction_status",
+    "proposal_status",
+    "proposal_present",
+    "proposal_hold_reason",
+)
+
 MUTATION_BOUNDARY_CLEAN = "MUTATION_BOUNDARY_CLEAN"
 MUTATION_BOUNDARY_DIRTY_PREEXISTING = "MUTATION_BOUNDARY_DIRTY_PREEXISTING"
 MUTATION_BOUNDARY_DELTA_DETECTED = "MUTATION_BOUNDARY_DELTA_DETECTED"

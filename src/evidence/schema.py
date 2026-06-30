@@ -23,6 +23,7 @@ from src.contracts import (
     CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
+    CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
     CITIZEN_ONE_STATUSES,
     EVIDENCE_BINDING_V1,
     GIT_STATUS_PORCELAIN_V1,
@@ -33,6 +34,14 @@ from src.contracts import (
     MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
     MUTATION_DELTA_SOURCE_COMPUTED,
     MUTATION_DELTA_SOURCE_UNTRUSTED,
+    PROPOSAL_CONTRACT_FIELDS,
+    PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROPOSAL_KIND_NOT_GENERATED,
+    PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROPOSAL_REDACTION_STATUSES,
+    PROPOSAL_SOURCE_NONE,
+    PROPOSAL_STATUSES,
+    PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
     RISK_LEVELS,
     SAFE_DEFAULT,
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
@@ -168,6 +177,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "protected_path_mutation_detected", bool, errors)
     _expect(packet, "mutation_boundary_status", str, errors)
     _validate_citizen_one_fields(packet, errors)
+    _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
         errors.append(f"unsupported aeg_version: {packet.get('aeg_version')}")
@@ -277,6 +287,7 @@ def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> N
             errors.append("INVALID_EVIDENCE: requested Citizen One hold reason must be provider_not_configured")
         if packet.get("provider_config_source") != CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE:
             errors.append("INVALID_EVIDENCE: requested Citizen One provider_config_source must be none")
+        _validate_proposal_contract_fields(packet, errors)
     elif packet.get("citizen_one_requested") is False:
         if packet.get("citizen_one_mode") != CITIZEN_ONE_MODE_OFF:
             errors.append("INVALID_EVIDENCE: non-requested Citizen One mode must be off")
@@ -288,8 +299,93 @@ def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> N
             errors.append("INVALID_EVIDENCE: non-requested Citizen One hold reason must be empty")
         if packet.get("provider_config_source") != CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED:
             errors.append("INVALID_EVIDENCE: non-requested Citizen One provider_config_source must be not_requested")
+        for field in PROPOSAL_CONTRACT_FIELDS:
+            if field in packet:
+                errors.append(f"INVALID_EVIDENCE: proposal field is opt-in only: {field}")
     else:
         errors.append("INVALID_EVIDENCE: citizen_one_requested must be boolean")
+
+
+def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    for field in PROPOSAL_CONTRACT_FIELDS:
+        if field not in packet:
+            errors.append(f"missing required proposal contract field: {field}")
+
+    bool_fields = (
+        "proposal_requires_user_gate",
+        "proposal_reported_only",
+        "proposal_present",
+    )
+    string_fields = (
+        "proposal_id",
+        "proposal_version",
+        "proposal_kind",
+        "proposal_summary",
+        "proposal_trust_boundary",
+        "proposal_source",
+        "proposal_output_hash_candidate",
+        "proposal_redaction_status",
+        "proposal_status",
+        "proposal_hold_reason",
+    )
+    list_fields = (
+        "proposal_steps",
+        "proposal_risk_notes",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+    for field in list_fields:
+        _expect(packet, field, list, errors)
+
+    if packet.get("proposal_version") != CITIZEN_ONE_PROPOSAL_CONTRACT_V0:
+        errors.append(f"INVALID_EVIDENCE: proposal_version must be {CITIZEN_ONE_PROPOSAL_CONTRACT_V0}")
+    if packet.get("proposal_kind") != PROPOSAL_KIND_NOT_GENERATED:
+        errors.append("INVALID_EVIDENCE: proposal_kind must be not_generated when provider is not configured")
+    if packet.get("proposal_summary") != "":
+        errors.append("INVALID_EVIDENCE: proposal_summary must be empty when proposal is not generated")
+    if packet.get("proposal_steps") != []:
+        errors.append("INVALID_EVIDENCE: proposal_steps must be empty when proposal is not generated")
+    if packet.get("proposal_risk_notes") != []:
+        errors.append("INVALID_EVIDENCE: proposal_risk_notes must be empty when proposal is not generated")
+    if packet.get("proposal_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: proposal_trust_boundary must be reported_only")
+    if packet.get("proposal_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: proposal must be marked reported_only")
+    if packet.get("proposal_source") != PROPOSAL_SOURCE_NONE:
+        errors.append("INVALID_EVIDENCE: proposal_source must be none when provider is not configured")
+    if packet.get("proposal_output_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: proposal_output_hash_candidate must be empty when proposal is not generated")
+    if packet.get("proposal_redaction_status") not in PROPOSAL_REDACTION_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid proposal_redaction_status: {packet.get('proposal_redaction_status')}")
+    if packet.get("proposal_redaction_status") != PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: proposal_redaction_status must declare no raw prompt/response storage")
+    if packet.get("proposal_status") not in PROPOSAL_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid proposal_status: {packet.get('proposal_status')}")
+    if packet.get("proposal_status") != PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED:
+        errors.append("INVALID_EVIDENCE: proposal_status must hold as provider_not_configured")
+    if packet.get("proposal_present") is not False:
+        errors.append("INVALID_EVIDENCE: proposal_present must be false when provider is not configured")
+    if packet.get("proposal_hold_reason") != PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
+        errors.append("INVALID_EVIDENCE: proposal_hold_reason must be provider_not_configured")
+    expected_user_gate = packet.get("status") == NEEDS_USER_GATE or packet.get("risk_level") == HIGH
+    if packet.get("proposal_requires_user_gate") != expected_user_gate:
+        errors.append("INVALID_EVIDENCE: proposal_requires_user_gate must preserve law/user-gate status")
+
+
+def _validate_forbidden_raw_prompt_response_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    forbidden = {
+        "raw_prompt",
+        "raw_response",
+        "provider_request_body",
+        "provider_response_body",
+        "model_request_body",
+        "model_response_body",
+    }
+    for field in forbidden:
+        if field in packet:
+            errors.append(f"INVALID_EVIDENCE: raw prompt/response storage field is forbidden: {field}")
 
 
 def validate_evidence_binding_v0(packet: dict[str, Any]) -> list[str]:

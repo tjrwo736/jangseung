@@ -23,6 +23,7 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
     NOT_CHECKED_IMPACT_RISKS,
+    PROPOSAL_CONTRACT_FIELDS,
     RUN_MANIFEST_V1,
 )
 from src.evidence.binding import (
@@ -33,6 +34,7 @@ from src.evidence.binding import (
     sha256_json,
     sha256_text,
     citizen_one_manifest_fields,
+    proposal_manifest_fields,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -359,6 +361,27 @@ def _verify_manifest_binding(
         checks.append("citizen one evidence fields matched manifest")
     else:
         errors.append("INVALID_EVIDENCE: citizen one evidence fields mismatch")
+    evidence_proposal = proposal_manifest_fields(evidence)
+    manifest_proposal = proposal_manifest_fields(manifest)
+    if evidence.get("citizen_one_requested") is True:
+        for field in PROPOSAL_CONTRACT_FIELDS:
+            _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+        _check_equal(
+            checks,
+            errors,
+            "manifest proposal_evidence_hash",
+            manifest.get("proposal_evidence_hash"),
+            sha256_json(manifest_proposal),
+        )
+        if evidence_proposal == manifest_proposal:
+            checks.append("proposal contract fields matched manifest")
+        else:
+            errors.append("INVALID_EVIDENCE: proposal contract fields mismatch")
+        checks.append("proposal contract is reported_only and not an external oracle")
+    else:
+        for field in (*PROPOSAL_CONTRACT_FIELDS, "proposal_evidence_hash"):
+            if field in evidence or field in manifest:
+                errors.append(f"INVALID_EVIDENCE: proposal field present without Citizen One opt-in: {field}")
     _check_equal(checks, errors, "manifest pre_snapshot_source", manifest.get("pre_snapshot_source"), evidence.get("pre_snapshot_source"))
     _check_equal(checks, errors, "manifest post_snapshot_source", manifest.get("post_snapshot_source"), evidence.get("post_snapshot_source"))
     _check_equal(checks, errors, "manifest snapshot_collector", manifest.get("snapshot_collector"), evidence.get("snapshot_collector"))
