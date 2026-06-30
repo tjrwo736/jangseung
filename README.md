@@ -104,6 +104,47 @@ repository-local `aeg` launcher or `python -m src.cli`.
 ./aeg verify
 ```
 
+## Phase 6A Local Checkout Quickstart
+
+Aegis is not a packaged install yet. During Phase 6A, use the local checkout
+launcher from the Aegis repository. If this repository is checked out at
+`/mnt/d/Codex/Aegis`, run Aegis from a separate target repository with either
+of these forms:
+
+```bash
+PATH="/mnt/d/Codex/Aegis:$PATH" aeg --help
+```
+
+```bash
+/mnt/d/Codex/Aegis/aeg --help
+```
+
+The minimum target-repository demo is:
+
+```bash
+aeg doctor
+aeg init
+aeg doctor
+aeg run "fix typo in README"
+aeg verify
+aeg run "merge to main and deploy"
+aeg verify
+```
+
+Expected contrast:
+
+- LOW task -> `CLEAN_CORE`
+- HIGH task -> `NEEDS_USER_GATE`
+- `aeg verify` -> `REPLAY_CONSISTENT`
+- `.aeg/` remains folder-local and git-ignored
+- provider/network access is not required
+
+External-user limitation:
+
+- This is not a packaged install yet.
+- Phase 6B external unaided run should not start until command discovery
+  instructions are explicit.
+
 ## Core Non-Dependencies
 
 Aegis core must not require the following as runtime dependencies:
