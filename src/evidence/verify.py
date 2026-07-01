@@ -1,4 +1,4 @@
-"""Deterministic verification replay for latest evidence."""
+"""Deterministic verification replay for latest evidence and ledger chain."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ from src.contracts import (
     EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
+    LEDGER_FILE,
     LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY,
     LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED,
     LEDGER_INTEGRITY_FIELDS,
@@ -75,7 +76,9 @@ from src.contracts import (
     PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0,
     PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
     RESPONSE_REDACTION_METADATA_FIELDS,
+    RISK_LEVELS,
     RUN_MANIFEST_V1,
+    STATUSES,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -154,6 +157,62 @@ class VerifyResult:
     evidence: dict[str, Any] | None
 
 
+_LEDGER_REQUIRED_FIELDS = (
+    "run_id",
+    "evidence_path",
+    "run_path",
+    "manifest_path",
+    "manifest_hash",
+    "head_sha",
+    "tree_sha",
+    "risk_level",
+    "status",
+)
+_LEDGER_POSITION_FIELDS = (
+    "ledger_sequence_number",
+    "ledger_position",
+    "position",
+)
+_LEDGER_BOOL_FIELDS = (
+    "ledger_tamper_evident_enabled",
+    "ledger_tamper_proof_claimed",
+)
+_LEDGER_HASH_FIELDS = (
+    "manifest_hash",
+    "current_evidence_hash",
+    "current_manifest_hash",
+    "current_ledger_entry_hash",
+    "ledger_chain_hash",
+    "ledger_integrity_metadata_hash",
+)
+_LEDGER_STRING_METADATA_FIELDS = tuple(
+    field
+    for field in LEDGER_INTEGRITY_FIELDS
+    if field not in (*_LEDGER_BOOL_FIELDS, "ledger_sequence_number")
+)
+_LEDGER_MANIFEST_BINDING_FIELDS = (
+    "run_id",
+    "head_sha",
+    "tree_sha",
+    "risk_level",
+    "status",
+    "evidence_path",
+    "run_path",
+)
+_LEDGER_EVIDENCE_BINDING_FIELDS = (
+    "run_id",
+    "head_sha",
+    "tree_sha",
+    "risk_level",
+    "status",
+)
+_LEDGER_RUN_BINDING_FIELDS = (
+    "run_id",
+    "risk_level",
+    "status",
+)
+
+
 def verify_latest(cwd: str | Path) -> VerifyResult:
     checks: list[str] = []
     errors: list[str] = []
@@ -163,17 +222,27 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     except git.GitError as exc:
         return VerifyResult(False, checks, [f"git repo root unavailable: {exc}"], None)
 
+    ledger_chain_checks, ledger_chain_errors = _verify_ledger_full_chain(repo)
+    checks.extend(ledger_chain_checks)
+    errors.extend(ledger_chain_errors)
+
     try:
         evidence, evidence_path, ledger_entry = load_latest_evidence(repo)
     except Exception as exc:  # JSON parse errors should be human-readable.
-        return VerifyResult(False, checks, [f"latest evidence could not be loaded: {exc}"], None)
+        return VerifyResult(False, checks, [*errors, f"latest evidence could not be loaded: {exc}"], None)
 
     if not ledger_entry:
-        return VerifyResult(False, checks, ["latest run/evidence not found"], None)
+        return VerifyResult(False, checks, [*errors, "latest run/evidence not found"], None)
     checks.append("latest ledger entry found")
 
     if evidence_path is None or evidence is None:
-        return VerifyResult(False, checks, [f"latest evidence file not found for run: {ledger_entry.get('run_id')}"], None)
+        latest_run_id = ledger_entry.get("run_id") if isinstance(ledger_entry, dict) else "UNKNOWN"
+        return VerifyResult(
+            False,
+            checks,
+            [*errors, f"latest evidence file not found for run: {latest_run_id}"],
+            None,
+        )
     checks.append(f"latest evidence loaded: {evidence_path}")
 
     schema_errors = validate_evidence_packet(evidence)
@@ -376,6 +445,307 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
             errors.append("evidence did not declare runtime artifacts under state")
 
     return VerifyResult(not errors, checks, errors, evidence)
+
+
+def _verify_ledger_full_chain(repo: Path) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+    ledger_path = state_root(repo) / LEDGER_FILE
+    if not ledger_path.exists():
+        return checks, [f"INVALID_EVIDENCE: ledger file missing: {ledger_path.relative_to(repo).as_posix()}"]
+
+    parsed_entries: list[tuple[int, dict[str, Any]]] = []
+    non_empty_count = 0
+    for line_number, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        non_empty_count += 1
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"INVALID_EVIDENCE: ledger line {line_number} must be JSON object: {exc.msg}")
+            continue
+        if not isinstance(parsed, dict):
+            errors.append(f"INVALID_EVIDENCE: ledger line {line_number} must be JSON object")
+            continue
+        parsed_entries.append((line_number, parsed))
+
+    if non_empty_count == 0:
+        errors.append("INVALID_EVIDENCE: ledger full-chain walk found no entries")
+        return checks, errors
+    checks.append(f"ledger full-chain walk parsed entries: {len(parsed_entries)}")
+
+    previous_chain_hash: str | None = None
+    for position, (line_number, entry) in enumerate(parsed_entries, start=1):
+        current_chain_hash = _verify_ledger_chain_entry(
+            repo,
+            line_number,
+            position,
+            entry,
+            previous_chain_hash,
+            checks,
+            errors,
+        )
+        previous_chain_hash = current_chain_hash if is_sha256_hex(current_chain_hash) else None
+
+    if parsed_entries and not errors:
+        checks.append("ledger full-chain walk validation passed")
+    return checks, errors
+
+
+def _verify_ledger_chain_entry(
+    repo: Path,
+    line_number: int,
+    position: int,
+    entry: dict[str, Any],
+    previous_chain_hash: str | None,
+    checks: list[str],
+    errors: list[str],
+) -> str | None:
+    checks.append(f"ledger line {line_number} object parsed")
+    for field in _LEDGER_REQUIRED_FIELDS:
+        if field not in entry:
+            errors.append(f"INVALID_EVIDENCE: ledger line {line_number} missing required field: {field}")
+        _require_ledger_string(errors, line_number, entry, field)
+    for field in _LEDGER_BOOL_FIELDS:
+        _require_ledger_bool(errors, line_number, entry, field)
+    for field in _LEDGER_STRING_METADATA_FIELDS:
+        _require_ledger_string(errors, line_number, entry, field)
+    for field in _LEDGER_HASH_FIELDS:
+        _require_ledger_sha256(errors, line_number, entry, field)
+
+    run_id = entry.get("run_id")
+    risk_level = entry.get("risk_level")
+    status = entry.get("status")
+    if isinstance(risk_level, str) and risk_level not in RISK_LEVELS:
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} invalid risk_level: {risk_level}")
+    if isinstance(status, str) and status not in STATUSES:
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} invalid status: {status}")
+
+    sequence = entry.get("ledger_sequence_number")
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} ledger_sequence_number must be integer")
+    elif sequence != position:
+        errors.append(
+            "INVALID_EVIDENCE: ledger line "
+            f"{line_number} ledger_sequence_number mismatch: actual={sequence} expected={position}"
+        )
+    else:
+        checks.append(f"ledger line {line_number} ledger_sequence_number matched position")
+
+    for field in _LEDGER_POSITION_FIELDS[1:]:
+        if field not in entry:
+            continue
+        value = entry.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} must be integer")
+        elif value != position:
+            errors.append(
+                f"INVALID_EVIDENCE: ledger line {line_number} {field} mismatch: actual={value} expected={position}"
+            )
+        else:
+            checks.append(f"ledger line {line_number} {field} matched position")
+
+    previous_hash = entry.get("previous_ledger_hash")
+    if position == 1:
+        if previous_hash in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE):
+            checks.append(f"ledger line {line_number} genesis previous hash explicit")
+        else:
+            errors.append(f"INVALID_EVIDENCE: ledger line {line_number} first entry previous hash invalid")
+    elif previous_chain_hash is None:
+        errors.append(
+            "INVALID_EVIDENCE: ledger line "
+            f"{line_number} previous_ledger_hash cannot be verified after invalid prior chain hash"
+        )
+    elif previous_hash == previous_chain_hash:
+        checks.append(f"ledger line {line_number} previous_ledger_hash matched prior chain hash")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: ledger line "
+            f"{line_number} previous_ledger_hash mismatch: actual={previous_hash} expected={previous_chain_hash}"
+        )
+
+    expected_evidence_rel = expected_run_rel = expected_manifest_rel = None
+    if isinstance(run_id, str) and run_id.strip():
+        expected_evidence_rel = expected_artifact_path(run_id, "evidence.json")
+        expected_run_rel = expected_artifact_path(run_id, "run.json")
+        expected_manifest_rel = expected_artifact_path(run_id, "manifest.json")
+
+    evidence_path = _ledger_entry_file_path(
+        repo,
+        line_number,
+        entry,
+        "evidence_path",
+        expected_evidence_rel,
+        checks,
+        errors,
+    )
+    run_path = _ledger_entry_file_path(repo, line_number, entry, "run_path", expected_run_rel, checks, errors)
+    manifest_path = _ledger_entry_file_path(
+        repo,
+        line_number,
+        entry,
+        "manifest_path",
+        expected_manifest_rel,
+        checks,
+        errors,
+    )
+
+    evidence = _load_ledger_object(evidence_path, line_number, "evidence", errors)
+    run_payload = _load_ledger_object(run_path, line_number, "run", errors)
+    manifest = _load_ledger_object(manifest_path, line_number, "manifest", errors)
+
+    if manifest is not None:
+        actual_manifest_hash = manifest_hash(manifest)
+        _check_equal(checks, errors, f"ledger line {line_number} manifest_hash", entry.get("manifest_hash"), actual_manifest_hash)
+        for field in _LEDGER_MANIFEST_BINDING_FIELDS:
+            _check_equal(checks, errors, f"ledger line {line_number} manifest {field}", manifest.get(field), entry.get(field))
+        expected_manifest_hash = expected_current_manifest_hash(manifest)
+        _check_equal(
+            checks,
+            errors,
+            f"ledger line {line_number} current_manifest_hash",
+            entry.get("current_manifest_hash"),
+            expected_manifest_hash,
+        )
+        _check_equal(
+            checks,
+            errors,
+            f"ledger line {line_number} manifest current_manifest_hash",
+            manifest.get("current_manifest_hash"),
+            entry.get("current_manifest_hash"),
+        )
+        manifest_group_hash = sha256_json(ledger_integrity_manifest_fields(manifest))
+        _check_equal(
+            checks,
+            errors,
+            f"ledger line {line_number} manifest ledger_integrity_manifest_hash",
+            manifest.get("ledger_integrity_manifest_hash"),
+            manifest_group_hash,
+        )
+        for field in LEDGER_INTEGRITY_FIELDS:
+            _check_equal(checks, errors, f"ledger line {line_number} manifest {field}", manifest.get(field), entry.get(field))
+
+    if evidence is not None:
+        for field in _LEDGER_EVIDENCE_BINDING_FIELDS:
+            _check_equal(checks, errors, f"ledger line {line_number} evidence {field}", evidence.get(field), entry.get(field))
+        if expected_manifest_rel is not None:
+            _check_equal(
+                checks,
+                errors,
+                f"ledger line {line_number} evidence bound_manifest_path",
+                evidence.get("bound_manifest_path"),
+                expected_manifest_rel,
+            )
+        _check_equal(
+            checks,
+            errors,
+            f"ledger line {line_number} evidence bound_manifest_hash",
+            evidence.get("bound_manifest_hash"),
+            entry.get("manifest_hash"),
+        )
+        expected_evidence_hash = expected_current_evidence_hash(evidence)
+        _check_equal(
+            checks,
+            errors,
+            f"ledger line {line_number} current_evidence_hash",
+            entry.get("current_evidence_hash"),
+            expected_evidence_hash,
+        )
+        for field in LEDGER_INTEGRITY_FIELDS:
+            _check_equal(checks, errors, f"ledger line {line_number} evidence {field}", evidence.get(field), entry.get(field))
+
+    if run_payload is not None:
+        for field in _LEDGER_RUN_BINDING_FIELDS:
+            if field in run_payload:
+                _check_equal(checks, errors, f"ledger line {line_number} run {field}", run_payload.get(field), entry.get(field))
+
+    expected_entry_hash = expected_ledger_entry_hash(entry)
+    _check_equal(
+        checks,
+        errors,
+        f"ledger line {line_number} current_ledger_entry_hash",
+        entry.get("current_ledger_entry_hash"),
+        expected_entry_hash,
+    )
+    expected_chain_hash = expected_ledger_chain_hash(entry)
+    _check_equal(
+        checks,
+        errors,
+        f"ledger line {line_number} ledger_chain_hash",
+        entry.get("ledger_chain_hash"),
+        expected_chain_hash,
+    )
+    expected_metadata_hash = expected_ledger_integrity_metadata_hash(entry)
+    _check_equal(
+        checks,
+        errors,
+        f"ledger line {line_number} ledger_integrity_metadata_hash",
+        entry.get("ledger_integrity_metadata_hash"),
+        expected_metadata_hash,
+    )
+    current_chain_hash = entry.get("ledger_chain_hash")
+    return current_chain_hash if isinstance(current_chain_hash, str) else None
+
+
+def _ledger_entry_file_path(
+    repo: Path,
+    line_number: int,
+    entry: dict[str, Any],
+    field: str,
+    expected_rel: str | None,
+    checks: list[str],
+    errors: list[str],
+) -> Path | None:
+    value = entry.get(field)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if Path(value).is_absolute():
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} must be repository-relative")
+        return None
+    resolved = (repo / value).resolve()
+    root = state_root(repo).resolve()
+    if not _is_under(root, resolved):
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} escaped .aeg/: {value}")
+        return None
+    if expected_rel is not None:
+        _check_equal(checks, errors, f"ledger line {line_number} {field}", value, expected_rel)
+    if resolved.exists():
+        checks.append(f"ledger line {line_number} {field} exists")
+    else:
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} missing: {value}")
+    return resolved
+
+
+def _load_ledger_object(path: Path | None, line_number: int, label: str, errors: list[str]) -> dict[str, Any] | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {label} could not be parsed: {exc}")
+        return None
+    if not isinstance(parsed, dict):
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {label} must be object")
+        return None
+    return parsed
+
+
+def _require_ledger_string(errors: list[str], line_number: int, entry: dict[str, Any], field: str) -> None:
+    value = entry.get(field)
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} must be non-empty string")
+
+
+def _require_ledger_bool(errors: list[str], line_number: int, entry: dict[str, Any], field: str) -> None:
+    if not isinstance(entry.get(field), bool):
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} must be boolean")
+
+
+def _require_ledger_sha256(errors: list[str], line_number: int, entry: dict[str, Any], field: str) -> None:
+    value = entry.get(field)
+    if not isinstance(value, str) or not is_sha256_hex(value):
+        errors.append(f"INVALID_EVIDENCE: ledger line {line_number} {field} must be sha256 hex")
 
 
 def _verify_manifest_binding(
@@ -1753,7 +2123,9 @@ def _verify_ledger_integrity(
             errors.append("INVALID_EVIDENCE: first ledger entry must use explicit genesis/not_available previous hash")
         elif previous_hash == LEDGER_PREVIOUS_HASH_GENESIS:
             errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot reuse genesis previous hash")
-        elif is_sha256_hex(previous_hash) or previous_hash == LEDGER_PREVIOUS_HASH_NOT_AVAILABLE:
+        elif previous_hash == LEDGER_PREVIOUS_HASH_NOT_AVAILABLE:
+            errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot use unavailable previous hash")
+        elif is_sha256_hex(previous_hash):
             checks.append("previous_ledger_hash explicit for non-genesis ledger entry")
         else:
             errors.append("INVALID_EVIDENCE: previous_ledger_hash must be explicit genesis/not_available or sha256")

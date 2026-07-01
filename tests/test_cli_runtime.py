@@ -2140,6 +2140,103 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: manifest current_manifest_hash mismatch with evidence", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: ledger integrity scaffold metadata fields mismatch", verify.stdout)
 
+    def test_verify_rejects_historical_ledger_entry_field_tamper(self):
+        entries = self._create_three_ledger_runs()
+        entries[1]["risk_level"] = HIGH
+        entries[1]["status"] = NEEDS_USER_GATE
+        self._write_ledger_entries(entries)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("ledger full-chain walk", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 2 manifest risk_level mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 2 current_ledger_entry_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_middle_ledger_entry_deletion(self):
+        entries = self._create_three_ledger_runs()
+        del entries[1]
+        self._write_ledger_entries(entries)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 2 ledger_sequence_number mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 2 previous_ledger_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_ledger_entry_reorder(self):
+        entries = self._create_three_ledger_runs()
+        entries[0], entries[1] = entries[1], entries[0]
+        self._write_ledger_entries(entries)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 ledger_sequence_number mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 first entry previous hash invalid", verify.stdout)
+
+    def test_verify_rejects_historical_manifest_tamper(self):
+        entries = self._create_three_ledger_runs()
+        manifest_path = self.repo / entries[0]["manifest_path"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["status"] = NOT_CHECKED
+        self._write_json(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 manifest_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 manifest status mismatch", verify.stdout)
+
+    def test_verify_rejects_ledger_path_substitution(self):
+        entries = self._create_three_ledger_runs()
+        entries[0]["manifest_path"] = entries[1]["manifest_path"]
+        self._write_ledger_entries(entries)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 manifest_path mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 manifest run_id mismatch", verify.stdout)
+
+    def test_verify_rejects_ledger_null_and_type_mismatch(self):
+        entries = self._create_three_ledger_runs()
+        entries[0]["manifest_hash"] = None
+        entries[0]["run_id"] = []
+        entries[0]["ledger_position"] = "1"
+        self._write_ledger_entries(entries)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 run_id must be non-empty string", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 manifest_hash must be non-empty string", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 ledger_position must be integer", verify.stdout)
+
+    def test_run_refuses_to_append_after_broken_latest_ledger_chain_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        entries = self._ledger_entries()
+        entries[-1]["ledger_chain_hash"] = "not-a-sha"
+        self._write_ledger_entries(entries)
+
+        run = self._aeg("run", "fix typo in README", check=False)
+
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("status: FAIL", run.stdout)
+        self.assertIn("refusing to append after invalid ledger_chain_hash", run.stdout)
+        self.assertEqual(len(self._ledger_entries()), 1)
+
+        verify = self._aeg("verify", check=False)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger line 1 ledger_chain_hash must be sha256 hex", verify.stdout)
+
     def test_verify_rejects_tampered_executor_capability_exposure_even_when_rebound(self):
         self._aeg("init")
         self._aeg("run", "fix typo in README")
@@ -3073,6 +3170,22 @@ class CliRuntimeTests(unittest.TestCase):
         ledger = self.repo / ".aeg" / "ledger.jsonl"
         line = [line for line in ledger.read_text(encoding="utf-8").splitlines() if line][-1]
         return json.loads(line)
+
+    def _ledger_entries(self):
+        ledger = self.repo / ".aeg" / "ledger.jsonl"
+        return [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line]
+
+    def _write_ledger_entries(self, entries):
+        ledger = self.repo / ".aeg" / "ledger.jsonl"
+        lines = [json.dumps(entry, sort_keys=True) for entry in entries]
+        ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _create_three_ledger_runs(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        self._aeg("run", "fix typo in README")
+        self._aeg("run", "fix typo in README")
+        return self._ledger_entries()
 
     def _replace_latest_ledger_entry(self, entry):
         ledger = self.repo / ".aeg" / "ledger.jsonl"
