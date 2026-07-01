@@ -48,6 +48,25 @@ from src.contracts import (
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
+    PROVIDER_ADAPTER_DISABLED_FIELDS,
+    PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
+    PROVIDER_MODE_DISABLED,
+    PROVIDER_MODE_NOT_REQUESTED,
+    PROVIDER_MODEL_NONE,
+    PROVIDER_NAME_NONE,
+    PROVIDER_PROMPT_SOURCE_DISABLED,
+    PROVIDER_PROMPT_SOURCE_NONE,
+    PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROVIDER_RESPONSE_ERROR_CLASS_NONE,
+    PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE,
+    PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+    PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER,
+    PROVIDER_RESPONSE_SOURCE_NONE,
+    PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
+    PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_SECRET_SOURCE_NONE,
+    PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
     PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
     PROPOSAL_KIND_DETERMINISTIC_STUB,
@@ -251,6 +270,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
         self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self._assert_provider_not_requested_contract(evidence)
         self.assertNotIn("proposal_present", evidence)
         self.assertEqual(validate_evidence_binding_v0(evidence), [])
         self.assertEqual(validate_evidence_binding_v1(evidence), [])
@@ -263,6 +283,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("LOW risk remained CLEAN_CORE", verify.stdout)
         self.assertIn("citizen_one_status: CITIZEN_ONE_NOT_REQUESTED", verify.stdout)
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
+        self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
         self.assertNotIn("proposal_status:", run.stdout)
         self.assertNotIn("proposal_status:", verify.stdout)
 
@@ -293,9 +314,15 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(manifest["provider_network_used"], evidence["provider_network_used"])
         self.assertEqual(manifest["provider_secret_observed"], evidence["provider_secret_observed"])
         self.assertEqual(manifest["model_output_hash_candidate"], evidence["model_output_hash_candidate"])
+        for field in self._provider_adapter_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_adapter_evidence_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
         )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -387,6 +414,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", run.stdout)
         self.assertIn("provider_network_used: false", run.stdout)
         self.assertIn("provider_secret_observed: false", run.stdout)
+        self.assertIn("provider_mode: disabled", run.stdout)
+        self.assertIn("provider_prompt_source: disabled", run.stdout)
+        self.assertIn("provider_network_opt_in: false", run.stdout)
+        self.assertIn("provider_response_present: false", run.stdout)
+        self.assertIn("provider_response_status: provider_not_configured", run.stdout)
+        self.assertIn("provider_response_source: disabled_adapter", run.stdout)
+        self.assertIn("provider_response_reported_only: true", run.stdout)
+        self.assertIn("provider_response_trust_boundary: reported_only", run.stdout)
         self.assertIn("proposal_present: false", run.stdout)
         self.assertIn("proposal_status: provider_not_configured", run.stdout)
         self.assertIn("proposal_reported_only: true", run.stdout)
@@ -408,6 +443,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
         self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_held_contract(evidence, requires_user_gate=False)
         self.assertEqual(evidence["computed_mutation_delta"], [])
         self.assertEqual(evidence["executor_created_mutation"], [])
@@ -418,12 +454,19 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["citizen_one_proposal_contract_v0_required"])
         self.assertTrue(evidence["checks"]["proposal_reported_only_is_not_judgment_basis"])
         self._assert_no_forbidden_raw_storage_keys(evidence)
+        self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._provider_adapter_fields()}))
 
         manifest, _ = self._latest_manifest_with_path()
         for field in self._citizen_one_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_adapter_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._proposal_fields():
             self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["provider_adapter_evidence_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
         self.assertEqual(
             manifest["proposal_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._proposal_fields()}),
@@ -437,6 +480,9 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_verify_consistent(verify)
         self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
         self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", verify.stdout)
+        self.assertIn("provider_response_status: provider_not_configured", verify.stdout)
+        self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
+        self.assertIn("provider adapter output is reported_only and not an external oracle", verify.stdout)
         self.assertIn("proposal_present: false", verify.stdout)
         self.assertIn("proposal_status: provider_not_configured", verify.stdout)
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
@@ -464,6 +510,11 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen_one_output_present: true", run.stdout)
         self.assertIn("provider_network_used: false", run.stdout)
         self.assertIn("provider_secret_observed: false", run.stdout)
+        self.assertIn("provider_mode: disabled", run.stdout)
+        self.assertIn("provider_prompt_source: disabled", run.stdout)
+        self.assertIn("provider_response_present: false", run.stdout)
+        self.assertIn("provider_response_status: provider_not_configured", run.stdout)
+        self.assertIn("provider_response_reported_only: true", run.stdout)
         self.assertIn("proposal_present: true", run.stdout)
         self.assertIn("proposal_status: deterministic_stub_recorded", run.stdout)
         self.assertIn("proposal_source: deterministic_stub", run.stdout)
@@ -487,6 +538,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
         self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_stub_contract(evidence, requires_user_gate=False)
         self.assertEqual(evidence["computed_mutation_delta"], [])
         self.assertEqual(evidence["executor_created_mutation"], [])
@@ -497,13 +549,20 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["deterministic_proposal_stub_opt_in"])
         self.assertTrue(evidence["checks"]["proposal_reported_only_is_not_judgment_basis"])
         self._assert_no_forbidden_raw_storage_keys(evidence)
+        self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._provider_adapter_fields()}))
         self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._proposal_fields()}))
 
         manifest, _ = self._latest_manifest_with_path()
         for field in self._citizen_one_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_adapter_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._proposal_fields():
             self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["provider_adapter_evidence_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
         self.assertEqual(
             manifest["proposal_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._proposal_fields()}),
@@ -519,6 +578,8 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_verify_consistent(verify)
         self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
         self.assertIn("citizen_one_status: CITIZEN_ONE_PROPOSAL_RECORDED", verify.stdout)
+        self.assertIn("provider_response_status: provider_not_configured", verify.stdout)
+        self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
         self.assertIn("proposal_present: true", verify.stdout)
         self.assertIn("proposal_status: deterministic_stub_recorded", verify.stdout)
         self.assertIn("proposal_source: deterministic_stub", verify.stdout)
@@ -545,6 +606,7 @@ class CliRuntimeTests(unittest.TestCase):
         evidence = self._latest_evidence()
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_PROPOSAL_RECORDED)
         self.assertEqual(evidence["proposal_source"], PROPOSAL_SOURCE_DETERMINISTIC_STUB)
+        self._assert_provider_disabled_contract(evidence)
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
         self.assertNotIn(dummy_provider_value, output.getvalue())
@@ -563,7 +625,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         evidence = self._latest_evidence()
         self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_network_opt_in"])
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+        self._assert_provider_disabled_contract(evidence)
 
     def test_citizen_one_opt_in_without_provider_does_not_require_api_key(self):
         self._aeg("init")
@@ -579,7 +643,9 @@ class CliRuntimeTests(unittest.TestCase):
         evidence = self._latest_evidence()
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
         self.assertEqual(evidence["provider_config_source"], CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE)
+        self.assertEqual(evidence["provider_secret_source"], PROVIDER_SECRET_SOURCE_NONE)
         self.assertFalse(evidence["provider_secret_observed"])
+        self._assert_provider_disabled_contract(evidence)
 
     def test_citizen_one_opt_in_without_provider_logs_no_secret(self):
         self._aeg("init")
@@ -597,6 +663,7 @@ class CliRuntimeTests(unittest.TestCase):
             if artifact.is_file():
                 self.assertNotIn(dummy_provider_value, artifact.read_text(encoding="utf-8"))
         self.assertFalse(evidence["provider_secret_observed"])
+        self._assert_provider_disabled_contract(evidence)
 
     def test_citizen_one_opt_in_high_remains_user_gated(self):
         self._aeg("init")
@@ -611,6 +678,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertTrue(evidence["citizen_one_requested"])
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED)
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_held_contract(evidence, requires_user_gate=True)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
 
@@ -633,6 +701,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], HIGH)
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_PROPOSAL_RECORDED)
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_stub_contract(evidence, requires_user_gate=True)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
         self.assertEqual(evidence["computed_mutation_delta"], [])
@@ -656,6 +725,7 @@ class CliRuntimeTests(unittest.TestCase):
         evidence = self._latest_evidence()
         self.assertEqual(evidence["risk_level"], MEDIUM)
         self.assertEqual(evidence["status"], NOT_CHECKED)
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_held_contract(evidence, requires_user_gate=False)
 
         verify = self._aeg("verify")
@@ -678,6 +748,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], MEDIUM)
         self.assertEqual(evidence["status"], NOT_CHECKED)
         self.assertEqual(evidence["proposal_source"], PROPOSAL_SOURCE_DETERMINISTIC_STUB)
+        self._assert_provider_disabled_contract(evidence)
         self._assert_proposal_stub_contract(evidence, requires_user_gate=False)
 
         verify = self._aeg("verify")
@@ -699,6 +770,27 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_verify_failed(verify)
         self.assertIn("Citizen One provider_network_used must be false", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: manifest provider_network_used mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_provider_adapter_disabled_fields(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["provider_network_opt_in"] = True
+        evidence["provider_response_status"] = "completed"
+        evidence["provider_response_error_safe_summary"] = "tampered external answer"
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: provider_network_opt_in must be false in disabled contract", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: invalid provider_response_status: completed", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider response status must be provider_not_configured", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider response safe summary mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest provider_network_opt_in mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest provider_response_status mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider adapter disabled fields mismatch", verify.stdout)
 
     def test_verify_rejects_tampered_proposal_fields(self):
         self._aeg("init")
@@ -1209,6 +1301,9 @@ class CliRuntimeTests(unittest.TestCase):
             "model_output_hash_candidate",
         )
 
+    def _provider_adapter_fields(self):
+        return PROVIDER_ADAPTER_DISABLED_FIELDS
+
     def _proposal_fields(self):
         return (
             "proposal_id",
@@ -1226,6 +1321,66 @@ class CliRuntimeTests(unittest.TestCase):
             "proposal_status",
             "proposal_present",
             "proposal_hold_reason",
+        )
+
+    def _assert_provider_not_requested_contract(self, evidence):
+        self.assertEqual(evidence["provider_request_id"], "")
+        self.assertEqual(evidence["provider_mode"], PROVIDER_MODE_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_name"], PROVIDER_NAME_NONE)
+        self.assertEqual(evidence["provider_model"], PROVIDER_MODEL_NONE)
+        self.assertEqual(evidence["provider_prompt_source"], PROVIDER_PROMPT_SOURCE_NONE)
+        self.assertEqual(evidence["provider_prompt_hash_candidate"], "")
+        self.assertEqual(
+            evidence["provider_request_redaction_status"],
+            PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        )
+        self.assertFalse(evidence["provider_network_opt_in"])
+        self.assertEqual(evidence["provider_secret_source"], PROVIDER_SECRET_SOURCE_NOT_REQUESTED)
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertFalse(evidence["provider_response_present"])
+        self.assertEqual(evidence["provider_response_status"], PROVIDER_RESPONSE_STATUS_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_response_source"], PROVIDER_RESPONSE_SOURCE_NONE)
+        self.assertTrue(evidence["provider_response_reported_only"])
+        self.assertEqual(evidence["provider_response_trust_boundary"], REPORTED_ONLY)
+        self.assertEqual(evidence["provider_response_hash_candidate"], "")
+        self.assertEqual(
+            evidence["provider_response_redaction_status"],
+            PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        )
+        self.assertEqual(evidence["provider_response_error_class"], PROVIDER_RESPONSE_ERROR_CLASS_NONE)
+        self.assertEqual(evidence["provider_response_error_safe_summary"], PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE)
+
+    def _assert_provider_disabled_contract(self, evidence):
+        self.assertEqual(evidence["provider_request_id"], PROVIDER_ADAPTER_DISABLED_REQUEST_ID)
+        self.assertEqual(evidence["provider_mode"], PROVIDER_MODE_DISABLED)
+        self.assertEqual(evidence["provider_name"], PROVIDER_NAME_NONE)
+        self.assertEqual(evidence["provider_model"], PROVIDER_MODEL_NONE)
+        self.assertEqual(evidence["provider_prompt_source"], PROVIDER_PROMPT_SOURCE_DISABLED)
+        self.assertEqual(evidence["provider_prompt_hash_candidate"], "")
+        self.assertEqual(
+            evidence["provider_request_redaction_status"],
+            PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        )
+        self.assertFalse(evidence["provider_network_opt_in"])
+        self.assertEqual(evidence["provider_secret_source"], PROVIDER_SECRET_SOURCE_NONE)
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertFalse(evidence["provider_response_present"])
+        self.assertEqual(evidence["provider_response_status"], PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["provider_response_source"], PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER)
+        self.assertTrue(evidence["provider_response_reported_only"])
+        self.assertEqual(evidence["provider_response_trust_boundary"], REPORTED_ONLY)
+        self.assertEqual(evidence["provider_response_hash_candidate"], "")
+        self.assertEqual(
+            evidence["provider_response_redaction_status"],
+            PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        )
+        self.assertEqual(
+            evidence["provider_response_error_class"],
+            PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+        )
+        self.assertEqual(
+            evidence["provider_response_error_safe_summary"],
+            PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
         )
 
     def _assert_proposal_held_contract(self, evidence, requires_user_gate):
@@ -1250,6 +1405,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["model_output_hash_candidate"], "")
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
+        self._assert_provider_disabled_contract(evidence)
 
     def _assert_proposal_stub_contract(self, evidence, requires_user_gate):
         self.assertEqual(evidence["proposal_id"], DETERMINISTIC_STUB_PROPOSAL_ID)
@@ -1274,11 +1430,16 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["model_output_hash_candidate"], "")
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])
+        self._assert_provider_disabled_contract(evidence)
 
     def _assert_no_forbidden_raw_storage_keys(self, payload):
         forbidden = {
             "raw_prompt",
             "raw_response",
+            "provider_prompt",
+            "provider_response",
+            "provider_raw_prompt",
+            "provider_raw_response",
             "provider_request_body",
             "provider_response_body",
             "model_request_body",

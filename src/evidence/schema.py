@@ -41,6 +41,32 @@ from src.contracts import (
     MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
     MUTATION_DELTA_SOURCE_COMPUTED,
     MUTATION_DELTA_SOURCE_UNTRUSTED,
+    PROVIDER_ADAPTER_DISABLED_FIELDS,
+    PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
+    PROVIDER_MODE_DISABLED,
+    PROVIDER_MODE_NOT_REQUESTED,
+    PROVIDER_MODES,
+    PROVIDER_MODEL_NONE,
+    PROVIDER_NAME_NONE,
+    PROVIDER_PROMPT_SOURCE_DISABLED,
+    PROVIDER_PROMPT_SOURCE_NONE,
+    PROVIDER_PROMPT_SOURCES,
+    PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROVIDER_REDACTION_STATUSES,
+    PROVIDER_RESPONSE_ERROR_CLASS_NONE,
+    PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RESPONSE_ERROR_CLASSES,
+    PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE,
+    PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+    PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER,
+    PROVIDER_RESPONSE_SOURCE_NONE,
+    PROVIDER_RESPONSE_SOURCES,
+    PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
+    PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RESPONSE_STATUSES,
+    PROVIDER_SECRET_SOURCE_NONE,
+    PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
+    PROVIDER_SECRET_SOURCES,
     PROPOSAL_CONTRACT_FIELDS,
     PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
@@ -100,6 +126,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "protected_path_mutation_detected",
     "mutation_boundary_status",
     *CITIZEN_ONE_EVIDENCE_FIELDS,
+    *PROVIDER_ADAPTER_DISABLED_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -188,6 +215,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "protected_path_mutation_detected", bool, errors)
     _expect(packet, "mutation_boundary_status", str, errors)
     _validate_citizen_one_fields(packet, errors)
+    _validate_provider_adapter_disabled_fields(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -325,6 +353,120 @@ def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> N
         errors.append("INVALID_EVIDENCE: citizen_one_requested must be boolean")
 
 
+def _validate_provider_adapter_disabled_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_network_opt_in",
+        "provider_secret_observed",
+        "provider_response_present",
+        "provider_response_reported_only",
+    )
+    string_fields = (
+        "provider_request_id",
+        "provider_mode",
+        "provider_name",
+        "provider_model",
+        "provider_prompt_source",
+        "provider_prompt_hash_candidate",
+        "provider_request_redaction_status",
+        "provider_secret_source",
+        "provider_response_status",
+        "provider_response_source",
+        "provider_response_trust_boundary",
+        "provider_response_hash_candidate",
+        "provider_response_redaction_status",
+        "provider_response_error_class",
+        "provider_response_error_safe_summary",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_mode") not in PROVIDER_MODES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_mode: {packet.get('provider_mode')}")
+    if packet.get("provider_prompt_source") not in PROVIDER_PROMPT_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_prompt_source: {packet.get('provider_prompt_source')}")
+    if packet.get("provider_request_redaction_status") not in PROVIDER_REDACTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_request_redaction_status: "
+            f"{packet.get('provider_request_redaction_status')}"
+        )
+    if packet.get("provider_response_redaction_status") not in PROVIDER_REDACTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_response_redaction_status: "
+            f"{packet.get('provider_response_redaction_status')}"
+        )
+    if packet.get("provider_secret_source") not in PROVIDER_SECRET_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_secret_source: {packet.get('provider_secret_source')}")
+    if packet.get("provider_response_status") not in PROVIDER_RESPONSE_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_response_status: {packet.get('provider_response_status')}")
+    if packet.get("provider_response_source") not in PROVIDER_RESPONSE_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_response_source: {packet.get('provider_response_source')}")
+    if packet.get("provider_response_error_class") not in PROVIDER_RESPONSE_ERROR_CLASSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_response_error_class: "
+            f"{packet.get('provider_response_error_class')}"
+        )
+
+    if packet.get("provider_name") != PROVIDER_NAME_NONE:
+        errors.append("INVALID_EVIDENCE: provider_name must be none in disabled contract")
+    if packet.get("provider_model") != PROVIDER_MODEL_NONE:
+        errors.append("INVALID_EVIDENCE: provider_model must be none in disabled contract")
+    if packet.get("provider_prompt_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: provider_prompt_hash_candidate must be empty")
+    if packet.get("provider_response_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: provider_response_hash_candidate must be empty")
+    if packet.get("provider_request_redaction_status") != PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: provider request redaction must declare no raw prompt/response storage")
+    if packet.get("provider_response_redaction_status") != PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: provider response redaction must declare no raw prompt/response storage")
+    if packet.get("provider_network_opt_in") is not False:
+        errors.append("INVALID_EVIDENCE: provider_network_opt_in must be false in disabled contract")
+    if packet.get("provider_secret_observed") is not False:
+        errors.append("INVALID_EVIDENCE: provider_secret_observed must be false in disabled contract")
+    if packet.get("provider_response_present") is not False:
+        errors.append("INVALID_EVIDENCE: provider_response_present must be false in disabled contract")
+    if packet.get("provider_response_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: provider response must be marked reported_only")
+    if packet.get("provider_response_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: provider response trust boundary must be reported_only")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_request_id") != PROVIDER_ADAPTER_DISABLED_REQUEST_ID:
+            errors.append("INVALID_EVIDENCE: provider_request_id must be provider_adapter_disabled_v0")
+        if packet.get("provider_mode") != PROVIDER_MODE_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested provider adapter mode must be disabled")
+        if packet.get("provider_prompt_source") != PROVIDER_PROMPT_SOURCE_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested provider prompt source must be disabled")
+        if packet.get("provider_secret_source") != PROVIDER_SECRET_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: requested provider secret source must be none")
+        if packet.get("provider_response_status") != PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: provider response status must be provider_not_configured")
+        if packet.get("provider_response_source") != PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER:
+            errors.append("INVALID_EVIDENCE: provider response source must be disabled_adapter")
+        if packet.get("provider_response_error_class") != PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: provider response error class must be provider_not_configured")
+        if packet.get("provider_response_error_safe_summary") != PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: provider response safe summary mismatch")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_request_id") != "":
+            errors.append("INVALID_EVIDENCE: non-requested provider_request_id must be empty")
+        if packet.get("provider_mode") != PROVIDER_MODE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider adapter mode must be not_requested")
+        if packet.get("provider_prompt_source") != PROVIDER_PROMPT_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider prompt source must be none")
+        if packet.get("provider_secret_source") != PROVIDER_SECRET_SOURCE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider secret source must be not_requested")
+        if packet.get("provider_response_status") != PROVIDER_RESPONSE_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider response status must be not_requested")
+        if packet.get("provider_response_source") != PROVIDER_RESPONSE_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider response source must be none")
+        if packet.get("provider_response_error_class") != PROVIDER_RESPONSE_ERROR_CLASS_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider response error class must be empty")
+        if packet.get("provider_response_error_safe_summary") != PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider response safe summary must be empty")
+
+
 def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]) -> None:
     for field in PROPOSAL_CONTRACT_FIELDS:
         if field not in packet:
@@ -450,6 +592,10 @@ def _validate_forbidden_raw_prompt_response_fields(packet: dict[str, Any], error
     forbidden = {
         "raw_prompt",
         "raw_response",
+        "provider_prompt",
+        "provider_response",
+        "provider_raw_prompt",
+        "provider_raw_response",
         "provider_request_body",
         "provider_response_body",
         "model_request_body",

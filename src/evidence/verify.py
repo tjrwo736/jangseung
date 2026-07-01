@@ -24,6 +24,7 @@ from src.contracts import (
     NEEDS_USER_GATE,
     NOT_CHECKED_IMPACT_RISKS,
     PROPOSAL_CONTRACT_FIELDS,
+    PROVIDER_ADAPTER_DISABLED_FIELDS,
     RUN_MANIFEST_V1,
 )
 from src.evidence.binding import (
@@ -34,6 +35,7 @@ from src.evidence.binding import (
     sha256_json,
     sha256_text,
     citizen_one_manifest_fields,
+    provider_adapter_manifest_fields,
     proposal_manifest_fields,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
@@ -361,6 +363,24 @@ def _verify_manifest_binding(
         checks.append("citizen one evidence fields matched manifest")
     else:
         errors.append("INVALID_EVIDENCE: citizen one evidence fields mismatch")
+
+    evidence_provider_adapter = provider_adapter_manifest_fields(evidence)
+    manifest_provider_adapter = provider_adapter_manifest_fields(manifest)
+    for field in PROVIDER_ADAPTER_DISABLED_FIELDS:
+        _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+    _check_equal(
+        checks,
+        errors,
+        "manifest provider_adapter_evidence_hash",
+        manifest.get("provider_adapter_evidence_hash"),
+        sha256_json(manifest_provider_adapter),
+    )
+    if evidence_provider_adapter == manifest_provider_adapter:
+        checks.append("provider adapter disabled fields matched manifest")
+    else:
+        errors.append("INVALID_EVIDENCE: provider adapter disabled fields mismatch")
+    checks.append("provider adapter output is reported_only and not an external oracle")
+
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
     if evidence.get("citizen_one_requested") is True:
