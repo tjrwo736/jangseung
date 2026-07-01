@@ -30,6 +30,14 @@ from src.contracts import (
     EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
+    LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY,
+    LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED,
+    LEDGER_INTEGRITY_FIELDS,
+    LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD,
+    LEDGER_INTEGRITY_SCAFFOLD_V0,
+    LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
+    LEDGER_PREVIOUS_HASH_GENESIS,
+    LEDGER_PREVIOUS_HASH_NOT_AVAILABLE,
     LOW,
     MUTATION_BOUNDARY_CLEAN,
     MUTATION_BOUNDARY_DELTA_DETECTED,
@@ -90,6 +98,15 @@ from src.evidence.capability_isolation import (
     expected_capability_matrix_hash,
 )
 from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
+from src.evidence.ledger_integrity import (
+    expected_current_evidence_hash,
+    expected_current_manifest_hash,
+    expected_ledger_chain_hash,
+    expected_ledger_entry_hash,
+    expected_ledger_integrity_metadata_hash,
+    is_sha256_hex,
+    ledger_integrity_manifest_fields,
+)
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -183,6 +200,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     store_checks, store_errors = _verify_evidence_store_trust_boundary(evidence, manifest)
     checks.extend(store_checks)
     errors.extend(store_errors)
+
+    ledger_checks, ledger_errors = _verify_ledger_integrity(evidence, manifest, ledger_entry)
+    checks.extend(ledger_checks)
+    errors.extend(ledger_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -619,6 +640,17 @@ def _verify_manifest_binding(
         evidence_store_trust_manifest_fields(evidence),
         evidence_store_trust_manifest_fields(manifest),
     )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "ledger integrity scaffold metadata",
+        LEDGER_INTEGRITY_FIELDS,
+        "ledger_integrity_manifest_hash",
+        evidence,
+        manifest,
+        ledger_integrity_manifest_fields(evidence),
+        ledger_integrity_manifest_fields(manifest),
+    )
 
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
@@ -805,6 +837,13 @@ def _verify_manifest_binding(
         "bound_evidence_store_trust_metadata_hash",
         evidence.get("bound_evidence_store_trust_metadata_hash"),
         sha256_json(evidence_store_trust_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_ledger_integrity_metadata_hash",
+        evidence.get("bound_ledger_integrity_metadata_hash"),
+        sha256_json(ledger_integrity_manifest_fields(evidence)),
     )
 
     task_text = evidence.get("task_text")
@@ -1322,6 +1361,134 @@ def _verify_evidence_store_trust_boundary(
             checks.append("manifest evidence_store_trust_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest evidence_store_trust_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_ledger_integrity(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+    ledger_entry: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("ledger integrity replay used recorded scaffold metadata only")
+    checks.append("ledger scaffold is tamper-evident, not tamper-proof")
+
+    if evidence.get("ledger_integrity_version") == LEDGER_INTEGRITY_SCAFFOLD_V0:
+        checks.append(f"ledger_integrity_version matched: {LEDGER_INTEGRITY_SCAFFOLD_V0}")
+    else:
+        errors.append(f"INVALID_EVIDENCE: ledger_integrity_version must be {LEDGER_INTEGRITY_SCAFFOLD_V0}")
+
+    if evidence.get("ledger_integrity_mode") == LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD:
+        checks.append("ledger_integrity_mode remained tamper_evident_scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_mode must remain tamper_evident_scaffold")
+
+    if evidence.get("ledger_tamper_evident_enabled") is True:
+        checks.append("ledger_tamper_evident_enabled default true")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_tamper_evident_enabled must be true in scaffold v0")
+
+    if evidence.get("ledger_tamper_proof_claimed") is False:
+        checks.append("ledger_tamper_proof_claimed remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: tamper-evident ledger scaffold cannot claim tamper-proof")
+
+    integrity_status = evidence.get("ledger_integrity_status")
+    if integrity_status == LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY:
+        checks.append("ledger_integrity_status remained TAMPER_EVIDENT_SCAFFOLD_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_status must remain TAMPER_EVIDENT_SCAFFOLD_ONLY")
+    if integrity_status in ("CLEAN", "PASS", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: ledger_integrity_status cannot claim CLEAN/PASS")
+    else:
+        checks.append("ledger_integrity_status did not claim CLEAN/PASS")
+
+    if evidence.get("ledger_integrity_check_status") == LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED:
+        checks.append("ledger_integrity_check_status remained NOT_CHECKED")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_status must remain NOT_CHECKED")
+    if evidence.get("ledger_integrity_check_status") in ("CLEAN", "PASS", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_status cannot claim CLEAN/PASS")
+    else:
+        checks.append("ledger_integrity_check_status did not claim CLEAN/PASS")
+
+    if evidence.get("ledger_integrity_check_reason") == LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY:
+        checks.append("ledger_integrity_check_reason described scaffold-only detection")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_reason must describe scaffold-only tamper evidence")
+
+    sequence = evidence.get("ledger_sequence_number")
+    previous_hash = evidence.get("previous_ledger_hash")
+    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 1:
+        checks.append(f"ledger_sequence_number valid: {sequence}")
+        if sequence == 1 and previous_hash in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE):
+            checks.append("previous_ledger_hash explicit genesis/not_available for first ledger entry")
+        elif sequence == 1:
+            errors.append("INVALID_EVIDENCE: first ledger entry must use explicit genesis/not_available previous hash")
+        elif previous_hash == LEDGER_PREVIOUS_HASH_GENESIS:
+            errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot reuse genesis previous hash")
+        elif is_sha256_hex(previous_hash) or previous_hash == LEDGER_PREVIOUS_HASH_NOT_AVAILABLE:
+            checks.append("previous_ledger_hash explicit for non-genesis ledger entry")
+        else:
+            errors.append("INVALID_EVIDENCE: previous_ledger_hash must be explicit genesis/not_available or sha256")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_sequence_number must be positive integer")
+
+    expected_evidence_hash = expected_current_evidence_hash(evidence)
+    if evidence.get("current_evidence_hash") == expected_evidence_hash:
+        checks.append("current_evidence_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: current_evidence_hash mismatch")
+
+    if manifest is not None:
+        expected_manifest_hash = expected_current_manifest_hash(manifest)
+        if evidence.get("current_manifest_hash") == expected_manifest_hash:
+            checks.append("current_manifest_hash replay matched")
+        else:
+            errors.append("INVALID_EVIDENCE: current_manifest_hash mismatch")
+        if manifest.get("current_manifest_hash") == evidence.get("current_manifest_hash"):
+            checks.append("manifest current_manifest_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest current_manifest_hash mismatch with evidence")
+
+        manifest_group_hash = sha256_json(ledger_integrity_manifest_fields(manifest))
+        if manifest.get("ledger_integrity_manifest_hash") == manifest_group_hash:
+            checks.append("ledger_integrity_manifest_hash replay matched")
+        else:
+            errors.append("INVALID_EVIDENCE: ledger_integrity_manifest_hash mismatch")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger integrity requires manifest replay")
+
+    if ledger_entry is not None:
+        for field in LEDGER_INTEGRITY_FIELDS:
+            _check_equal(checks, errors, f"ledger {field}", ledger_entry.get(field), evidence.get(field))
+        expected_entry_hash = expected_ledger_entry_hash(ledger_entry)
+        if evidence.get("current_ledger_entry_hash") == expected_entry_hash:
+            checks.append("current_ledger_entry_hash replay matched")
+        else:
+            errors.append("INVALID_EVIDENCE: current_ledger_entry_hash mismatch")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger integrity requires ledger entry replay")
+
+    expected_chain_hash = expected_ledger_chain_hash(evidence)
+    if evidence.get("ledger_chain_hash") == expected_chain_hash:
+        checks.append("ledger_chain_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_chain_hash mismatch")
+
+    expected_metadata_hash = expected_ledger_integrity_metadata_hash(evidence)
+    if evidence.get("ledger_integrity_metadata_hash") == expected_metadata_hash:
+        checks.append("ledger_integrity_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_metadata_hash mismatch")
+
+    if evidence.get("binding_status") == BOUND and evidence.get("ledger_tamper_proof_claimed") is True:
+        errors.append("INVALID_EVIDENCE: EVIDENCE_BINDING != LEDGER_TAMPER_PROOF")
+    else:
+        checks.append("evidence binding was not treated as ledger tamper-proof")
 
     return checks, errors
 

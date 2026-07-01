@@ -60,6 +60,7 @@ from src.contracts import (
     EVIDENCE_STORE_WRITE_SOURCE_FOLDER_LOCAL_STATE,
     EVIDENCE_STORE_WRITER_AEGIS_RUNTIME,
     EVIDENCE_BINDING_V1,
+    EVIDENCE_BINDING_V1_FIELDS,
     EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY,
     EXECUTOR_CAPABILITY_BOOL_FIELDS,
     EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
@@ -74,6 +75,16 @@ from src.contracts import (
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
     IMPACT_RISKS,
+    LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY,
+    LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED,
+    LEDGER_INTEGRITY_CHECK_STATUSES,
+    LEDGER_INTEGRITY_FIELDS,
+    LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD,
+    LEDGER_INTEGRITY_SCAFFOLD_V0,
+    LEDGER_INTEGRITY_STATUSES,
+    LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
+    LEDGER_PREVIOUS_HASH_GENESIS,
+    LEDGER_PREVIOUS_HASH_NOT_AVAILABLE,
     LOW,
     MEDIUM,
     NEEDS_USER_GATE,
@@ -210,6 +221,12 @@ from src.evidence.capability_isolation import (
     expected_capability_matrix_hash,
 )
 from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
+from src.evidence.ledger_integrity import (
+    expected_current_evidence_hash,
+    expected_ledger_chain_hash,
+    expected_ledger_integrity_metadata_hash,
+    is_sha256_hex,
+)
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -269,6 +286,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *TOOL_SURFACE_FIELDS,
     *EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
     *EVIDENCE_STORE_TRUST_FIELDS,
+    *LEDGER_INTEGRITY_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -283,29 +301,7 @@ BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
     "run_id",
 )
 
-BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
-    "binding_version",
-    "binding_status",
-    "binding_reasons",
-    "bound_run_id",
-    "bound_repo_root",
-    "bound_branch",
-    "bound_head_sha",
-    "bound_tree_sha",
-    "bound_changed_files_hash",
-    "bound_pre_run_changed_files_hash",
-    "bound_post_run_changed_files_hash",
-    "bound_computed_mutation_delta_hash",
-    "bound_snapshot_trust_boundary_hash",
-    "bound_action_boundary_metadata_hash",
-    "bound_capability_isolation_metadata_hash",
-    "bound_tool_surface_metadata_hash",
-    "bound_executor_capability_exposure_metadata_hash",
-    "bound_evidence_store_trust_metadata_hash",
-    "bound_manifest_hash",
-    "bound_manifest_path",
-    "bound_at",
-)
+BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = EVIDENCE_BINDING_V1_FIELDS
 
 USER_GATE_REASON_CARD_FIELDS: tuple[str, ...] = (
     "risk_level",
@@ -376,6 +372,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_tool_surface_metadata(packet, errors)
     _validate_executor_capability_exposure_metadata(packet, errors)
     _validate_evidence_store_trust_metadata(packet, errors)
+    _validate_ledger_integrity_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -1574,6 +1571,107 @@ def _validate_evidence_store_trust_metadata(packet: dict[str, Any], errors: list
         errors.append("INVALID_EVIDENCE: evidence_store_trust_metadata_hash mismatch")
 
 
+def _validate_ledger_integrity_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "ledger_tamper_evident_enabled",
+        "ledger_tamper_proof_claimed",
+    )
+    string_fields = (
+        "ledger_integrity_version",
+        "ledger_integrity_mode",
+        "ledger_integrity_status",
+        "previous_ledger_hash",
+        "current_evidence_hash",
+        "current_manifest_hash",
+        "current_ledger_entry_hash",
+        "ledger_chain_hash",
+        "ledger_integrity_metadata_hash",
+        "ledger_integrity_check_status",
+        "ledger_integrity_check_reason",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    sequence = packet.get("ledger_sequence_number")
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        errors.append("INVALID_EVIDENCE: ledger_sequence_number must be integer")
+    elif sequence < 1:
+        errors.append("INVALID_EVIDENCE: ledger_sequence_number must be positive")
+
+    if packet.get("ledger_integrity_version") != LEDGER_INTEGRITY_SCAFFOLD_V0:
+        errors.append(f"INVALID_EVIDENCE: ledger_integrity_version must be {LEDGER_INTEGRITY_SCAFFOLD_V0}")
+    if packet.get("ledger_integrity_mode") != LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_mode must remain tamper_evident_scaffold")
+    if packet.get("ledger_tamper_evident_enabled") is not True:
+        errors.append("INVALID_EVIDENCE: ledger_tamper_evident_enabled must be true in scaffold v0")
+    if packet.get("ledger_tamper_proof_claimed") is not False:
+        errors.append("INVALID_EVIDENCE: tamper-evident ledger scaffold cannot claim tamper-proof")
+
+    integrity_status = packet.get("ledger_integrity_status")
+    if integrity_status in ("CLEAN", "PASS", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: ledger_integrity_status cannot claim CLEAN/PASS")
+    if integrity_status not in LEDGER_INTEGRITY_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid ledger_integrity_status: {integrity_status}")
+    if integrity_status != LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_status must remain TAMPER_EVIDENT_SCAFFOLD_ONLY in scaffold v0")
+
+    check_status = packet.get("ledger_integrity_check_status")
+    if check_status in ("CLEAN", "PASS", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_status cannot claim CLEAN/PASS")
+    if check_status not in LEDGER_INTEGRITY_CHECK_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid ledger_integrity_check_status: {check_status}")
+    if check_status != LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_status must remain NOT_CHECKED in scaffold v0")
+    if packet.get("ledger_integrity_check_reason") != LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY:
+        errors.append("INVALID_EVIDENCE: ledger_integrity_check_reason must describe scaffold-only tamper evidence")
+
+    previous_hash = packet.get("previous_ledger_hash")
+    if previous_hash in ("", None):
+        errors.append("INVALID_EVIDENCE: previous_ledger_hash must be explicit genesis/not_available or sha256")
+    elif previous_hash not in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE) and not is_sha256_hex(
+        previous_hash
+    ):
+        errors.append("INVALID_EVIDENCE: previous_ledger_hash must be explicit genesis/not_available or sha256")
+    if sequence == 1 and previous_hash not in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE):
+        errors.append("INVALID_EVIDENCE: first ledger entry must use explicit genesis/not_available previous hash")
+    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > 1 and previous_hash == LEDGER_PREVIOUS_HASH_GENESIS:
+        errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot reuse genesis previous hash")
+
+    for field in (
+        "current_evidence_hash",
+        "current_manifest_hash",
+        "current_ledger_entry_hash",
+        "ledger_chain_hash",
+        "ledger_integrity_metadata_hash",
+    ):
+        value = packet.get(field)
+        if not isinstance(value, str) or not _is_sha256_hex(value):
+            errors.append(f"INVALID_EVIDENCE: {field} must be sha256 hex")
+
+    evidence_hash = packet.get("current_evidence_hash")
+    if isinstance(evidence_hash, str) and _is_sha256_hex(evidence_hash):
+        expected_evidence_hash = expected_current_evidence_hash(packet)
+        if evidence_hash != expected_evidence_hash:
+            errors.append("INVALID_EVIDENCE: current_evidence_hash mismatch")
+
+    chain_hash = packet.get("ledger_chain_hash")
+    if isinstance(chain_hash, str) and _is_sha256_hex(chain_hash):
+        expected_chain_hash = expected_ledger_chain_hash(packet)
+        if chain_hash != expected_chain_hash:
+            errors.append("INVALID_EVIDENCE: ledger_chain_hash mismatch")
+
+    metadata_hash = packet.get("ledger_integrity_metadata_hash")
+    if isinstance(metadata_hash, str) and _is_sha256_hex(metadata_hash):
+        expected_metadata_hash = expected_ledger_integrity_metadata_hash(packet)
+        if metadata_hash != expected_metadata_hash:
+            errors.append("INVALID_EVIDENCE: ledger_integrity_metadata_hash mismatch")
+
+    if packet.get("binding_status") == BOUND and packet.get("ledger_tamper_proof_claimed") is True:
+        errors.append("INVALID_EVIDENCE: EVIDENCE_BINDING != LEDGER_TAMPER_PROOF")
+
+
 def _dangerous_executor_capability_fields(packet: dict[str, Any]) -> list[str]:
     return [
         field
@@ -1841,6 +1939,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_tool_surface_metadata_hash",
         "bound_executor_capability_exposure_metadata_hash",
         "bound_evidence_store_trust_metadata_hash",
+        "bound_ledger_integrity_metadata_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
         "bound_at",
@@ -1878,6 +1977,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_tool_surface_metadata_hash",
         "bound_executor_capability_exposure_metadata_hash",
         "bound_evidence_store_trust_metadata_hash",
+        "bound_ledger_integrity_metadata_hash",
         "bound_manifest_hash",
     ):
         value = packet.get(field)
