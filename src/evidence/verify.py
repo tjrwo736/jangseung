@@ -14,6 +14,14 @@ from src.contracts import (
     ACTION_BOUNDARY_FIELDS,
     ACTION_BOUNDARY_NOT_CHECKED,
     BOUND,
+    AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS,
+    AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    AEG_STATE_WRITE_DENIAL_FIELDS,
+    AEG_STATE_WRITE_DENIAL_MODE_METADATA_SCAFFOLD,
+    AEG_STATE_WRITE_DENIAL_REASON_SCAFFOLD_ONLY,
+    AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0,
+    AEG_STATE_WRITE_DENIAL_SOURCE_AEGIS_RUNTIME_METADATA,
+    AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY,
     CAPABILITY_AUTHORITY_FIELDS,
     CAPABILITY_BOUNDARY_CLEAN,
     CAPABILITY_BOUNDARY_NOT_CHECKED,
@@ -66,6 +74,7 @@ from src.contracts import (
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
+    aeg_state_write_denial_manifest_fields,
     action_boundary_manifest_fields,
     capability_exposure_manifest_fields,
     capability_isolation_manifest_fields,
@@ -89,6 +98,7 @@ from src.evidence.binding import (
     response_redaction_manifest_fields,
     tool_surface_manifest_fields,
 )
+from src.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
 from src.evidence.capability_exposure import (
     expected_executor_capability_exposure_hash,
     expected_executor_capability_exposure_metadata_hash,
@@ -200,6 +210,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     store_checks, store_errors = _verify_evidence_store_trust_boundary(evidence, manifest)
     checks.extend(store_checks)
     errors.extend(store_errors)
+
+    aeg_state_checks, aeg_state_errors = _verify_aeg_state_write_denial(evidence, manifest)
+    checks.extend(aeg_state_checks)
+    errors.extend(aeg_state_errors)
 
     ledger_checks, ledger_errors = _verify_ledger_integrity(evidence, manifest, ledger_entry)
     checks.extend(ledger_checks)
@@ -643,6 +657,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "aeg state write denial metadata",
+        AEG_STATE_WRITE_DENIAL_FIELDS,
+        "aeg_state_write_denial_manifest_hash",
+        evidence,
+        manifest,
+        aeg_state_write_denial_manifest_fields(evidence),
+        aeg_state_write_denial_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "ledger integrity scaffold metadata",
         LEDGER_INTEGRITY_FIELDS,
         "ledger_integrity_manifest_hash",
@@ -837,6 +862,13 @@ def _verify_manifest_binding(
         "bound_evidence_store_trust_metadata_hash",
         evidence.get("bound_evidence_store_trust_metadata_hash"),
         sha256_json(evidence_store_trust_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_aeg_state_write_denial_metadata_hash",
+        evidence.get("bound_aeg_state_write_denial_metadata_hash"),
+        sha256_json(aeg_state_write_denial_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -1361,6 +1393,120 @@ def _verify_evidence_store_trust_boundary(
             checks.append("manifest evidence_store_trust_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest evidence_store_trust_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_aeg_state_write_denial(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("aeg state write denial replay used recorded scaffold metadata only")
+
+    if evidence.get("aeg_state_write_denial_version") == AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0:
+        checks.append(f"aeg_state_write_denial_version matched: {AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: aeg_state_write_denial_version must be "
+            f"{AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0}"
+        )
+
+    if evidence.get("aeg_state_write_denial_mode") == AEG_STATE_WRITE_DENIAL_MODE_METADATA_SCAFFOLD:
+        checks.append("aeg_state_write_denial_mode remained metadata scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_mode must remain metadata scaffold")
+
+    denial_status = evidence.get("aeg_state_write_denial_status")
+    if denial_status == AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY:
+        checks.append("aeg_state_write_denial_status remained DENIAL_SCAFFOLD_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_status must remain DENIAL_SCAFFOLD_ONLY")
+    if denial_status in ("CLEAN", "PASS", "ENFORCED", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_status cannot claim CLEAN/PASS/ENFORCED")
+    else:
+        checks.append("aeg_state_write_denial_status did not claim CLEAN/PASS/ENFORCED")
+
+    if evidence.get("capability_write_aeg_state_requested") is False:
+        checks.append("capability_write_aeg_state_requested remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_write_aeg_state_requested must remain false")
+
+    if evidence.get("capability_write_aeg_state_granted") is False:
+        checks.append("capability_write_aeg_state_granted remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_write_aeg_state_granted must remain false")
+
+    if evidence.get("capability_write_aeg_state_denied") is True:
+        checks.append("capability_write_aeg_state_denied remained explicit true")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_write_aeg_state_denied must be explicit true")
+
+    bypass_flags_valid = True
+    for field in AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            bypass_flags_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false")
+            bypass_flags_valid = False
+    if bypass_flags_valid:
+        checks.append("aeg state write bypass flags default false")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg state write bypass flags must default false")
+
+    enforcement_status = evidence.get("aeg_state_write_denial_enforcement_status")
+    if enforcement_status == AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+        checks.append("aeg_state_write_denial_enforcement_status remained SCAFFOLD_ONLY_NOT_ENFORCED")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: aeg_state_write_denial_enforcement_status must remain "
+            "SCAFFOLD_ONLY_NOT_ENFORCED"
+        )
+    if enforcement_status in ("CLEAN", "PASS", "ENFORCED", EVIDENCE_STORE_CLEAN):
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_enforcement_status cannot claim ENFORCED/CLEAN/PASS")
+    else:
+        checks.append("aeg_state_write_denial_enforcement_status did not claim ENFORCED/CLEAN/PASS")
+
+    if evidence.get("aeg_state_write_denial_source") == AEG_STATE_WRITE_DENIAL_SOURCE_AEGIS_RUNTIME_METADATA:
+        checks.append("aeg_state_write_denial_source remained aegis runtime scaffold metadata")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_source must be aegis runtime scaffold metadata")
+    if evidence.get("aeg_state_write_denial_source") == "executor_self_report":
+        errors.append("INVALID_EVIDENCE: executor self-report cannot prove aeg state write denial")
+    else:
+        checks.append("executor self-report was not treated as aeg state write denial proof")
+
+    if evidence.get("aeg_state_write_denial_reason") == AEG_STATE_WRITE_DENIAL_REASON_SCAFFOLD_ONLY:
+        checks.append("aeg_state_write_denial_reason described scaffold-only metadata denial")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_reason must describe scaffold-only metadata denial")
+
+    if evidence.get("aeg_state_write_denial_metadata_hash") == expected_aeg_state_write_denial_metadata_hash(evidence):
+        checks.append("aeg_state_write_denial_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: aeg_state_write_denial_metadata_hash mismatch")
+
+    reported = evidence.get("executor_reported_aeg_state_write_denial")
+    if isinstance(reported, dict) and reported.get("judgment_basis") is True:
+        errors.append("INVALID_EVIDENCE: executor_reported_aeg_state_write_denial cannot become judgment basis")
+    elif evidence.get("judgment_basis") == "executor_reported_aeg_state_write_denial":
+        errors.append("INVALID_EVIDENCE: executor_reported_aeg_state_write_denial cannot become judgment basis")
+    else:
+        checks.append("executor reported aeg state write denial was not treated as proof")
+
+    checks.append("capability_write_aeg_state denied metadata was not treated as external enforcement")
+
+    if manifest is not None:
+        if manifest.get("aeg_state_write_denial_metadata_hash") == evidence.get(
+            "aeg_state_write_denial_metadata_hash"
+        ):
+            checks.append("manifest aeg_state_write_denial_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest aeg_state_write_denial_metadata_hash mismatch with evidence")
 
     return checks, errors
 
