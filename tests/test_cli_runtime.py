@@ -21,6 +21,14 @@ from src.contracts import (
     ACTION_LOG_SOURCE_NONE,
     ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
     BOUND,
+    CAPABILITY_AUTHORITY_FIELDS,
+    CAPABILITY_BOUNDARY_CLEAN,
+    CAPABILITY_BOUNDARY_NOT_CHECKED,
+    CAPABILITY_BOUNDARY_SOURCE_NONE,
+    CAPABILITY_BOUNDARY_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    CAPABILITY_ISOLATION_FIELDS,
+    CAPABILITY_ISOLATION_MODE_NOT_IMPLEMENTED,
+    CAPABILITY_ISOLATION_SCAFFOLD_V0,
     CLEAN_CORE,
     CONTRACT_FIRST_NOOP,
     CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED,
@@ -134,6 +142,10 @@ from src.contracts import (
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import sha256_json
+from src.evidence.capability_isolation import (
+    expected_capability_isolation_proof_hash,
+    expected_capability_matrix_hash,
+)
 from src.evidence import (
     manifest_hash,
     validate_completion_contract_v0,
@@ -298,6 +310,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("action_count: 0", run.stdout)
         self.assertIn("expected_action_count: 0", run.stdout)
         self.assertIn("raw_shell_authority_granted: false", run.stdout)
+        self.assertIn("capability_isolation_enabled: false", run.stdout)
+        self.assertIn("capability_boundary_status: CAPABILITY_BOUNDARY_NOT_CHECKED", run.stdout)
+        self.assertIn("process_execution_authority_granted: false", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -316,6 +331,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["mutation_delta_source"], MUTATION_DELTA_SOURCE_COMPUTED)
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
         self._assert_action_boundary_scaffold_contract(evidence)
+        self._assert_capability_isolation_scaffold_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
         self.assertFalse(evidence["citizen_one_requested"])
@@ -344,6 +360,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
         self.assertIn("action boundary scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("capability isolation scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("capability authority flags default false", verify.stdout)
+        self.assertIn("capability boundary status remained CAPABILITY_BOUNDARY_NOT_CHECKED", verify.stdout)
         self.assertIn("action_count replay matched expected no-op count: 0", verify.stdout)
         self.assertIn("mutation boundary clean did not imply action boundary clean", verify.stdout)
         self.assertNotIn("proposal_status:", run.stdout)
@@ -396,6 +415,8 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._action_boundary_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._capability_isolation_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
@@ -441,8 +462,16 @@ class CliRuntimeTests(unittest.TestCase):
             sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
         )
         self.assertEqual(
+            manifest["capability_isolation_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._capability_isolation_fields()}),
+        )
+        self.assertEqual(
             evidence["bound_action_boundary_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_capability_isolation_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._capability_isolation_fields()}),
         )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -1263,6 +1292,164 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("executor_reported_actions remains reported_only context, not judgment basis", verify.stdout)
         self.assertIn("command enumeration alone grants no authority", verify.stdout)
 
+    def test_capability_isolation_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("capability_isolation_enabled: false", run.stdout)
+        self.assertIn("capability_isolation_mode: not_implemented", run.stdout)
+        self.assertIn("capability_boundary_status: CAPABILITY_BOUNDARY_NOT_CHECKED", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_capability_isolation_scaffold_contract(evidence)
+        for field in self._capability_isolation_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["capability_isolation_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._capability_isolation_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_capability_isolation_metadata_hash"],
+            manifest["capability_isolation_metadata_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("capability_matrix_hash replay matched", verify.stdout)
+        self.assertIn("capability_isolation_proof_hash replay matched scaffold unavailable proof", verify.stdout)
+        self.assertIn("capability authority flags default false", verify.stdout)
+        self.assertIn("executor_reported_capabilities remains reported_only context, not judgment basis", verify.stdout)
+        self.assertIn("capability not implemented did not claim CLEAN", verify.stdout)
+
+    def test_verify_rejects_tampered_capability_authority_flags_even_when_rebound(self):
+        self._aeg("init")
+        authority_fields = (
+            "raw_shell_authority_granted",
+            "network_authority_granted",
+            "provider_authority_granted",
+        )
+        for field in authority_fields:
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = True
+                evidence["capability_matrix_hash"] = expected_capability_matrix_hash(evidence)
+                evidence["capability_isolation_proof_hash"] = expected_capability_isolation_proof_hash(evidence)
+                self._sync_action_boundary_manifest(evidence, manifest)
+                self._sync_capability_isolation_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {field} must be false in capability isolation scaffold v0", verify.stdout)
+                self.assertIn(
+                    f"INVALID_EVIDENCE: authority_granted=true without implemented capability isolation proof: {field}",
+                    verify.stdout,
+                )
+                self.assertIn("INVALID_EVIDENCE: capability authority flags must default false", verify.stdout)
+
+    def test_verify_rejects_tampered_capability_matrix_hash_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["capability_matrix_hash"] = "0" * 64
+        self._sync_capability_isolation_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: capability_matrix_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: capability_isolation_proof_hash mismatch", verify.stdout)
+
+    def test_capability_boundary_status_cannot_claim_clean_even_when_rebound(self):
+        self._aeg("init")
+        clean_statuses = (CAPABILITY_BOUNDARY_CLEAN, ACTION_BOUNDARY_CLEAN)
+        for status in clean_statuses:
+            with self.subTest(status=status):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence["capability_boundary_status"] = status
+                evidence["capability_isolation_proof_hash"] = expected_capability_isolation_proof_hash(evidence)
+                self._sync_capability_isolation_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn("INVALID_EVIDENCE: capability_boundary_status cannot claim CLEAN before isolation proof", verify.stdout)
+                self.assertIn(
+                    "INVALID_EVIDENCE: capability_boundary_status must remain CAPABILITY_BOUNDARY_NOT_CHECKED",
+                    verify.stdout,
+                )
+                self.assertIn("INVALID_EVIDENCE: capability not implemented cannot be CLEAN", verify.stdout)
+
+    def test_executor_reported_capabilities_cannot_become_judgment_basis(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["executor_reported_capabilities"] = {
+            "capabilities": ["raw_shell", "network"],
+            "reported_capability_count": 2,
+            "trust_boundary": REPORTED_ONLY,
+            "judgment_basis": True,
+        }
+        self._sync_capability_isolation_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: executor_reported_capabilities cannot be judgment basis", verify.stdout)
+
+    def test_verify_rejects_missing_capability_isolation_fields(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["capability_isolation_version"]
+        del evidence["bound_capability_isolation_metadata_hash"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("missing required field: capability_isolation_version", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: missing evidence binding v1 field: bound_capability_isolation_metadata_hash",
+            verify.stdout,
+        )
+
+    def test_verify_rejects_tampered_capability_manifest_metadata_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["process_execution_authority_granted"] = True
+        manifest["capability_matrix_hash"] = expected_capability_matrix_hash(manifest)
+        manifest["capability_isolation_proof_hash"] = expected_capability_isolation_proof_hash(manifest)
+        manifest["capability_isolation_metadata_hash"] = sha256_json(
+            {field: manifest[field] for field in self._capability_isolation_fields()}
+        )
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: manifest process_execution_authority_granted mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: capability isolation scaffold metadata fields mismatch", verify.stdout)
+
     def test_verify_rejects_tampered_action_count_and_hash(self):
         self._aeg("init")
         self._aeg("run", "fix typo in README")
@@ -1840,6 +2027,14 @@ class CliRuntimeTests(unittest.TestCase):
         )
         evidence["bound_action_boundary_metadata_hash"] = manifest["action_boundary_metadata_hash"]
 
+    def _sync_capability_isolation_manifest(self, evidence, manifest):
+        for field in self._capability_isolation_fields():
+            manifest[field] = evidence[field]
+        manifest["capability_isolation_metadata_hash"] = sha256_json(
+            {field: manifest[field] for field in self._capability_isolation_fields()}
+        )
+        evidence["bound_capability_isolation_metadata_hash"] = manifest["capability_isolation_metadata_hash"]
+
     def _write_json(self, path, payload):
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -1899,6 +2094,9 @@ class CliRuntimeTests(unittest.TestCase):
     def _action_boundary_fields(self):
         return ACTION_BOUNDARY_FIELDS
 
+    def _capability_isolation_fields(self):
+        return CAPABILITY_ISOLATION_FIELDS
+
     def _proposal_fields(self):
         return (
             "proposal_id",
@@ -1954,6 +2152,44 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["executor_reported_actions_is_reported_only"])
         self.assertTrue(evidence["checks"]["reported_only_is_not_judgment_basis"])
         self.assertTrue(evidence["checks"]["command_enumeration_only_grants_no_authority"])
+
+    def _assert_capability_isolation_scaffold_contract(self, evidence):
+        self.assertEqual(evidence["capability_isolation_version"], CAPABILITY_ISOLATION_SCAFFOLD_V0)
+        self.assertFalse(evidence["capability_isolation_enabled"])
+        self.assertEqual(evidence["capability_isolation_mode"], CAPABILITY_ISOLATION_MODE_NOT_IMPLEMENTED)
+        self.assertEqual(evidence["capability_boundary_status"], CAPABILITY_BOUNDARY_NOT_CHECKED)
+        self.assertNotEqual(evidence["capability_boundary_status"], CAPABILITY_BOUNDARY_CLEAN)
+        self.assertEqual(evidence["capability_boundary_source"], CAPABILITY_BOUNDARY_SOURCE_NONE)
+        self.assertEqual(
+            evidence["capability_boundary_trust_boundary"],
+            CAPABILITY_BOUNDARY_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+        )
+        for field in CAPABILITY_AUTHORITY_FIELDS:
+            self.assertFalse(evidence[field])
+        self.assertEqual(evidence["capability_matrix_hash"], expected_capability_matrix_hash(evidence))
+        self.assertEqual(
+            evidence["capability_isolation_proof_hash"],
+            expected_capability_isolation_proof_hash(evidence),
+        )
+        self.assertEqual(
+            evidence["executor_reported_capabilities"],
+            {
+                "capabilities": [],
+                "reported_capability_count": 0,
+                "trust_boundary": REPORTED_ONLY,
+                "judgment_basis": False,
+            },
+        )
+        self.assertTrue(evidence["checks"]["capability_isolation_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["capability_boundary_clean_claim_forbidden"])
+        self.assertTrue(evidence["checks"]["capability_not_implemented_is_not_clean"])
+        self.assertTrue(evidence["checks"]["capability_not_observed_is_not_clean"])
+        self.assertTrue(evidence["checks"]["missing_isolation_proof_is_not_clean"])
+        self.assertTrue(evidence["checks"]["unavailable_capability_proof_is_not_checked"])
+        self.assertTrue(evidence["checks"]["executor_reported_capabilities_is_reported_only"])
+        self.assertTrue(evidence["checks"]["capability_reported_only_is_not_judgment_basis"])
+        self.assertTrue(evidence["checks"]["no_live_executor_authority_before_capability_isolation"])
+        self.assertTrue(evidence["checks"]["capability_isolation_manifest_binding_required"])
 
     def _assert_prompt_redaction_not_requested_contract(self, evidence):
         self.assertFalse(evidence["prompt_build_requested"])
