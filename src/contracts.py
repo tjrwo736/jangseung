@@ -79,6 +79,69 @@ MUTATION_DELTA_SOURCE_COMPUTED = "computed_from_independent_snapshots"
 MUTATION_DELTA_SOURCE_UNTRUSTED = "not_checked_untrusted_snapshot"
 REPORTED_ONLY = "reported_only"
 
+ACTION_BOUNDARY_SCAFFOLD_V0 = "action_boundary_scaffold_v0"
+ACTION_BOUNDARY_CLEAN = "ACTION_BOUNDARY_CLEAN"
+ACTION_BOUNDARY_NOT_CHECKED = "ACTION_BOUNDARY_NOT_CHECKED"
+ACTION_BOUNDARY_INVALID = "ACTION_BOUNDARY_INVALID"
+ACTION_BOUNDARY_STATUSES = (
+    ACTION_BOUNDARY_CLEAN,
+    ACTION_BOUNDARY_NOT_CHECKED,
+    ACTION_BOUNDARY_INVALID,
+)
+ACTION_LOG_SOURCE_NONE = "none"
+ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED = "not_implemented_no_judgment_basis"
+ACTION_LOG_SOURCES = (
+    ACTION_LOG_SOURCE_NONE,
+)
+ACTION_LOG_SOURCE_TRUST_BOUNDARIES = (
+    ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    REPORTED_ONLY,
+)
+ACTION_BOUNDARY_FIELDS = (
+    "action_boundary_version",
+    "action_interception_enabled",
+    "action_boundary_status",
+    "action_log_source",
+    "action_log_source_trust_boundary",
+    "intercepted_actions",
+    "action_count",
+    "expected_action_count",
+    "action_risk",
+    "executor_reported_actions",
+    "command_enumeration_only",
+    "no_matched_dangerous_command",
+    "capability_isolation_enabled",
+    "raw_shell_authority_granted",
+    "network_authority_granted",
+    "provider_authority_granted",
+    "remote_write_authority_granted",
+    "computed_action_log_hash",
+)
+ACTION_AUTHORITY_FIELDS = (
+    "capability_isolation_enabled",
+    "raw_shell_authority_granted",
+    "network_authority_granted",
+    "provider_authority_granted",
+    "remote_write_authority_granted",
+)
+ACTION_HIGH_RISK_KINDS = (
+    "git_push",
+    "push",
+    "deploy",
+    "release",
+    "publish",
+    "network_call",
+    "external_api_call",
+    "repo_outside_write",
+    "repo_outside_delete",
+    "credential_access",
+    "env_access",
+    "provider_invocation",
+    "remote_write",
+    "raw_shell",
+    "shell_command",
+)
+
 CITIZEN_ONE_NOT_REQUESTED = "CITIZEN_ONE_NOT_REQUESTED"
 CITIZEN_ONE_REQUESTED = "CITIZEN_ONE_REQUESTED"
 CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED = "CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED"

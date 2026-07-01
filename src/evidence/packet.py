@@ -10,6 +10,7 @@ from uuid import uuid4
 from src.classify import Classification
 from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
+from src.evidence.action_boundary import build_action_boundary_metadata
 from src.law import LawResult
 from src.state import git
 
@@ -37,6 +38,7 @@ def build_evidence_packet(
         proposal_requires_user_gate=law_result.status == NEEDS_USER_GATE,
         proposal_stub_requested=proposal_stub_requested,
     )
+    action_boundary = build_action_boundary_metadata(executor_result)
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -79,12 +81,22 @@ def build_evidence_packet(
             "provider_request_response_safe_metadata_v0_required": True,
             "provider_runtime_request_execution_forbidden": True,
             "raw_provider_runtime_storage_forbidden": True,
+            "action_boundary_scaffold_v0_required": True,
+            "action_interception_enabled": False,
+            "action_boundary_clean_claim_forbidden": True,
+            "mutation_boundary_clean_does_not_imply_action_boundary_clean": True,
+            "git_diff_clean_does_not_imply_action_clean": True,
+            "no_matched_dangerous_command_is_not_action_boundary_clean": True,
+            "executor_reported_actions_is_reported_only": True,
+            "reported_only_is_not_judgment_basis": True,
+            "command_enumeration_only_grants_no_authority": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
         "safe_default": SAFE_DEFAULT,
     }
     packet.update(citizen_one)
+    packet.update(action_boundary)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),

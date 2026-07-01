@@ -13,6 +13,13 @@ import src.state.git as git_state
 from src.agents.noop import execute_contract as noop_execute_contract
 from src.cli.main import _cmd_doctor, _cmd_run
 from src.contracts import (
+    ACTION_AUTHORITY_FIELDS,
+    ACTION_BOUNDARY_CLEAN,
+    ACTION_BOUNDARY_FIELDS,
+    ACTION_BOUNDARY_NOT_CHECKED,
+    ACTION_BOUNDARY_SCAFFOLD_V0,
+    ACTION_LOG_SOURCE_NONE,
+    ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
     BOUND,
     CLEAN_CORE,
     CONTRACT_FIRST_NOOP,
@@ -125,6 +132,7 @@ from src.contracts import (
     RUN_MANIFEST_V1,
     SAFE_DEFAULT,
 )
+from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import sha256_json
 from src.evidence import (
     manifest_hash,
@@ -286,6 +294,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("status: CLEAN_CORE", run.stdout)
         self.assertIn("binding_status: BOUND", run.stdout)
         self.assertIn("binding_version: evidence_binding_v1", run.stdout)
+        self.assertIn("action_boundary_status: ACTION_BOUNDARY_NOT_CHECKED", run.stdout)
+        self.assertIn("action_count: 0", run.stdout)
+        self.assertIn("expected_action_count: 0", run.stdout)
+        self.assertIn("raw_shell_authority_granted: false", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -303,6 +315,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(evidence["protected_path_mutation_detected"])
         self.assertEqual(evidence["mutation_delta_source"], MUTATION_DELTA_SOURCE_COMPUTED)
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self._assert_action_boundary_scaffold_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
         self.assertFalse(evidence["citizen_one_requested"])
@@ -330,6 +343,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen_one_status: CITIZEN_ONE_NOT_REQUESTED", verify.stdout)
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
+        self.assertIn("action boundary scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("action_count replay matched expected no-op count: 0", verify.stdout)
+        self.assertIn("mutation boundary clean did not imply action boundary clean", verify.stdout)
         self.assertNotIn("proposal_status:", run.stdout)
         self.assertNotIn("proposal_status:", verify.stdout)
 
@@ -378,6 +394,8 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._response_redaction_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._action_boundary_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
@@ -418,6 +436,14 @@ class CliRuntimeTests(unittest.TestCase):
             manifest["response_redaction_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._response_redaction_fields()}),
         )
+        self.assertEqual(
+            manifest["action_boundary_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_action_boundary_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
+        )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
         self.assertEqual(evidence["bound_manifest_hash"], manifest_hash(manifest))
@@ -455,6 +481,13 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertFalse(completion_contract["file_mutation"])
         self.assertFalse(completion_contract["provider_calls"])
         self.assertFalse(completion_contract["network_calls"])
+        self.assertEqual(executor["actions"], [])
+        self.assertEqual(executor["action_count"], 0)
+        self.assertEqual(executor["expected_action_count"], 0)
+        self.assertEqual(completion_contract["actions"], [])
+        self.assertEqual(completion_contract["action_count"], 0)
+        self.assertEqual(completion_contract["expected_action_count"], 0)
+        self._assert_action_boundary_scaffold_contract(evidence)
 
         verify = self._aeg("verify")
         self._assert_verify_consistent(verify)
@@ -478,6 +511,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
+        self._assert_action_boundary_scaffold_contract(evidence)
         self.assertFalse(evidence["citizen_one_requested"])
         self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_NOT_REQUESTED)
         self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
@@ -575,6 +609,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["computed_mutation_delta"], [])
         self.assertEqual(evidence["executor_created_mutation"], [])
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self._assert_action_boundary_scaffold_contract(evidence)
         self.assertFalse(evidence["checks"]["executor"]["provider_calls"])
         self.assertFalse(evidence["checks"]["executor"]["network_calls"])
         self.assertFalse(evidence["checks"]["executor"]["file_mutation"])
@@ -651,6 +686,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
         self.assertIn("proposal contract fields matched manifest", verify.stdout)
         self.assertIn("proposal contract is reported_only and not an external oracle", verify.stdout)
+        self.assertIn("action boundary scaffold metadata fields matched manifest", verify.stdout)
 
     def test_proposal_stub_requires_citizen_one_opt_in(self):
         self._aeg("init")
@@ -709,6 +745,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["computed_mutation_delta"], [])
         self.assertEqual(evidence["executor_created_mutation"], [])
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self._assert_action_boundary_scaffold_contract(evidence)
         self.assertFalse(evidence["checks"]["executor"]["provider_calls"])
         self.assertFalse(evidence["checks"]["executor"]["network_calls"])
         self.assertFalse(evidence["checks"]["executor"]["file_mutation"])
@@ -767,6 +804,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("proposal contract fields matched manifest", verify.stdout)
         self.assertIn("proposal contract is reported_only and not an external oracle", verify.stdout)
         self.assertIn("law status replay matched: CLEAN_CORE", verify.stdout)
+        self.assertIn("action boundary scaffold metadata fields matched manifest", verify.stdout)
 
     def test_deterministic_proposal_stub_does_not_call_network_or_require_api_key(self):
         self._aeg("init")
@@ -1196,6 +1234,147 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: deterministic proposal stub output hash candidate mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: manifest proposal_steps mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: proposal contract fields mismatch", verify.stdout)
+
+    def test_action_boundary_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("action_boundary_status: ACTION_BOUNDARY_NOT_CHECKED", run.stdout)
+        self.assertIn("action_interception_enabled: false", run.stdout)
+        self.assertIn("action_count: 0", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_action_boundary_scaffold_contract(evidence)
+        for field in self._action_boundary_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["action_boundary_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
+        )
+        self.assertEqual(evidence["bound_action_boundary_metadata_hash"], manifest["action_boundary_metadata_hash"])
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("computed_action_log_hash replay matched", verify.stdout)
+        self.assertIn("action_count replay matched expected no-op count: 0", verify.stdout)
+        self.assertIn("action authority flags default false", verify.stdout)
+        self.assertIn("executor_reported_actions remains reported_only context, not judgment basis", verify.stdout)
+        self.assertIn("command enumeration alone grants no authority", verify.stdout)
+
+    def test_verify_rejects_tampered_action_count_and_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["action_count"] = 1
+        evidence["computed_action_log_hash"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: action_count must equal intercepted_actions length", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: action_count must equal expected_action_count", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: computed_action_log_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest action_count mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_action_manifest_metadata_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["action_count"] = 1
+        manifest["action_boundary_metadata_hash"] = sha256_json(
+            {field: manifest[field] for field in self._action_boundary_fields()}
+        )
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: manifest action_count mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: action boundary scaffold metadata fields mismatch", verify.stdout)
+
+    def test_fake_push_deploy_release_publish_cannot_be_action_boundary_clean(self):
+        self._aeg("init")
+        high_action_kinds = ("push", "deploy", "release", "publish")
+        for kind in high_action_kinds:
+            with self.subTest(kind=kind):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence["intercepted_actions"] = [{"action_type": kind, "risk": HIGH}]
+                evidence["action_count"] = 1
+                evidence["expected_action_count"] = 1
+                evidence["action_risk"] = HIGH
+                evidence["action_boundary_status"] = ACTION_BOUNDARY_CLEAN
+                evidence["computed_action_log_hash"] = expected_action_log_hash(evidence)
+                self._sync_action_boundary_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn("INVALID_EVIDENCE: HIGH action cannot be ACTION_BOUNDARY_CLEAN", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: ACTION_BOUNDARY_CLEAN is unavailable", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: action boundary status must not claim ACTION_BOUNDARY_CLEAN", verify.stdout)
+
+    def test_command_enumeration_only_cannot_produce_action_boundary_clean(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["command_enumeration_only"] = True
+        evidence["action_boundary_status"] = ACTION_BOUNDARY_CLEAN
+        self._sync_action_boundary_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: command_enumeration_only cannot produce ACTION_BOUNDARY_CLEAN", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ACTION_BOUNDARY_CLEAN is unavailable", verify.stdout)
+
+    def test_no_matched_dangerous_command_cannot_produce_action_boundary_clean(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["no_matched_dangerous_command"] = True
+        evidence["action_boundary_status"] = ACTION_BOUNDARY_CLEAN
+        self._sync_action_boundary_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: NO_MATCHED_DANGEROUS_COMMAND != ACTION_BOUNDARY_CLEAN", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ACTION_BOUNDARY_CLEAN is unavailable", verify.stdout)
+
+    def test_executor_reported_actions_cannot_become_judgment_basis(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["executor_reported_actions"] = {
+            "actions": [{"action_type": "deploy", "risk": HIGH}],
+            "reported_action_count": 1,
+            "trust_boundary": REPORTED_ONLY,
+            "judgment_basis": True,
+        }
+        self._sync_action_boundary_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: executor_reported_actions cannot be judgment basis", verify.stdout)
 
     def test_protected_working_tree_change_escalates_runtime_risk(self):
         self._aeg("init")
@@ -1653,6 +1832,14 @@ class CliRuntimeTests(unittest.TestCase):
         evidence["bound_manifest_hash"] = manifest_hash(manifest)
         self._write_json(evidence_path, evidence)
 
+    def _sync_action_boundary_manifest(self, evidence, manifest):
+        for field in self._action_boundary_fields():
+            manifest[field] = evidence[field]
+        manifest["action_boundary_metadata_hash"] = sha256_json(
+            {field: manifest[field] for field in self._action_boundary_fields()}
+        )
+        evidence["bound_action_boundary_metadata_hash"] = manifest["action_boundary_metadata_hash"]
+
     def _write_json(self, path, payload):
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -1709,6 +1896,9 @@ class CliRuntimeTests(unittest.TestCase):
     def _response_redaction_fields(self):
         return RESPONSE_REDACTION_METADATA_FIELDS
 
+    def _action_boundary_fields(self):
+        return ACTION_BOUNDARY_FIELDS
+
     def _proposal_fields(self):
         return (
             "proposal_id",
@@ -1727,6 +1917,43 @@ class CliRuntimeTests(unittest.TestCase):
             "proposal_present",
             "proposal_hold_reason",
         )
+
+    def _assert_action_boundary_scaffold_contract(self, evidence):
+        self.assertEqual(evidence["action_boundary_version"], ACTION_BOUNDARY_SCAFFOLD_V0)
+        self.assertFalse(evidence["action_interception_enabled"])
+        self.assertEqual(evidence["action_boundary_status"], ACTION_BOUNDARY_NOT_CHECKED)
+        self.assertNotEqual(evidence["action_boundary_status"], ACTION_BOUNDARY_CLEAN)
+        self.assertEqual(evidence["action_log_source"], ACTION_LOG_SOURCE_NONE)
+        self.assertEqual(
+            evidence["action_log_source_trust_boundary"],
+            ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(evidence["intercepted_actions"], [])
+        self.assertEqual(evidence["action_count"], 0)
+        self.assertEqual(evidence["expected_action_count"], 0)
+        self.assertEqual(evidence["action_risk"], NOT_CHECKED)
+        self.assertFalse(evidence["command_enumeration_only"])
+        self.assertFalse(evidence["no_matched_dangerous_command"])
+        for field in ACTION_AUTHORITY_FIELDS:
+            self.assertFalse(evidence[field])
+        self.assertEqual(evidence["computed_action_log_hash"], expected_action_log_hash(evidence))
+        self.assertEqual(
+            evidence["executor_reported_actions"],
+            {
+                "actions": [],
+                "reported_action_count": 0,
+                "trust_boundary": REPORTED_ONLY,
+                "judgment_basis": False,
+            },
+        )
+        self.assertTrue(evidence["checks"]["action_boundary_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["action_boundary_clean_claim_forbidden"])
+        self.assertTrue(evidence["checks"]["mutation_boundary_clean_does_not_imply_action_boundary_clean"])
+        self.assertTrue(evidence["checks"]["git_diff_clean_does_not_imply_action_clean"])
+        self.assertTrue(evidence["checks"]["no_matched_dangerous_command_is_not_action_boundary_clean"])
+        self.assertTrue(evidence["checks"]["executor_reported_actions_is_reported_only"])
+        self.assertTrue(evidence["checks"]["reported_only_is_not_judgment_basis"])
+        self.assertTrue(evidence["checks"]["command_enumeration_only_grants_no_authority"])
 
     def _assert_prompt_redaction_not_requested_contract(self, evidence):
         self.assertFalse(evidence["prompt_build_requested"])
