@@ -57,6 +57,7 @@ from src.contracts import (
     NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
     NOT_CHECKED_IMPACT_RISKS,
     PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
     PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
@@ -65,6 +66,14 @@ from src.contracts import (
     PROVIDER_RUNTIME_STATE_FIELDS,
     PROVIDER_SECRET_ENV_METADATA_FIELDS,
     PROVIDER_SELECTION_METADATA_FIELDS,
+    PRE_LIVE_EXECUTOR_GATE_FIELDS,
+    PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD,
+    PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS,
+    PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0,
+    PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
     TOOL_AUTHORITY_GRANT_FIELDS,
@@ -82,6 +91,7 @@ from src.evidence.binding import (
     evidence_store_trust_manifest_fields,
     expected_artifact_path,
     manifest_hash,
+    pre_live_executor_gate_manifest_fields,
     repo_relative_path,
     sha256_json,
     sha256_text,
@@ -117,6 +127,7 @@ from src.evidence.ledger_integrity import (
     is_sha256_hex,
     ledger_integrity_manifest_fields,
 )
+from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -214,6 +225,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     aeg_state_checks, aeg_state_errors = _verify_aeg_state_write_denial(evidence, manifest)
     checks.extend(aeg_state_checks)
     errors.extend(aeg_state_errors)
+
+    gate_checks, gate_errors = _verify_pre_live_executor_gate(evidence, manifest)
+    checks.extend(gate_checks)
+    errors.extend(gate_errors)
 
     ledger_checks, ledger_errors = _verify_ledger_integrity(evidence, manifest, ledger_entry)
     checks.extend(ledger_checks)
@@ -668,6 +683,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "pre-live executor gate metadata",
+        PRE_LIVE_EXECUTOR_GATE_FIELDS,
+        "pre_live_executor_gate_manifest_hash",
+        evidence,
+        manifest,
+        pre_live_executor_gate_manifest_fields(evidence),
+        pre_live_executor_gate_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "ledger integrity scaffold metadata",
         LEDGER_INTEGRITY_FIELDS,
         "ledger_integrity_manifest_hash",
@@ -869,6 +895,13 @@ def _verify_manifest_binding(
         "bound_aeg_state_write_denial_metadata_hash",
         evidence.get("bound_aeg_state_write_denial_metadata_hash"),
         sha256_json(aeg_state_write_denial_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_pre_live_executor_gate_metadata_hash",
+        evidence.get("bound_pre_live_executor_gate_metadata_hash"),
+        sha256_json(pre_live_executor_gate_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -1507,6 +1540,150 @@ def _verify_aeg_state_write_denial(
             checks.append("manifest aeg_state_write_denial_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest aeg_state_write_denial_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_pre_live_executor_gate(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("pre-live executor gate replay used recorded scaffold metadata only")
+
+    if evidence.get("pre_live_executor_gate_version") == PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0:
+        checks.append(f"pre_live_executor_gate_version matched: {PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: pre_live_executor_gate_version must be "
+            f"{PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0}"
+        )
+
+    if evidence.get("pre_live_executor_gate_mode") == PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD:
+        checks.append("pre_live_executor_gate_mode remained metadata scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_mode must remain metadata scaffold")
+
+    if evidence.get("pre_live_executor_gate_status") == PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD:
+        checks.append("pre_live_executor_gate_status remained PRE_LIVE_EXECUTOR_ON_HOLD")
+    else:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_status must remain PRE_LIVE_EXECUTOR_ON_HOLD")
+
+    if evidence.get("live_executor_authority_requested") is False:
+        checks.append("live_executor_authority_requested remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_requested must remain false")
+
+    if evidence.get("live_executor_authority_granted") is False:
+        checks.append("live_executor_authority_granted remained false")
+        checks.append("live executor authority remained ON_HOLD")
+    else:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_granted must remain false")
+        errors.append("INVALID_EVIDENCE: live executor authority cannot be granted by pre-live gate scaffold")
+
+    if evidence.get("live_executor_authority_hold_reason") == LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE:
+        checks.append("live_executor_authority_hold_reason preserved pre-live gate hold")
+    else:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_hold_reason must preserve pre-live gate hold")
+
+    ledger_present = (
+        evidence.get("requires_tamper_evident_ledger") is True
+        and evidence.get("tamper_evident_ledger_present") is True
+        and evidence.get("ledger_integrity_version") == LEDGER_INTEGRITY_SCAFFOLD_V0
+        and evidence.get("ledger_tamper_evident_enabled") is True
+        and evidence.get("ledger_tamper_proof_claimed") is False
+    )
+    if ledger_present:
+        checks.append("required tamper-evident ledger scaffold present")
+    else:
+        errors.append("INVALID_EVIDENCE: required tamper-evident ledger scaffold is missing")
+
+    denial_present = (
+        evidence.get("requires_aeg_state_write_denial") is True
+        and evidence.get("aeg_state_write_denial_present") is True
+        and evidence.get("aeg_state_write_denial_version") == AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0
+        and evidence.get("capability_write_aeg_state_granted") is False
+        and evidence.get("capability_write_aeg_state_denied") is True
+        and evidence.get("aeg_state_write_denial_enforcement_status")
+        == AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED
+    )
+    if denial_present:
+        checks.append("required aeg state write denial scaffold present")
+    else:
+        errors.append("INVALID_EVIDENCE: required aeg state write denial scaffold is missing")
+
+    gate_result = evidence.get("pre_live_executor_gate_result")
+    gate_result_is_hold = gate_result in (
+        PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+        PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    )
+    if gate_result_is_hold:
+        checks.append(f"pre_live_executor_gate_result remained hold: {gate_result}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: pre_live_executor_gate_result must remain HOLD_CURRENT_STATE or "
+            "NEEDS_ENFORCEMENT_BEFORE_LIVE_EXECUTOR"
+        )
+
+    if gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_result cannot claim PASS/CLEAN/ALLOW")
+    else:
+        checks.append("pre_live_executor_gate_result did not claim PASS/CLEAN/ALLOW")
+
+    if evidence.get("requires_external_enforcement") is True:
+        checks.append("pre-live executor gate requires external enforcement before live executor")
+    else:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require external enforcement before live executor")
+
+    if evidence.get("external_enforcement_present") is False:
+        checks.append("external_enforcement_present remained false")
+        if gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS:
+            errors.append("INVALID_EVIDENCE: external_enforcement_present=false cannot produce PASS/CLEAN/ALLOW")
+        else:
+            checks.append("external_enforcement_present=false kept gate result non-pass")
+    else:
+        errors.append("INVALID_EVIDENCE: external_enforcement_present must remain false in scaffold v0")
+
+    if evidence.get("evidence_store_executor_isolated_required") is True:
+        checks.append("pre-live executor gate requires executor-isolated evidence store before live executor")
+    else:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require executor-isolated evidence store")
+
+    if evidence.get("evidence_store_executor_isolated_present") is False:
+        checks.append("evidence_store_executor_isolated_present remained false")
+        if gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS:
+            errors.append(
+                "INVALID_EVIDENCE: evidence_store_executor_isolated_present=false cannot produce PASS/CLEAN/ALLOW"
+            )
+        else:
+            checks.append("evidence_store_executor_isolated_present=false kept gate result non-pass")
+    else:
+        errors.append("INVALID_EVIDENCE: evidence_store_executor_isolated_present must remain false in scaffold v0")
+
+    if evidence.get("evidence_store_executor_isolated_present") == evidence.get("evidence_store_is_executor_isolated"):
+        checks.append("pre-live gate mirrored evidence_store_is_executor_isolated=false")
+    else:
+        errors.append("INVALID_EVIDENCE: pre-live gate must mirror evidence_store_is_executor_isolated=false")
+
+    if evidence.get("pre_live_executor_gate_reason") == PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY:
+        checks.append("pre_live_executor_gate_reason described scaffold-only hold")
+    else:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_reason must describe scaffold-only hold")
+
+    if evidence.get("pre_live_executor_gate_metadata_hash") == expected_pre_live_executor_gate_metadata_hash(evidence):
+        checks.append("pre_live_executor_gate_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash mismatch")
+
+    if manifest is not None:
+        if manifest.get("pre_live_executor_gate_metadata_hash") == evidence.get(
+            "pre_live_executor_gate_metadata_hash"
+        ):
+            checks.append("manifest pre_live_executor_gate_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest pre_live_executor_gate_metadata_hash mismatch with evidence")
 
     return checks, errors
 

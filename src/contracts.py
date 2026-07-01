@@ -90,6 +90,7 @@ EVIDENCE_BINDING_V1_FIELDS = (
     "bound_executor_capability_exposure_metadata_hash",
     "bound_evidence_store_trust_metadata_hash",
     "bound_aeg_state_write_denial_metadata_hash",
+    "bound_pre_live_executor_gate_metadata_hash",
     "bound_ledger_integrity_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
@@ -363,6 +364,53 @@ AEG_STATE_WRITE_DENIAL_FIELDS = (
     "aeg_state_write_denial_source",
     "aeg_state_write_denial_reason",
     "aeg_state_write_denial_metadata_hash",
+)
+
+PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0 = "pre_live_executor_gate_scaffold_v0"
+PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD = "candidate_e_metadata_scaffold_gate"
+PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD = "PRE_LIVE_EXECUTOR_ON_HOLD"
+PRE_LIVE_EXECUTOR_GATE_STATUSES = (
+    PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
+    INVALID_EVIDENCE,
+)
+LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE = (
+    "candidate_e_scaffolds_present_but_external_enforcement_and_executor_isolation_missing"
+)
+PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE = "HOLD_CURRENT_STATE"
+PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT = "NEEDS_ENFORCEMENT_BEFORE_LIVE_EXECUTOR"
+PRE_LIVE_EXECUTOR_GATE_RESULTS = (
+    PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    INVALID_EVIDENCE,
+)
+PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY = (
+    "tamper_evident_ledger_and_aeg_state_write_denial_scaffolds_bound_but_live_executor_on_hold"
+)
+PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS = (
+    "PASS",
+    "CLEAN",
+    "ALLOW",
+    "ALLOWED",
+    "CLEAN_CORE",
+)
+PRE_LIVE_EXECUTOR_GATE_FIELDS = (
+    "pre_live_executor_gate_version",
+    "pre_live_executor_gate_mode",
+    "pre_live_executor_gate_status",
+    "live_executor_authority_requested",
+    "live_executor_authority_granted",
+    "live_executor_authority_hold_reason",
+    "requires_tamper_evident_ledger",
+    "tamper_evident_ledger_present",
+    "requires_aeg_state_write_denial",
+    "aeg_state_write_denial_present",
+    "requires_external_enforcement",
+    "external_enforcement_present",
+    "evidence_store_executor_isolated_required",
+    "evidence_store_executor_isolated_present",
+    "pre_live_executor_gate_result",
+    "pre_live_executor_gate_reason",
+    "pre_live_executor_gate_metadata_hash",
 )
 ACTION_HIGH_RISK_KINDS = (
     "git_push",

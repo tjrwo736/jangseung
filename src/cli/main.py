@@ -181,6 +181,7 @@ def _cmd_run(
     rows.extend(_executor_capability_exposure_rows(evidence))
     rows.extend(_evidence_store_trust_rows(evidence))
     rows.extend(_aeg_state_write_denial_rows(evidence))
+    rows.extend(_pre_live_executor_gate_rows(evidence))
     rows.extend(_ledger_integrity_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
@@ -257,6 +258,7 @@ def _cmd_verify(cwd: Path) -> int:
         rows.extend(_executor_capability_exposure_rows(result.evidence))
         rows.extend(_evidence_store_trust_rows(result.evidence))
         rows.extend(_aeg_state_write_denial_rows(result.evidence))
+        rows.extend(_pre_live_executor_gate_rows(result.evidence))
         rows.extend(_ledger_integrity_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
@@ -501,6 +503,58 @@ def _aeg_state_write_denial_rows(evidence: dict[str, Any]) -> list[tuple[str, st
         (
             "aeg_state_write_denial_metadata_hash",
             _short_hash(evidence.get("aeg_state_write_denial_metadata_hash", "")),
+        ),
+    ]
+
+
+def _pre_live_executor_gate_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("pre_live_executor_gate_version", str(evidence.get("pre_live_executor_gate_version", ""))),
+        ("pre_live_executor_gate_mode", str(evidence.get("pre_live_executor_gate_mode", ""))),
+        ("pre_live_executor_gate_status", str(evidence.get("pre_live_executor_gate_status", ""))),
+        (
+            "live_executor_authority_requested",
+            str(evidence.get("live_executor_authority_requested", "")).lower(),
+        ),
+        (
+            "live_executor_authority_granted",
+            str(evidence.get("live_executor_authority_granted", "")).lower(),
+        ),
+        ("live_executor_authority_hold_reason", str(evidence.get("live_executor_authority_hold_reason", ""))),
+        (
+            "requires_tamper_evident_ledger",
+            str(evidence.get("requires_tamper_evident_ledger", "")).lower(),
+        ),
+        (
+            "tamper_evident_ledger_present",
+            str(evidence.get("tamper_evident_ledger_present", "")).lower(),
+        ),
+        (
+            "requires_aeg_state_write_denial",
+            str(evidence.get("requires_aeg_state_write_denial", "")).lower(),
+        ),
+        (
+            "aeg_state_write_denial_present",
+            str(evidence.get("aeg_state_write_denial_present", "")).lower(),
+        ),
+        (
+            "requires_external_enforcement",
+            str(evidence.get("requires_external_enforcement", "")).lower(),
+        ),
+        ("external_enforcement_present", str(evidence.get("external_enforcement_present", "")).lower()),
+        (
+            "evidence_store_executor_isolated_required",
+            str(evidence.get("evidence_store_executor_isolated_required", "")).lower(),
+        ),
+        (
+            "evidence_store_executor_isolated_present",
+            str(evidence.get("evidence_store_executor_isolated_present", "")).lower(),
+        ),
+        ("pre_live_executor_gate_result", str(evidence.get("pre_live_executor_gate_result", ""))),
+        ("pre_live_executor_gate_reason", str(evidence.get("pre_live_executor_gate_reason", ""))),
+        (
+            "pre_live_executor_gate_metadata_hash",
+            _short_hash(evidence.get("pre_live_executor_gate_metadata_hash", "")),
         ),
     ]
 
