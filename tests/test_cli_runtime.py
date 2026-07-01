@@ -26,7 +26,12 @@ from src.contracts import (
     CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
     CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
+    CITIZEN_ONE_PROPOSAL_RECORDED,
     CITIZEN_ONE_STATUSES,
+    DETERMINISTIC_STUB_PROPOSAL_ID,
+    DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES,
+    DETERMINISTIC_STUB_PROPOSAL_STEPS,
+    DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
     EVIDENCE_BINDING_V1,
     GIT_STAGED,
     GIT_WORKING_TREE,
@@ -43,10 +48,14 @@ from src.contracts import (
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
+    PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROPOSAL_KIND_DETERMINISTIC_STUB,
     PROPOSAL_KIND_NOT_GENERATED,
     PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROPOSAL_SOURCE_DETERMINISTIC_STUB,
     PROPOSAL_SOURCE_NONE,
+    PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED,
     PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
     RUN_MANIFEST_V1,
     SAFE_DEFAULT,
@@ -434,6 +443,116 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("proposal contract fields matched manifest", verify.stdout)
         self.assertIn("proposal contract is reported_only and not an external oracle", verify.stdout)
 
+    def test_proposal_stub_requires_citizen_one_opt_in(self):
+        self._aeg("init")
+
+        run = self._aeg("run", "--proposal-stub", "fix typo in README", check=False)
+
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("status: FAIL", run.stdout)
+        self.assertIn("--proposal-stub requires --citizen-one", run.stdout)
+        self.assertFalse((self.repo / ".aeg" / "runs").exists() and any((self.repo / ".aeg" / "runs").iterdir()))
+
+    def test_citizen_one_deterministic_proposal_stub_records_bound_reported_only_proposal(self):
+        self._aeg("init")
+        run = self._aeg("run", "--citizen-one", "--proposal-stub", "fix typo in README")
+
+        self.assertIn("status: CLEAN_CORE", run.stdout)
+        self.assertIn("citizen_one_requested: true", run.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_PROPOSAL_RECORDED", run.stdout)
+        self.assertIn("citizen_one_provider_status: not_configured", run.stdout)
+        self.assertIn("citizen_one_output_present: true", run.stdout)
+        self.assertIn("provider_network_used: false", run.stdout)
+        self.assertIn("provider_secret_observed: false", run.stdout)
+        self.assertIn("proposal_present: true", run.stdout)
+        self.assertIn("proposal_status: deterministic_stub_recorded", run.stdout)
+        self.assertIn("proposal_source: deterministic_stub", run.stdout)
+        self.assertIn("proposal_reported_only: true", run.stdout)
+        self.assertIn("proposal_trust_boundary: reported_only", run.stdout)
+        self.assertIn("proposal_requires_user_gate: false", run.stdout)
+        self.assertIn("proposal_redaction_status: no_raw_prompt_or_response_stored", run.stdout)
+        self.assertNotIn("status: PASS", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["status"], CLEAN_CORE)
+        self.assertEqual(evidence["risk_level"], LOW)
+        self.assertTrue(evidence["citizen_one_requested"])
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_PROPOSAL_RECORDED)
+        self.assertEqual(evidence["citizen_one_provider_status"], CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED)
+        self.assertTrue(evidence["citizen_one_output_present"])
+        self.assertEqual(evidence["citizen_one_output_trust_boundary"], REPORTED_ONLY)
+        self.assertTrue(evidence["citizen_one_reported_only"])
+        self.assertEqual(evidence["citizen_one_hold_reason"], "")
+        self.assertEqual(evidence["provider_config_source"], CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE)
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self._assert_proposal_stub_contract(evidence, requires_user_gate=False)
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["executor_created_mutation"], [])
+        self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
+        self.assertFalse(evidence["checks"]["executor"]["provider_calls"])
+        self.assertFalse(evidence["checks"]["executor"]["network_calls"])
+        self.assertFalse(evidence["checks"]["executor"]["file_mutation"])
+        self.assertTrue(evidence["checks"]["deterministic_proposal_stub_opt_in"])
+        self.assertTrue(evidence["checks"]["proposal_reported_only_is_not_judgment_basis"])
+        self._assert_no_forbidden_raw_storage_keys(evidence)
+        self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._proposal_fields()}))
+
+        manifest, _ = self._latest_manifest_with_path()
+        for field in self._citizen_one_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._proposal_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["proposal_evidence_hash"],
+            sha256_json({field: evidence[field] for field in self._proposal_fields()}),
+        )
+        self._assert_no_forbidden_raw_storage_keys(manifest)
+
+        tracked_status = self._git("status", "--porcelain=v1").stdout.strip()
+        self.assertEqual(tracked_status, "")
+        tracked_aeg_env = self._git("ls-files", ".aeg", ".env").stdout.strip()
+        self.assertEqual(tracked_aeg_env, "")
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_PROPOSAL_RECORDED", verify.stdout)
+        self.assertIn("proposal_present: true", verify.stdout)
+        self.assertIn("proposal_status: deterministic_stub_recorded", verify.stdout)
+        self.assertIn("proposal_source: deterministic_stub", verify.stdout)
+        self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
+        self.assertIn("proposal contract fields matched manifest", verify.stdout)
+        self.assertIn("proposal contract is reported_only and not an external oracle", verify.stdout)
+        self.assertIn("law status replay matched: CLEAN_CORE", verify.stdout)
+
+    def test_deterministic_proposal_stub_does_not_call_network_or_require_api_key(self):
+        self._aeg("init")
+        dummy_provider_value = "DUMMY_PROVIDER_VALUE_SHOULD_NOT_APPEAR"
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": dummy_provider_value}, clear=False):
+            with patch("socket.socket", side_effect=AssertionError("network call attempted")):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    exit_code = _cmd_run(
+                        self.repo,
+                        "fix typo in README",
+                        citizen_one_requested=True,
+                        proposal_stub_requested=True,
+                    )
+
+        self.assertEqual(exit_code, 0)
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_PROPOSAL_RECORDED)
+        self.assertEqual(evidence["proposal_source"], PROPOSAL_SOURCE_DETERMINISTIC_STUB)
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertNotIn(dummy_provider_value, output.getvalue())
+        self.assertNotIn(dummy_provider_value, json.dumps(evidence, sort_keys=True))
+        for artifact in (self.repo / ".aeg").rglob("*"):
+            if artifact.is_file():
+                self.assertNotIn(dummy_provider_value, artifact.read_text(encoding="utf-8"))
+
     def test_citizen_one_opt_in_without_provider_does_not_call_network(self):
         self._aeg("init")
 
@@ -500,6 +619,31 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
         self.assertIn("law status replay matched: NEEDS_USER_GATE", verify.stdout)
 
+    def test_deterministic_proposal_stub_high_remains_user_gated(self):
+        self._aeg("init")
+        run = self._aeg("run", "--citizen-one", "--proposal-stub", "merge to main and deploy")
+
+        self.assertIn("status: NEEDS_USER_GATE", run.stdout)
+        self.assertIn("citizen_one_status: CITIZEN_ONE_PROPOSAL_RECORDED", run.stdout)
+        self.assertIn("proposal_present: true", run.stdout)
+        self.assertIn("proposal_requires_user_gate: true", run.stdout)
+        self.assertNotIn("status: PASS", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["risk_level"], HIGH)
+        self.assertEqual(evidence["status"], NEEDS_USER_GATE)
+        self.assertEqual(evidence["citizen_one_status"], CITIZEN_ONE_PROPOSAL_RECORDED)
+        self._assert_proposal_stub_contract(evidence, requires_user_gate=True)
+        self.assertIn("law.high.requires_user_gate", evidence["status_reasons"])
+        self.assertEqual(evidence["computed_mutation_delta"], [])
+        self.assertEqual(evidence["executor_created_mutation"], [])
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("HIGH risk remained NEEDS_USER_GATE", verify.stdout)
+        self.assertIn("law status replay matched: NEEDS_USER_GATE", verify.stdout)
+        self.assertIn("proposal_requires_user_gate: true", verify.stdout)
+
     def test_citizen_one_proposal_does_not_promote_not_checked_or_replace_law_status(self):
         self._aeg("init")
         run = self._aeg("run", "--citizen-one", "do the thing")
@@ -513,6 +657,28 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["risk_level"], MEDIUM)
         self.assertEqual(evidence["status"], NOT_CHECKED)
         self._assert_proposal_held_contract(evidence, requires_user_gate=False)
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_status_value: NOT_CHECKED", verify.stdout)
+        self.assertIn("law status replay matched: NOT_CHECKED", verify.stdout)
+        self.assertIn("NOT_CHECKED was not promoted to PASS", verify.stdout)
+
+    def test_deterministic_proposal_stub_does_not_promote_not_checked_or_replace_law_status(self):
+        self._aeg("init")
+        run = self._aeg("run", "--citizen-one", "--proposal-stub", "do the thing")
+
+        self.assertIn("risk_level: MEDIUM", run.stdout)
+        self.assertIn("status: NOT_CHECKED", run.stdout)
+        self.assertIn("proposal_present: true", run.stdout)
+        self.assertIn("proposal_status: deterministic_stub_recorded", run.stdout)
+        self.assertNotIn("status: PASS", run.stdout)
+
+        evidence = self._latest_evidence()
+        self.assertEqual(evidence["risk_level"], MEDIUM)
+        self.assertEqual(evidence["status"], NOT_CHECKED)
+        self.assertEqual(evidence["proposal_source"], PROPOSAL_SOURCE_DETERMINISTIC_STUB)
+        self._assert_proposal_stub_contract(evidence, requires_user_gate=False)
 
         verify = self._aeg("verify")
         self._assert_verify_consistent(verify)
@@ -549,6 +715,23 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: proposal_summary must be empty when proposal is not generated", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: invalid proposal_status: generated", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: manifest proposal_status mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: proposal contract fields mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_deterministic_proposal_stub_fields(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "--proposal-stub", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["proposal_steps"] = ["tampered external recommendation"]
+        evidence["proposal_output_hash_candidate"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: deterministic proposal stub steps mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: deterministic proposal stub output hash candidate mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest proposal_steps mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: proposal contract fields mismatch", verify.stdout)
 
     def test_protected_working_tree_change_escalates_runtime_risk(self):
@@ -1064,6 +1247,30 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["proposal_status"], PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED)
         self.assertFalse(evidence["proposal_present"])
         self.assertEqual(evidence["proposal_hold_reason"], PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["model_output_hash_candidate"], "")
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_observed"])
+
+    def _assert_proposal_stub_contract(self, evidence, requires_user_gate):
+        self.assertEqual(evidence["proposal_id"], DETERMINISTIC_STUB_PROPOSAL_ID)
+        self.assertEqual(evidence["proposal_version"], CITIZEN_ONE_PROPOSAL_CONTRACT_V0)
+        self.assertEqual(evidence["proposal_kind"], PROPOSAL_KIND_DETERMINISTIC_STUB)
+        self.assertEqual(evidence["proposal_summary"], DETERMINISTIC_STUB_PROPOSAL_SUMMARY)
+        self.assertEqual(evidence["proposal_steps"], list(DETERMINISTIC_STUB_PROPOSAL_STEPS))
+        self.assertEqual(evidence["proposal_risk_notes"], list(DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES))
+        self.assertEqual(evidence["proposal_requires_user_gate"], requires_user_gate)
+        self.assertEqual(evidence["proposal_trust_boundary"], REPORTED_ONLY)
+        self.assertTrue(evidence["proposal_reported_only"])
+        self.assertEqual(evidence["proposal_source"], PROPOSAL_SOURCE_DETERMINISTIC_STUB)
+        self.assertEqual(len(evidence["proposal_output_hash_candidate"]), 64)
+        self.assertTrue(all(char in "0123456789abcdef" for char in evidence["proposal_output_hash_candidate"]))
+        self.assertEqual(
+            evidence["proposal_redaction_status"],
+            PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        )
+        self.assertEqual(evidence["proposal_status"], PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED)
+        self.assertTrue(evidence["proposal_present"])
+        self.assertEqual(evidence["proposal_hold_reason"], PROPOSAL_HOLD_REASON_NONE)
         self.assertEqual(evidence["model_output_hash_candidate"], "")
         self.assertFalse(evidence["provider_network_used"])
         self.assertFalse(evidence["provider_secret_observed"])

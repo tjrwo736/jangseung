@@ -40,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="opt in to the Citizen One control plane skeleton",
     )
+    run_parser.add_argument(
+        "--proposal-stub",
+        action="store_true",
+        help="record a deterministic local Citizen One proposal stub; requires --citizen-one",
+    )
     run_parser.add_argument("task", help="task text to classify and gate")
     subparsers.add_parser("verify", help="verify latest evidence with deterministic replay")
 
@@ -49,7 +54,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _cmd_doctor(Path.cwd())
     if args.command == "run":
-        return _cmd_run(Path.cwd(), args.task, citizen_one_requested=args.citizen_one)
+        return _cmd_run(
+            Path.cwd(),
+            args.task,
+            citizen_one_requested=args.citizen_one,
+            proposal_stub_requested=args.proposal_stub,
+        )
     if args.command == "verify":
         return _cmd_verify(Path.cwd())
     parser.error(f"unknown command: {args.command}")
@@ -87,7 +97,16 @@ def _cmd_doctor(cwd: Path) -> int:
     return 1 if status == "FAIL" else 0
 
 
-def _cmd_run(cwd: Path, task_text: str, citizen_one_requested: bool = False) -> int:
+def _cmd_run(
+    cwd: Path,
+    task_text: str,
+    citizen_one_requested: bool = False,
+    proposal_stub_requested: bool = False,
+) -> int:
+    if proposal_stub_requested and not citizen_one_requested:
+        _print_card("Aegis run", "FAIL", [("error", "--proposal-stub requires --citizen-one")])
+        return 2
+
     try:
         repo = git.repo_root(cwd)
         require_initialized(repo)
@@ -118,6 +137,7 @@ def _cmd_run(cwd: Path, task_text: str, citizen_one_requested: bool = False) -> 
             executor_result,
             mutation_boundary=mutation_boundary,
             citizen_one_requested=citizen_one_requested,
+            proposal_stub_requested=proposal_stub_requested,
         )
         run_payload = {
             "run_id": evidence["run_id"],
