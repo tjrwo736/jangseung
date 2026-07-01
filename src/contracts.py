@@ -161,6 +161,113 @@ CAPABILITY_ISOLATION_FIELDS = (
     "capability_matrix_hash",
     "executor_reported_capabilities",
 )
+
+TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0 = "tool_surface_authority_grant_scaffold_v0"
+TOOL_SURFACE_CLEAN = "TOOL_SURFACE_CLEAN"
+TOOL_SURFACE_SCAFFOLD_ONLY = "TOOL_SURFACE_SCAFFOLD_ONLY"
+TOOL_SURFACE_INVALID = "TOOL_SURFACE_INVALID"
+TOOL_SURFACE_STATUSES = (
+    TOOL_SURFACE_CLEAN,
+    TOOL_SURFACE_SCAFFOLD_ONLY,
+    TOOL_SURFACE_INVALID,
+)
+TOOL_SURFACE_SOURCE_NONE = "none"
+TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED = "not_implemented_no_judgment_basis"
+TOOL_AUTHORITY_GRANT_FIELDS = (
+    "raw_shell_tool_authority_granted",
+    "process_execution_tool_authority_granted",
+    "network_tool_authority_granted",
+    "provider_tool_authority_granted",
+    "credential_env_tool_authority_granted",
+    "remote_write_tool_authority_granted",
+    "deploy_release_publish_tool_authority_granted",
+    "repo_outside_write_tool_authority_granted",
+    "file_mutation_tool_authority_granted",
+    "telemetry_tool_authority_granted",
+)
+TOOL_SURFACE_FIELDS = (
+    "tool_surface_version",
+    "tool_surface_enabled",
+    "tool_surface_status",
+    "tool_surface_source",
+    "tool_surface_trust_boundary",
+    "requested_tool_capabilities",
+    "granted_tool_capabilities",
+    "denied_tool_capabilities",
+    "tool_authority_grant_count",
+    "expected_tool_authority_grant_count",
+    *TOOL_AUTHORITY_GRANT_FIELDS,
+    "executor_reported_tool_usage",
+    "tool_authority_grant_hash",
+    "tool_surface_metadata_hash",
+)
+
+EXECUTOR_CAPABILITY_EXPOSURE_SCAFFOLD_V0 = "executor_capability_exposure_scaffold_v0"
+EXECUTOR_CAPABILITY_EXPOSURE_SCOPE_CURRENT_NOOP = "current_noop_executor_only"
+EXECUTOR_CAPABILITY_EXPOSURE_SOURCE_NOOP_CONTRACT = "current_noop_executor_contract"
+EXECUTOR_CAPABILITY_EXPOSURE_TRUST_BOUNDARY_AEGIS_RUNTIME = "aegis_runtime_noop_executor_metadata"
+EXECUTOR_CAPABILITY_TRANSPORT_NONE = "none"
+EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL = "structured_tool_call"
+EXECUTOR_CAPABILITY_TRANSPORTS = (
+    EXECUTOR_CAPABILITY_TRANSPORT_NONE,
+    EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL,
+)
+NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION = "NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION"
+EXECUTOR_CAPABILITY_BOOL_FIELDS = (
+    "capability_read_repo",
+    "capability_write_repo",
+    "capability_read_aeg_state",
+    "capability_write_aeg_state",
+    "capability_read_outside_repo",
+    "capability_write_outside_repo",
+    "capability_delete_outside_repo",
+    "capability_network",
+    "capability_remote_write",
+    "capability_provider_call",
+    "capability_env_read",
+    "capability_secret_read",
+    "capability_process_spawn",
+    "capability_shell",
+)
+EXECUTOR_CAPABILITY_EXPOSURE_FIELDS = (
+    "executor_capability_exposure_version",
+    "executor_capability_exposure_scope",
+    "executor_capability_exposure_source",
+    "executor_capability_exposure_trust_boundary",
+    "executor_capability_transport",
+    "current_executor_capability_status",
+    *EXECUTOR_CAPABILITY_BOOL_FIELDS,
+    "executor_capability_file_mutation",
+    "executor_capability_provider_calls",
+    "executor_capability_network_calls",
+    "executor_capability_actions",
+    "executor_capability_action_count",
+    "executor_capability_expected_action_count",
+    "executor_reported_capability_exposure",
+    "executor_capability_exposure_hash",
+    "executor_capability_exposure_metadata_hash",
+)
+
+EVIDENCE_STORE_TRUST_BOUNDARY_FOLDER_LOCAL_NOT_EXECUTOR_ISOLATED = "folder_local_not_executor_isolated"
+EVIDENCE_STORE_WRITER_AEGIS_RUNTIME = "aegis_runtime"
+EVIDENCE_STORE_WRITE_SOURCE_FOLDER_LOCAL_STATE = "folder_local_runtime_state"
+EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY = "NOT_CHECKED_SAME_USER_AUTHORITY"
+EVIDENCE_STORE_INTEGRITY_NOT_CHECKED = NOT_CHECKED
+EVIDENCE_STORE_CLEAN = "EVIDENCE_STORE_CLEAN"
+EVIDENCE_STORE_INTEGRITY_STATUSES = (
+    EVIDENCE_STORE_INTEGRITY_NOT_CHECKED,
+    EVIDENCE_STORE_CLEAN,
+    INVALID_EVIDENCE,
+)
+EVIDENCE_STORE_TRUST_FIELDS = (
+    "evidence_store_trust_boundary",
+    "evidence_store_writer",
+    "executor_can_write_evidence_store",
+    "evidence_store_is_executor_isolated",
+    "evidence_store_write_source",
+    "evidence_store_integrity_status",
+    "evidence_store_trust_metadata_hash",
+)
 ACTION_HIGH_RISK_KINDS = (
     "git_push",
     "push",

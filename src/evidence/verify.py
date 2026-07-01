@@ -20,6 +20,14 @@ from src.contracts import (
     CAPABILITY_ISOLATION_FIELDS,
     CLEAN_CORE,
     CITIZEN_ONE_EVIDENCE_FIELDS,
+    EVIDENCE_STORE_CLEAN,
+    EVIDENCE_STORE_INTEGRITY_NOT_CHECKED,
+    EVIDENCE_STORE_TRUST_BOUNDARY_FOLDER_LOCAL_NOT_EXECUTOR_ISOLATED,
+    EVIDENCE_STORE_TRUST_FIELDS,
+    EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY,
+    EXECUTOR_CAPABILITY_BOOL_FIELDS,
+    EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
+    EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
     LOW,
@@ -30,6 +38,7 @@ from src.contracts import (
     MUTATION_DELTA_SOURCE_COMPUTED,
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
+    NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
     NOT_CHECKED_IMPACT_RISKS,
     PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
     PROMPT_REDACTION_METADATA_FIELDS,
@@ -42,12 +51,18 @@ from src.contracts import (
     PROVIDER_SELECTION_METADATA_FIELDS,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
+    TOOL_AUTHORITY_GRANT_FIELDS,
+    TOOL_SURFACE_CLEAN,
+    TOOL_SURFACE_FIELDS,
+    TOOL_SURFACE_SCAFFOLD_ONLY,
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
     action_boundary_manifest_fields,
+    capability_exposure_manifest_fields,
     capability_isolation_manifest_fields,
     changed_files_hash,
+    evidence_store_trust_manifest_fields,
     expected_artifact_path,
     manifest_hash,
     repo_relative_path,
@@ -64,10 +79,20 @@ from src.evidence.binding import (
     provider_adapter_manifest_fields,
     proposal_manifest_fields,
     response_redaction_manifest_fields,
+    tool_surface_manifest_fields,
+)
+from src.evidence.capability_exposure import (
+    expected_executor_capability_exposure_hash,
+    expected_executor_capability_exposure_metadata_hash,
 )
 from src.evidence.capability_isolation import (
     expected_capability_isolation_proof_hash,
     expected_capability_matrix_hash,
+)
+from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
+from src.evidence.tool_surface import (
+    expected_tool_authority_grant_hash,
+    expected_tool_surface_metadata_hash,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -146,6 +171,18 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     capability_checks, capability_errors = _verify_capability_isolation(evidence, manifest)
     checks.extend(capability_checks)
     errors.extend(capability_errors)
+
+    tool_surface_checks, tool_surface_errors = _verify_tool_surface_authority(evidence, manifest)
+    checks.extend(tool_surface_checks)
+    errors.extend(tool_surface_errors)
+
+    exposure_checks, exposure_errors = _verify_executor_capability_exposure(evidence, manifest)
+    checks.extend(exposure_checks)
+    errors.extend(exposure_errors)
+
+    store_checks, store_errors = _verify_evidence_store_trust_boundary(evidence, manifest)
+    checks.extend(store_checks)
+    errors.extend(store_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -549,6 +586,39 @@ def _verify_manifest_binding(
         capability_isolation_manifest_fields(evidence),
         capability_isolation_manifest_fields(manifest),
     )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "tool surface scaffold metadata",
+        TOOL_SURFACE_FIELDS,
+        "tool_surface_authority_metadata_hash",
+        evidence,
+        manifest,
+        tool_surface_manifest_fields(evidence),
+        tool_surface_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "executor capability exposure metadata",
+        EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
+        "executor_capability_exposure_manifest_hash",
+        evidence,
+        manifest,
+        capability_exposure_manifest_fields(evidence),
+        capability_exposure_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "evidence store trust boundary metadata",
+        EVIDENCE_STORE_TRUST_FIELDS,
+        "evidence_store_trust_manifest_hash",
+        evidence,
+        manifest,
+        evidence_store_trust_manifest_fields(evidence),
+        evidence_store_trust_manifest_fields(manifest),
+    )
 
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
@@ -714,6 +784,27 @@ def _verify_manifest_binding(
         "bound_capability_isolation_metadata_hash",
         evidence.get("bound_capability_isolation_metadata_hash"),
         sha256_json(capability_isolation_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_tool_surface_metadata_hash",
+        evidence.get("bound_tool_surface_metadata_hash"),
+        sha256_json(tool_surface_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_executor_capability_exposure_metadata_hash",
+        evidence.get("bound_executor_capability_exposure_metadata_hash"),
+        sha256_json(capability_exposure_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_evidence_store_trust_metadata_hash",
+        evidence.get("bound_evidence_store_trust_metadata_hash"),
+        sha256_json(evidence_store_trust_manifest_fields(evidence)),
     )
 
     task_text = evidence.get("task_text")
@@ -966,6 +1057,275 @@ def _verify_capability_isolation(evidence: dict[str, Any], manifest: dict[str, A
     return checks, errors
 
 
+def _verify_tool_surface_authority(evidence: dict[str, Any], manifest: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("tool surface replay used recorded scaffold metadata only")
+
+    if evidence.get("tool_authority_grant_hash") == expected_tool_authority_grant_hash(evidence):
+        checks.append("tool_authority_grant_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_hash mismatch")
+
+    if evidence.get("tool_surface_metadata_hash") == expected_tool_surface_metadata_hash(evidence):
+        checks.append("tool_surface_metadata_hash replay matched scaffold unavailable proof")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_metadata_hash mismatch")
+
+    if evidence.get("tool_surface_enabled") is False:
+        checks.append("tool surface default disabled")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_enabled must be false in scaffold v0")
+
+    requested = evidence.get("requested_tool_capabilities")
+    granted = evidence.get("granted_tool_capabilities")
+    denied = evidence.get("denied_tool_capabilities")
+    if requested == [] and granted == [] and denied == []:
+        checks.append("tool capability request/grant/deny lists default empty")
+    else:
+        errors.append("INVALID_EVIDENCE: tool capability lists must default empty")
+
+    if (
+        evidence.get("tool_authority_grant_count")
+        == evidence.get("expected_tool_authority_grant_count")
+        == 0
+        and granted == []
+    ):
+        checks.append("tool authority grant count replay matched expected zero: 0")
+        checks.append("no granted tool authority by default")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: tool authority grant count mismatch: "
+            f"grant_count={evidence.get('tool_authority_grant_count')} "
+            f"expected={evidence.get('expected_tool_authority_grant_count')} granted={granted}"
+        )
+
+    authority_flags_valid = True
+    for field in TOOL_AUTHORITY_GRANT_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            authority_flags_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must default false")
+            errors.append(
+                "INVALID_EVIDENCE: authority_granted=true without implemented "
+                f"tool surface proof/source/trust boundary: {field}"
+            )
+            authority_flags_valid = False
+    if authority_flags_valid:
+        checks.append("tool authority flags default false")
+    else:
+        errors.append("INVALID_EVIDENCE: tool authority flags must default false")
+
+    executor_reported = evidence.get("executor_reported_tool_usage")
+    if (
+        isinstance(executor_reported, dict)
+        and isinstance(executor_reported.get("tools"), list)
+        and executor_reported.get("reported_tool_count") == len(executor_reported.get("tools"))
+        and executor_reported.get("trust_boundary") == "reported_only"
+        and executor_reported.get("judgment_basis") is False
+    ):
+        checks.append("executor_reported_tool_usage remains reported_only context, not judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+
+    surface_status = evidence.get("tool_surface_status")
+    if surface_status == TOOL_SURFACE_SCAFFOLD_ONLY:
+        checks.append("tool surface status remained TOOL_SURFACE_SCAFFOLD_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_status must not claim CLEAN or implemented tool surface")
+
+    if surface_status in (TOOL_SURFACE_CLEAN, ACTION_BOUNDARY_CLEAN, CAPABILITY_BOUNDARY_CLEAN):
+        errors.append("INVALID_EVIDENCE: tool surface not implemented cannot be CLEAN")
+    else:
+        checks.append("tool surface not implemented did not claim CLEAN")
+
+    if evidence.get("command_enumeration_only") is True and any(
+        evidence.get(field) is True for field in TOOL_AUTHORITY_GRANT_FIELDS
+    ):
+        errors.append("INVALID_EVIDENCE: command denylist/enumeration alone cannot grant tool authority")
+    else:
+        checks.append("command denylist alone grants no tool authority")
+
+    if evidence.get("judgment_basis") == "executor_reported_tool_usage":
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+
+    if manifest is not None:
+        if manifest.get("tool_authority_grant_hash") == evidence.get("tool_authority_grant_hash"):
+            checks.append("manifest tool_authority_grant_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest tool_authority_grant_hash mismatch with evidence")
+        if manifest.get("tool_surface_metadata_hash") == evidence.get("tool_surface_metadata_hash"):
+            checks.append("manifest tool_surface_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest tool_surface_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_executor_capability_exposure(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("executor capability exposure replay used recorded scaffold metadata only")
+
+    if evidence.get("executor_capability_exposure_hash") == expected_executor_capability_exposure_hash(evidence):
+        checks.append("executor_capability_exposure_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_capability_exposure_hash mismatch")
+
+    if evidence.get("executor_capability_exposure_metadata_hash") == expected_executor_capability_exposure_metadata_hash(
+        evidence
+    ):
+        checks.append("executor_capability_exposure_metadata_hash replay matched current no-op scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_capability_exposure_metadata_hash mismatch")
+
+    capability_defaults_valid = True
+    for field in EXECUTOR_CAPABILITY_BOOL_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            capability_defaults_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must default false for current no-op executor")
+            capability_defaults_valid = False
+    if capability_defaults_valid:
+        checks.append("executor capability exposure fields default false")
+    else:
+        errors.append("INVALID_EVIDENCE: executor capability exposure fields must default false")
+
+    if evidence.get("current_executor_capability_status") == NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION:
+        checks.append(f"current no-op executor capability status matched: {NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION}")
+    else:
+        errors.append("INVALID_EVIDENCE: current no-op executor capability status mismatch")
+
+    if (
+        evidence.get("executor_capability_file_mutation") is False
+        and evidence.get("executor_capability_provider_calls") is False
+        and evidence.get("executor_capability_network_calls") is False
+        and evidence.get("executor_capability_actions") == []
+        and evidence.get("executor_capability_action_count") == 0
+        and evidence.get("executor_capability_expected_action_count") == 0
+    ):
+        checks.append("current no-op executor has no shell/network/provider/action capability")
+    else:
+        errors.append("INVALID_EVIDENCE: current no-op executor capability metadata mismatch")
+
+    dangerous_capabilities = _dangerous_executor_capability_fields(evidence)
+    if evidence.get("capability_shell") is False and dangerous_capabilities:
+        errors.append("INVALID_EVIDENCE: NO_RAW_SHELL != NO_DANGEROUS_CAPABILITY")
+    else:
+        checks.append("no raw shell was not treated as proof of no dangerous capability")
+
+    if (
+        evidence.get("executor_capability_transport") == EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL
+        and dangerous_capabilities
+    ):
+        errors.append("INVALID_EVIDENCE: STRUCTURED_TOOL_CALL != SAFE_CAPABILITY")
+    else:
+        checks.append("structured tool call was not treated as safe capability")
+
+    reported = evidence.get("executor_reported_capability_exposure")
+    if (
+        isinstance(reported, dict)
+        and isinstance(reported.get("capabilities"), list)
+        and isinstance(reported.get("tools"), list)
+        and reported.get("reported_capability_count") == len(reported.get("capabilities"))
+        and reported.get("reported_tool_count") == len(reported.get("tools"))
+        and reported.get("trust_boundary") == "reported_only"
+        and reported.get("judgment_basis") is False
+    ):
+        checks.append("executor_reported_capability_exposure remains reported_only context, not judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_capability_exposure cannot become judgment basis")
+
+    if evidence.get("judgment_basis") == "executor_reported_capability_exposure":
+        errors.append("INVALID_EVIDENCE: executor_reported_capability_exposure cannot become judgment basis")
+
+    if manifest is not None:
+        if manifest.get("executor_capability_exposure_hash") == evidence.get("executor_capability_exposure_hash"):
+            checks.append("manifest executor_capability_exposure_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest executor_capability_exposure_hash mismatch with evidence")
+        if manifest.get("executor_capability_exposure_metadata_hash") == evidence.get(
+            "executor_capability_exposure_metadata_hash"
+        ):
+            checks.append("manifest executor_capability_exposure_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest executor_capability_exposure_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_evidence_store_trust_boundary(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("evidence store trust boundary replay used recorded scaffold metadata only")
+
+    if evidence.get("evidence_store_trust_metadata_hash") == expected_evidence_store_trust_metadata_hash(evidence):
+        checks.append("evidence_store_trust_metadata_hash replay matched folder-local scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: evidence_store_trust_metadata_hash mismatch")
+
+    if evidence.get("evidence_store_trust_boundary") == EVIDENCE_STORE_TRUST_BOUNDARY_FOLDER_LOCAL_NOT_EXECUTOR_ISOLATED:
+        checks.append("evidence store trust boundary remained folder_local_not_executor_isolated")
+    else:
+        errors.append("INVALID_EVIDENCE: .aeg/ folder-local state is not executor-isolated")
+
+    if evidence.get("evidence_store_is_executor_isolated") is False:
+        checks.append("evidence_store_is_executor_isolated remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: AEG_FOLDER_LOCAL_STATE != EXECUTOR_ISOLATED_EVIDENCE_STORE")
+
+    can_write = evidence.get("executor_can_write_evidence_store")
+    if can_write == EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY:
+        checks.append("executor_can_write_evidence_store remained NOT_CHECKED_SAME_USER_AUTHORITY")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: executor_can_write_evidence_store must remain "
+            "NOT_CHECKED_SAME_USER_AUTHORITY before executor isolation proof"
+        )
+
+    integrity_status = evidence.get("evidence_store_integrity_status")
+    if integrity_status == EVIDENCE_STORE_INTEGRITY_NOT_CHECKED:
+        checks.append("evidence store integrity status remained NOT_CHECKED")
+    else:
+        errors.append("INVALID_EVIDENCE: evidence_store_integrity_status must remain NOT_CHECKED in scaffold v0")
+
+    if evidence.get("evidence_store_is_executor_isolated") is False and integrity_status == EVIDENCE_STORE_CLEAN:
+        errors.append("INVALID_EVIDENCE: evidence_store_is_executor_isolated=false cannot claim EVIDENCE_STORE_CLEAN")
+    else:
+        checks.append(".aeg folder-local state was not treated as executor-isolated")
+
+    if can_write in (True, EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY) and integrity_status == EVIDENCE_STORE_CLEAN:
+        errors.append("INVALID_EVIDENCE: executor write access true/NOT_CHECKED cannot promote evidence store CLEAN")
+    else:
+        checks.append("executor write access true/NOT_CHECKED was not promoted to evidence store CLEAN")
+
+    if evidence.get("binding_status") == BOUND and integrity_status == EVIDENCE_STORE_CLEAN:
+        errors.append("INVALID_EVIDENCE: EVIDENCE_BINDING != EVIDENCE_STORE_TAMPER_PROOF")
+    else:
+        checks.append("evidence binding was not treated as evidence store tamper-proof")
+
+    if manifest is not None:
+        if manifest.get("evidence_store_trust_metadata_hash") == evidence.get("evidence_store_trust_metadata_hash"):
+            checks.append("manifest evidence_store_trust_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest evidence_store_trust_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
 def _expected_mutation_boundary_status(
     trusted: bool,
     pre_snapshot: list[dict[str, Any]],
@@ -978,6 +1338,14 @@ def _expected_mutation_boundary_status(
     if pre_snapshot:
         return MUTATION_BOUNDARY_DIRTY_PREEXISTING
     return MUTATION_BOUNDARY_CLEAN
+
+
+def _dangerous_executor_capability_fields(evidence: dict[str, Any]) -> list[str]:
+    return [
+        field
+        for field in EXECUTOR_CAPABILITY_BOOL_FIELDS
+        if field != "capability_shell" and evidence.get(field) is True
+    ]
 
 
 def _check_equal(checks: list[str], errors: list[str], label: str, actual: Any, expected: Any) -> None:
