@@ -100,6 +100,7 @@ def save_run(repo_root: str | Path, evidence: dict[str, Any], run_payload: dict[
     require_initialized(repo_root)
     run_id = evidence["run_id"]
     run_dir = _assert_under_state(repo_root, state_root(repo_root) / RUNS_DIR / run_id)
+    ledger_sequence_number, previous_ledger_hash = _next_ledger_position(repo_root)
     run_dir.mkdir(parents=True, exist_ok=False)
 
     run_path = _assert_under_state(repo_root, run_dir / "run.json")
@@ -107,7 +108,6 @@ def save_run(repo_root: str | Path, evidence: dict[str, Any], run_payload: dict[
     manifest_path = _assert_under_state(repo_root, run_dir / "manifest.json")
 
     recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    ledger_sequence_number, previous_ledger_hash = _next_ledger_position(repo_root)
     manifest = build_run_manifest(repo_root, evidence, run_path, evidence_path)
     ledger_entry_base = _ledger_entry_base(
         repo_root,
@@ -182,10 +182,27 @@ def _next_ledger_position(repo_root: str | Path) -> tuple[int, str]:
     entries = _ledger_entries(repo_root)
     if not entries:
         return 1, LEDGER_PREVIOUS_HASH_GENESIS
-    previous_hash = entries[-1].get("ledger_chain_hash")
-    if is_sha256_hex(previous_hash):
-        return len(entries) + 1, str(previous_hash)
-    return len(entries) + 1, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE
+    previous_chain_hash: str | None = None
+    for position, entry in enumerate(entries, start=1):
+        sequence = entry.get("ledger_sequence_number")
+        if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence != position:
+            raise ValueError(
+                "ledger state is malformed; refusing to append after invalid ledger_sequence_number "
+                f"at entry {position}"
+            )
+        previous_hash = entry.get("previous_ledger_hash")
+        if position == 1:
+            if previous_hash not in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE):
+                raise ValueError("ledger state is malformed; refusing to append after invalid genesis previous hash")
+        elif previous_hash != previous_chain_hash:
+            raise ValueError("ledger state is malformed; refusing to append after broken previous ledger hash")
+        current_chain_hash = entry.get("ledger_chain_hash")
+        if not is_sha256_hex(current_chain_hash):
+            raise ValueError("ledger state is malformed; refusing to append after invalid ledger_chain_hash")
+        previous_chain_hash = str(current_chain_hash)
+    if previous_chain_hash is None:
+        raise ValueError("ledger state is malformed; refusing to append without a previous ledger hash")
+    return len(entries) + 1, previous_chain_hash
 
 
 def _ledger_entries(repo_root: str | Path) -> list[dict[str, Any]]:
@@ -193,15 +210,16 @@ def _ledger_entries(repo_root: str | Path) -> list[dict[str, Any]]:
     if not ledger_path.exists():
         return []
     entries: list[dict[str, Any]] = []
-    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+    for line_number, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         try:
             parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            entries.append(parsed)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"ledger state is malformed; line {line_number} is not valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"ledger state is malformed; line {line_number} is not a JSON object")
+        entries.append(parsed)
     return entries
 
 
@@ -212,9 +230,12 @@ def latest_run_entry(repo_root: str | Path) -> dict[str, Any] | None:
     lines = [line.strip() for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for line in reversed(lines):
         try:
-            return json.loads(line)
+            parsed = json.loads(line)
         except json.JSONDecodeError:
             return {"invalid_ledger_line": line}
+        if not isinstance(parsed, dict):
+            return {"invalid_ledger_line": line}
+        return parsed
     return None
 
 
