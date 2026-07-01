@@ -142,6 +142,14 @@ from src.contracts import (
     PROVIDER_SELECTION_SOURCE_NOT_REQUESTED,
     PROVIDER_SELECTION_STATUS_NOT_CONFIGURED,
     PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
+    LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
+    PRE_LIVE_EXECUTOR_GATE_FIELDS,
+    PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD,
+    PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0,
+    PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
     PROMPT_BUILD_STATUS_NOT_BUILT,
     PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
     PROMPT_REDACTION_METADATA_FIELDS,
@@ -197,6 +205,7 @@ from src.evidence.ledger_integrity import (
     expected_ledger_entry_hash,
     expected_ledger_integrity_metadata_hash,
 )
+from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -390,6 +399,18 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("ledger_tamper_evident_enabled: true", run.stdout)
         self.assertIn("ledger_tamper_proof_claimed: false", run.stdout)
         self.assertIn("ledger_integrity_check_status: NOT_CHECKED", run.stdout)
+        self.assertIn("pre_live_executor_gate_version: pre_live_executor_gate_scaffold_v0", run.stdout)
+        self.assertIn("pre_live_executor_gate_status: PRE_LIVE_EXECUTOR_ON_HOLD", run.stdout)
+        self.assertIn("live_executor_authority_requested: false", run.stdout)
+        self.assertIn("live_executor_authority_granted: false", run.stdout)
+        self.assertIn("tamper_evident_ledger_present: true", run.stdout)
+        self.assertIn("aeg_state_write_denial_present: true", run.stdout)
+        self.assertIn("external_enforcement_present: false", run.stdout)
+        self.assertIn("evidence_store_executor_isolated_present: false", run.stdout)
+        self.assertIn("pre_live_executor_gate_result: NEEDS_ENFORCEMENT_BEFORE_LIVE_EXECUTOR", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: PASS", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: CLEAN", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: ALLOW", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -412,6 +433,8 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_tool_surface_scaffold_contract(evidence)
         self._assert_executor_capability_exposure_contract(evidence)
         self._assert_evidence_store_trust_contract(evidence)
+        self._assert_aeg_state_write_denial_scaffold_contract(evidence)
+        self._assert_pre_live_executor_gate_contract(evidence)
         self._assert_ledger_integrity_scaffold_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
@@ -456,6 +479,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence store trust boundary remained folder_local_not_executor_isolated", verify.stdout)
         self.assertIn("evidence_store_is_executor_isolated remained false", verify.stdout)
         self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
+        self.assertIn("pre-live executor gate metadata fields matched manifest", verify.stdout)
+        self.assertIn("live_executor_authority_granted remained false", verify.stdout)
+        self.assertIn("live executor authority remained ON_HOLD", verify.stdout)
+        self.assertIn("required tamper-evident ledger scaffold present", verify.stdout)
+        self.assertIn("required aeg state write denial scaffold present", verify.stdout)
+        self.assertIn("external_enforcement_present=false kept gate result non-pass", verify.stdout)
+        self.assertIn("evidence_store_executor_isolated_present=false kept gate result non-pass", verify.stdout)
+        self.assertIn("pre_live_executor_gate_metadata_hash replay matched", verify.stdout)
         self.assertIn("ledger integrity scaffold metadata fields matched manifest", verify.stdout)
         self.assertIn("ledger_tamper_proof_claimed remained false", verify.stdout)
         self.assertIn("ledger_integrity_status did not claim CLEAN/PASS", verify.stdout)
@@ -525,6 +556,8 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._evidence_store_trust_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._pre_live_executor_gate_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._ledger_integrity_fields():
             self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
@@ -588,6 +621,10 @@ class CliRuntimeTests(unittest.TestCase):
             sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
         )
         self.assertEqual(
+            manifest["pre_live_executor_gate_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._pre_live_executor_gate_fields()}),
+        )
+        self.assertEqual(
             manifest["ledger_integrity_manifest_hash"],
             sha256_json({field: evidence[field] for field in self._ledger_integrity_fields()}),
         )
@@ -610,6 +647,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             evidence["bound_evidence_store_trust_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_pre_live_executor_gate_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._pre_live_executor_gate_fields()}),
         )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -1759,6 +1800,223 @@ class CliRuntimeTests(unittest.TestCase):
             verify.stdout,
         )
 
+    def test_pre_live_executor_gate_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("pre_live_executor_gate_status: PRE_LIVE_EXECUTOR_ON_HOLD", run.stdout)
+        self.assertIn("live_executor_authority_granted: false", run.stdout)
+        self.assertIn("pre_live_executor_gate_result: NEEDS_ENFORCEMENT_BEFORE_LIVE_EXECUTOR", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: PASS", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: CLEAN", run.stdout)
+        self.assertNotIn("pre_live_executor_gate_result: ALLOW", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_pre_live_executor_gate_contract(evidence)
+        for field in self._pre_live_executor_gate_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["pre_live_executor_gate_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._pre_live_executor_gate_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_pre_live_executor_gate_metadata_hash"],
+            manifest["pre_live_executor_gate_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("pre-live executor gate metadata fields matched manifest", verify.stdout)
+        self.assertIn("pre_live_executor_gate_status remained PRE_LIVE_EXECUTOR_ON_HOLD", verify.stdout)
+        self.assertIn("live_executor_authority_granted remained false", verify.stdout)
+        self.assertIn("required tamper-evident ledger scaffold present", verify.stdout)
+        self.assertIn("required aeg state write denial scaffold present", verify.stdout)
+        self.assertIn("pre_live_executor_gate_result did not claim PASS/CLEAN/ALLOW", verify.stdout)
+        self.assertIn("pre_live_executor_gate_metadata_hash replay matched", verify.stdout)
+
+    def test_live_executor_authority_grant_fails_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["live_executor_authority_requested"] = True
+        evidence["live_executor_authority_granted"] = True
+        evidence["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(evidence)
+        self._sync_pre_live_executor_gate_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: live_executor_authority_requested must remain false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: live_executor_authority_granted must remain false", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: live executor authority cannot be granted by pre-live gate scaffold",
+            verify.stdout,
+        )
+
+    def test_pre_live_executor_gate_result_cannot_claim_pass_clean_allow_even_when_rebound(self):
+        self._aeg("init")
+        for result in ("PASS", "CLEAN", "ALLOW"):
+            with self.subTest(result=result):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence["pre_live_executor_gate_result"] = result
+                evidence["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(evidence)
+                self._sync_pre_live_executor_gate_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn("INVALID_EVIDENCE: pre_live_executor_gate_result cannot claim PASS/CLEAN/ALLOW", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: invalid pre_live_executor_gate_result", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: external_enforcement_present=false cannot produce PASS/CLEAN/ALLOW", verify.stdout)
+                self.assertIn(
+                    "INVALID_EVIDENCE: evidence_store_executor_isolated_present=false cannot produce PASS/CLEAN/ALLOW",
+                    verify.stdout,
+                )
+
+    def test_pre_live_executor_gate_requires_candidate_e_scaffolds_even_when_rebound(self):
+        self._aeg("init")
+        for field, message in (
+            ("tamper_evident_ledger_present", "tamper-evident ledger scaffold must be present before live executor"),
+            ("aeg_state_write_denial_present", "aeg state write denial scaffold must be present before live executor"),
+        ):
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = False
+                evidence["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(evidence)
+                self._sync_pre_live_executor_gate_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {message}", verify.stdout)
+
+    def test_external_enforcement_absence_prevents_gate_pass_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["external_enforcement_present"] = False
+        evidence["pre_live_executor_gate_result"] = "PASS"
+        evidence["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(evidence)
+        self._sync_pre_live_executor_gate_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: external_enforcement_present=false cannot produce PASS/CLEAN/ALLOW", verify.stdout)
+
+    def test_evidence_store_executor_isolation_absence_prevents_gate_clean_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["evidence_store_executor_isolated_present"] = False
+        evidence["pre_live_executor_gate_result"] = "CLEAN"
+        evidence["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(evidence)
+        self._sync_pre_live_executor_gate_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn(
+            "INVALID_EVIDENCE: evidence_store_executor_isolated_present=false cannot produce PASS/CLEAN/ALLOW",
+            verify.stdout,
+        )
+
+    def test_verify_rejects_tampered_pre_live_executor_gate_metadata_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["pre_live_executor_gate_metadata_hash"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_pre_live_executor_gate_manifest_metadata_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["live_executor_authority_granted"] = True
+        manifest["pre_live_executor_gate_metadata_hash"] = expected_pre_live_executor_gate_metadata_hash(manifest)
+        manifest["pre_live_executor_gate_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._pre_live_executor_gate_fields()}
+        )
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: manifest live_executor_authority_granted mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: pre-live executor gate metadata fields mismatch", verify.stdout)
+
+    def test_verify_rejects_missing_pre_live_executor_gate_fields(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["pre_live_executor_gate_version"]
+        del evidence["bound_pre_live_executor_gate_metadata_hash"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("missing required field: pre_live_executor_gate_version", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: missing evidence binding v1 field: bound_pre_live_executor_gate_metadata_hash",
+            verify.stdout,
+        )
+
+    def test_pre_live_executor_gate_fails_when_required_ledger_scaffold_is_missing(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["ledger_integrity_version"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("missing required field: ledger_integrity_version", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: required tamper-evident ledger scaffold is missing", verify.stdout)
+
+    def test_pre_live_executor_gate_fails_when_required_denial_scaffold_is_missing(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["aeg_state_write_denial_version"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("missing required field: aeg_state_write_denial_version", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: required aeg state write denial scaffold is missing", verify.stdout)
+
     def test_ledger_integrity_scaffold_defaults_are_bound_and_replayed(self):
         self._aeg("init")
         run = self._aeg("run", "fix typo in README")
@@ -2883,6 +3141,14 @@ class CliRuntimeTests(unittest.TestCase):
         )
         evidence["bound_aeg_state_write_denial_metadata_hash"] = manifest["aeg_state_write_denial_manifest_hash"]
 
+    def _sync_pre_live_executor_gate_manifest(self, evidence, manifest):
+        for field in self._pre_live_executor_gate_fields():
+            manifest[field] = evidence[field]
+        manifest["pre_live_executor_gate_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._pre_live_executor_gate_fields()}
+        )
+        evidence["bound_pre_live_executor_gate_metadata_hash"] = manifest["pre_live_executor_gate_manifest_hash"]
+
     def _sync_ledger_integrity_manifest(self, evidence, manifest):
         for field in self._ledger_integrity_fields():
             manifest[field] = evidence[field]
@@ -2964,6 +3230,9 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _aeg_state_write_denial_fields(self):
         return AEG_STATE_WRITE_DENIAL_FIELDS
+
+    def _pre_live_executor_gate_fields(self):
+        return PRE_LIVE_EXECUTOR_GATE_FIELDS
 
     def _ledger_integrity_fields(self):
         return LEDGER_INTEGRITY_FIELDS
@@ -3215,6 +3484,44 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["executor_controlled_recorder_write_aeg_state_bypass_forbidden"])
         self.assertTrue(evidence["checks"]["no_live_executor_authority_before_aeg_state_write_denial_enforcement"])
         self.assertTrue(evidence["checks"]["aeg_state_write_denial_manifest_binding_required"])
+
+    def _assert_pre_live_executor_gate_contract(self, evidence):
+        self.assertEqual(evidence["pre_live_executor_gate_version"], PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0)
+        self.assertEqual(evidence["pre_live_executor_gate_mode"], PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD)
+        self.assertEqual(evidence["pre_live_executor_gate_status"], PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD)
+        self.assertFalse(evidence["live_executor_authority_requested"])
+        self.assertFalse(evidence["live_executor_authority_granted"])
+        self.assertEqual(
+            evidence["live_executor_authority_hold_reason"],
+            LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
+        )
+        self.assertTrue(evidence["requires_tamper_evident_ledger"])
+        self.assertTrue(evidence["tamper_evident_ledger_present"])
+        self.assertTrue(evidence["requires_aeg_state_write_denial"])
+        self.assertTrue(evidence["aeg_state_write_denial_present"])
+        self.assertTrue(evidence["requires_external_enforcement"])
+        self.assertFalse(evidence["external_enforcement_present"])
+        self.assertTrue(evidence["evidence_store_executor_isolated_required"])
+        self.assertFalse(evidence["evidence_store_executor_isolated_present"])
+        self.assertFalse(evidence["evidence_store_is_executor_isolated"])
+        self.assertIn(
+            evidence["pre_live_executor_gate_result"],
+            (PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE, PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT),
+        )
+        self.assertNotIn(evidence["pre_live_executor_gate_result"], ("PASS", "CLEAN", "ALLOW"))
+        self.assertEqual(evidence["pre_live_executor_gate_reason"], PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY)
+        self.assertEqual(
+            evidence["pre_live_executor_gate_metadata_hash"],
+            expected_pre_live_executor_gate_metadata_hash(evidence),
+        )
+        self.assertTrue(evidence["checks"]["pre_live_executor_gate_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["pre_live_executor_gate_candidate_e_requires_ledger"])
+        self.assertTrue(evidence["checks"]["pre_live_executor_gate_candidate_e_requires_aeg_state_write_denial"])
+        self.assertTrue(evidence["checks"]["live_executor_authority_granted_default_false"])
+        self.assertTrue(evidence["checks"]["pre_live_executor_gate_pass_clean_allow_forbidden"])
+        self.assertTrue(evidence["checks"]["external_enforcement_absent_keeps_live_executor_on_hold"])
+        self.assertTrue(evidence["checks"]["evidence_store_executor_isolation_absent_keeps_live_executor_on_hold"])
+        self.assertTrue(evidence["checks"]["pre_live_executor_gate_manifest_binding_required"])
 
     def _assert_ledger_integrity_scaffold_contract(self, evidence):
         self.assertEqual(evidence["ledger_integrity_version"], LEDGER_INTEGRITY_SCAFFOLD_V0)
