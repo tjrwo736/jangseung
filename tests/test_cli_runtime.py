@@ -51,13 +51,24 @@ from src.contracts import (
     NOT_CHECKED_SOURCE,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
     PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
+    PROVIDER_ENV_LOADING_STATUS_DISABLED,
+    PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED,
     PROVIDER_MODE_DISABLED,
     PROVIDER_MODE_NOT_REQUESTED,
     PROVIDER_MODEL_NONE,
     PROVIDER_NAME_NONE,
+    PROVIDER_NETWORK_BLOCK_REASON_NONE,
+    PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED,
+    PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN,
+    PROVIDER_NETWORK_STATUS_NOT_REQUESTED,
     PROVIDER_PROMPT_SOURCE_DISABLED,
     PROVIDER_PROMPT_SOURCE_NONE,
     PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+    PROVIDER_REQUEST_METADATA_FIELDS,
+    PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_REQUEST_STATUS_NOT_REQUESTED,
+    PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
     PROVIDER_RESPONSE_ERROR_CLASS_NONE,
     PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
     PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE,
@@ -66,8 +77,25 @@ from src.contracts import (
     PROVIDER_RESPONSE_SOURCE_NONE,
     PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
     PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_ERROR_CLASS_NONE,
+    PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NONE,
+    PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED,
+    PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_STATE_FIELDS,
+    PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE,
+    PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_STATUS_NOT_REQUESTED,
+    PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED,
     PROVIDER_SECRET_SOURCE_NONE,
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
+    PROVIDER_SELECTION_METADATA_FIELDS,
+    PROVIDER_SELECTION_SOURCE_DISABLED,
+    PROVIDER_SELECTION_SOURCE_NOT_REQUESTED,
+    PROVIDER_SELECTION_STATUS_NOT_CONFIGURED,
+    PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
     PROMPT_BUILD_STATUS_NOT_BUILT,
     PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
     PROMPT_REDACTION_METADATA_FIELDS,
@@ -334,6 +362,18 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(manifest["model_output_hash_candidate"], evidence["model_output_hash_candidate"])
         for field in self._provider_adapter_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_runtime_state_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_selection_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_secret_env_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_network_guard_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_request_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_response_error_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._prompt_redaction_fields():
             self.assertEqual(manifest[field], evidence[field])
         for field in self._response_redaction_fields():
@@ -345,6 +385,30 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             manifest["provider_adapter_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_runtime_state_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_runtime_state_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_selection_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_selection_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_secret_env_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_secret_env_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_network_guard_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_network_guard_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_request_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_request_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_response_error_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_response_error_fields()}),
         )
         self.assertEqual(
             manifest["prompt_redaction_metadata_hash"],
@@ -444,6 +508,24 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", run.stdout)
         self.assertIn("provider_network_used: false", run.stdout)
         self.assertIn("provider_secret_observed: false", run.stdout)
+        self.assertIn("provider_runtime_state: hold_current_state", run.stdout)
+        self.assertIn("provider_runtime_status: held_provider_not_configured", run.stdout)
+        self.assertIn("provider_runtime_hold_reason: provider_not_configured", run.stdout)
+        self.assertIn("provider_selection_requested: true", run.stdout)
+        self.assertIn("provider_selected: false", run.stdout)
+        self.assertIn("provider_selection_status: not_configured", run.stdout)
+        self.assertIn("provider_secret_required: false", run.stdout)
+        self.assertIn("provider_secret_value_recorded: false", run.stdout)
+        self.assertIn("provider_env_loading_requested: false", run.stdout)
+        self.assertIn("provider_env_loading_status: disabled", run.stdout)
+        self.assertIn("provider_network_opt_in_requested: false", run.stdout)
+        self.assertIn("provider_network_opt_in_allowed: false", run.stdout)
+        self.assertIn("provider_network_status: blocked_no_opt_in", run.stdout)
+        self.assertIn("provider_request_requested: false", run.stdout)
+        self.assertIn("provider_request_status: blocked_provider_not_configured", run.stdout)
+        self.assertIn("provider_request_raw_stored: false", run.stdout)
+        self.assertIn("provider_response_raw_stored: false", run.stdout)
+        self.assertIn("provider_error_class: provider_not_configured", run.stdout)
         self.assertIn("provider_mode: disabled", run.stdout)
         self.assertIn("provider_prompt_source: disabled", run.stdout)
         self.assertIn("prompt_build_requested: false", run.stdout)
@@ -506,11 +588,37 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._provider_adapter_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_runtime_metadata_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._proposal_fields():
             self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["provider_adapter_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_runtime_state_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_runtime_state_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_selection_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_selection_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_secret_env_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_secret_env_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_network_guard_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_network_guard_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_request_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_request_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_response_error_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_response_error_fields()}),
         )
         self.assertEqual(
             manifest["proposal_evidence_hash"],
@@ -529,6 +637,13 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("prompt redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("response redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
+        self.assertIn("provider runtime state metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider selection metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider secret/env safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider network opt-in guard metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider request safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider response/error safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider runtime opt-in guard metadata is not an external oracle", verify.stdout)
         self.assertIn("provider adapter output is reported_only and not an external oracle", verify.stdout)
         self.assertIn("provider/model response remains reported_only and not an external oracle", verify.stdout)
         self.assertIn("proposal_present: false", verify.stdout)
@@ -608,11 +723,21 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._provider_adapter_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._provider_runtime_metadata_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._proposal_fields():
             self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["provider_adapter_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_request_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_request_fields()}),
+        )
+        self.assertEqual(
+            manifest["provider_response_error_safe_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._provider_response_error_fields()}),
         )
         self.assertEqual(
             manifest["proposal_evidence_hash"],
@@ -633,6 +758,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("prompt redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("response redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
+        self.assertIn("provider request safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider response/error safe metadata fields matched manifest", verify.stdout)
         self.assertIn("proposal_present: true", verify.stdout)
         self.assertIn("proposal_status: deterministic_stub_recorded", verify.stdout)
         self.assertIn("proposal_source: deterministic_stub", verify.stdout)
@@ -885,6 +1012,86 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("provider/model response remains reported_only and not an external oracle", verify.stdout)
         self.assertNotIn(dummy_provider_value, verify.stdout)
 
+    def test_provider_runtime_opt_in_guard_metadata_is_bound_without_raw_or_secret_storage(self):
+        self._aeg("init")
+        dummy_provider_value = "DUMMY_PROVIDER_RUNTIME_SECRET_SHOULD_NOT_APPEAR"
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": dummy_provider_value}, clear=False):
+            run = self._aeg("run", "--citizen-one", "fix typo in README")
+
+        self.assertIn("provider_runtime_state: hold_current_state", run.stdout)
+        self.assertIn("provider_selection_requested: true", run.stdout)
+        self.assertIn("provider_secret_value_recorded: false", run.stdout)
+        self.assertIn("provider_env_loading_requested: false", run.stdout)
+        self.assertIn("provider_network_opt_in_allowed: false", run.stdout)
+        self.assertIn("provider_request_raw_stored: false", run.stdout)
+        self.assertIn("provider_response_raw_stored: false", run.stdout)
+        self.assertNotIn(dummy_provider_value, run.stdout)
+
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+        self._assert_provider_disabled_contract(evidence)
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertFalse(evidence["provider_secret_value_recorded"])
+        self.assertFalse(evidence["provider_env_loading_requested"])
+        self.assertFalse(evidence["provider_request_raw_stored"])
+        self.assertFalse(evidence["provider_response_raw_stored"])
+
+        for fields, hash_field in (
+            (self._provider_runtime_state_fields(), "provider_runtime_state_metadata_hash"),
+            (self._provider_selection_fields(), "provider_selection_metadata_hash"),
+            (self._provider_secret_env_fields(), "provider_secret_env_metadata_hash"),
+            (self._provider_network_guard_fields(), "provider_network_guard_metadata_hash"),
+            (self._provider_request_fields(), "provider_request_safe_metadata_hash"),
+            (self._provider_response_error_fields(), "provider_response_error_safe_metadata_hash"),
+        ):
+            with self.subTest(hash_field=hash_field):
+                for field in fields:
+                    self.assertEqual(manifest[field], evidence[field])
+                self.assertEqual(manifest[hash_field], sha256_json({field: evidence[field] for field in fields}))
+
+        self._assert_no_forbidden_raw_storage_keys(evidence)
+        self._assert_no_forbidden_raw_storage_keys(manifest)
+        self._assert_artifacts_do_not_store_forbidden_raw_keys_or_secret(dummy_provider_value)
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("provider runtime state metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider selection metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider secret/env safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider network opt-in guard metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider request safe metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider response/error safe metadata fields matched manifest", verify.stdout)
+        self.assertNotIn(dummy_provider_value, verify.stdout)
+
+    def test_verify_rejects_tampered_provider_runtime_opt_in_guard_metadata(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["provider_selected"] = True
+        evidence["provider_secret_value_recorded"] = True
+        evidence["provider_env_loading_requested"] = True
+        evidence["provider_network_opt_in_allowed"] = True
+        evidence["provider_request_raw_stored"] = True
+        evidence["provider_response_raw_stored"] = True
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: provider_selected must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider_secret_value_recorded must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider_env_loading_requested must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider_network_opt_in_allowed must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider_request_raw_stored must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider_response_raw_stored must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider selection metadata fields mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider secret/env safe metadata fields mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider network opt-in guard metadata fields mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider request safe metadata fields mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: provider response/error safe metadata fields mismatch", verify.stdout)
+
     def test_verify_rejects_tampered_prompt_response_redaction_metadata(self):
         self._aeg("init")
         self._aeg("run", "--citizen-one", "fix typo in README")
@@ -923,7 +1130,7 @@ class CliRuntimeTests(unittest.TestCase):
 
                 self.assertNotEqual(verify.returncode, 0)
                 self._assert_verify_failed(verify)
-                self.assertIn(f"forbidden raw prompt/response storage key in evidence: {key}", verify.stdout)
+                self.assertIn(f"forbidden raw/secret storage key in evidence: {key}", verify.stdout)
                 self.assertNotIn(forbidden_value, verify.stdout)
 
     def test_verify_rejects_forbidden_raw_key_in_manifest_even_when_rebound(self):
@@ -938,7 +1145,22 @@ class CliRuntimeTests(unittest.TestCase):
 
         self.assertNotEqual(verify.returncode, 0)
         self._assert_verify_failed(verify)
-        self.assertIn("forbidden raw prompt/response storage key in manifest: metadata.response_text", verify.stdout)
+        self.assertIn("forbidden raw/secret storage key in manifest: metadata.response_text", verify.stdout)
+        self.assertNotIn(forbidden_value, verify.stdout)
+
+    def test_verify_rejects_forbidden_secret_key_in_manifest_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        forbidden_value = "SECRET_VALUE_SHOULD_NOT_APPEAR_IN_VERIFY_OUTPUT"
+        manifest["metadata"] = {"api_key": forbidden_value}
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("forbidden raw/secret storage key in manifest: metadata.api_key", verify.stdout)
         self.assertNotIn(forbidden_value, verify.stdout)
 
     def test_verify_rejects_tampered_proposal_fields(self):
@@ -1453,6 +1675,34 @@ class CliRuntimeTests(unittest.TestCase):
     def _provider_adapter_fields(self):
         return PROVIDER_ADAPTER_DISABLED_FIELDS
 
+    def _provider_runtime_state_fields(self):
+        return PROVIDER_RUNTIME_STATE_FIELDS
+
+    def _provider_selection_fields(self):
+        return PROVIDER_SELECTION_METADATA_FIELDS
+
+    def _provider_secret_env_fields(self):
+        return PROVIDER_SECRET_ENV_METADATA_FIELDS
+
+    def _provider_network_guard_fields(self):
+        return PROVIDER_NETWORK_GUARD_METADATA_FIELDS
+
+    def _provider_request_fields(self):
+        return PROVIDER_REQUEST_METADATA_FIELDS
+
+    def _provider_response_error_fields(self):
+        return PROVIDER_RESPONSE_ERROR_METADATA_FIELDS
+
+    def _provider_runtime_metadata_fields(self):
+        return (
+            *PROVIDER_RUNTIME_STATE_FIELDS,
+            *PROVIDER_SELECTION_METADATA_FIELDS,
+            *PROVIDER_SECRET_ENV_METADATA_FIELDS,
+            *PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+            *PROVIDER_REQUEST_METADATA_FIELDS,
+            *PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
+        )
+
     def _prompt_redaction_fields(self):
         return PROMPT_REDACTION_METADATA_FIELDS
 
@@ -1524,7 +1774,86 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["response_error_class"], RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED)
         self.assertEqual(evidence["response_error_safe_summary"], RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED)
 
+    def _assert_provider_runtime_not_requested_contract(self, evidence):
+        self.assertEqual(evidence["provider_runtime_state"], PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE)
+        self.assertEqual(evidence["provider_runtime_status"], PROVIDER_RUNTIME_STATUS_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_runtime_hold_reason"], PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_runtime_error_class"], PROVIDER_RUNTIME_ERROR_CLASS_NONE)
+        self.assertEqual(evidence["provider_runtime_error_safe_summary"], PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NONE)
+        self.assertFalse(evidence["provider_selection_requested"])
+        self.assertFalse(evidence["provider_selected"])
+        self.assertEqual(evidence["provider_selection_source"], PROVIDER_SELECTION_SOURCE_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_selection_status"], PROVIDER_SELECTION_STATUS_NOT_REQUESTED)
+        self.assertFalse(evidence["provider_secret_required"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertFalse(evidence["provider_secret_value_recorded"])
+        self.assertEqual(
+            evidence["provider_secret_redaction_status"],
+            PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED,
+        )
+        self.assertFalse(evidence["provider_env_loading_requested"])
+        self.assertEqual(evidence["provider_env_loading_status"], PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED)
+        self.assertFalse(evidence["provider_network_opt_in_requested"])
+        self.assertFalse(evidence["provider_network_opt_in_allowed"])
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertEqual(evidence["provider_network_status"], PROVIDER_NETWORK_STATUS_NOT_REQUESTED)
+        self.assertEqual(evidence["provider_network_block_reason"], PROVIDER_NETWORK_BLOCK_REASON_NONE)
+        self.assertFalse(evidence["provider_request_requested"])
+        self.assertEqual(evidence["provider_request_status"], PROVIDER_REQUEST_STATUS_NOT_REQUESTED)
+        self.assertEqual(len(evidence["provider_request_metadata_hash"]), 64)
+        self.assertFalse(evidence["provider_request_raw_stored"])
+        self.assertEqual(len(evidence["provider_response_metadata_hash"]), 64)
+        self.assertFalse(evidence["provider_response_raw_stored"])
+        self.assertEqual(evidence["provider_error_class"], PROVIDER_RESPONSE_ERROR_CLASS_NONE)
+        self.assertEqual(evidence["provider_error_safe_summary"], PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE)
+
+    def _assert_provider_runtime_disabled_contract(self, evidence):
+        self.assertEqual(evidence["provider_runtime_state"], PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE)
+        self.assertEqual(evidence["provider_runtime_status"], PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(
+            evidence["provider_runtime_hold_reason"],
+            PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+        )
+        self.assertEqual(evidence["provider_runtime_error_class"], PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(
+            evidence["provider_runtime_error_safe_summary"],
+            PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+        )
+        self.assertTrue(evidence["provider_selection_requested"])
+        self.assertFalse(evidence["provider_selected"])
+        self.assertEqual(evidence["provider_selection_source"], PROVIDER_SELECTION_SOURCE_DISABLED)
+        self.assertEqual(evidence["provider_selection_status"], PROVIDER_SELECTION_STATUS_NOT_CONFIGURED)
+        self.assertFalse(evidence["provider_secret_required"])
+        self.assertFalse(evidence["provider_secret_observed"])
+        self.assertFalse(evidence["provider_secret_value_recorded"])
+        self.assertEqual(
+            evidence["provider_secret_redaction_status"],
+            PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED,
+        )
+        self.assertFalse(evidence["provider_env_loading_requested"])
+        self.assertEqual(evidence["provider_env_loading_status"], PROVIDER_ENV_LOADING_STATUS_DISABLED)
+        self.assertFalse(evidence["provider_network_opt_in_requested"])
+        self.assertFalse(evidence["provider_network_opt_in_allowed"])
+        self.assertFalse(evidence["provider_network_used"])
+        self.assertEqual(evidence["provider_network_status"], PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN)
+        self.assertEqual(
+            evidence["provider_network_block_reason"],
+            PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED,
+        )
+        self.assertFalse(evidence["provider_request_requested"])
+        self.assertEqual(
+            evidence["provider_request_status"],
+            PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED,
+        )
+        self.assertEqual(len(evidence["provider_request_metadata_hash"]), 64)
+        self.assertFalse(evidence["provider_request_raw_stored"])
+        self.assertEqual(len(evidence["provider_response_metadata_hash"]), 64)
+        self.assertFalse(evidence["provider_response_raw_stored"])
+        self.assertEqual(evidence["provider_error_class"], PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["provider_error_safe_summary"], PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED)
+
     def _assert_provider_not_requested_contract(self, evidence):
+        self._assert_provider_runtime_not_requested_contract(evidence)
         self._assert_prompt_redaction_not_requested_contract(evidence)
         self._assert_response_redaction_not_requested_contract(evidence)
         self.assertEqual(evidence["provider_request_id"], "")
@@ -1554,6 +1883,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["provider_response_error_safe_summary"], PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE)
 
     def _assert_provider_disabled_contract(self, evidence):
+        self._assert_provider_runtime_disabled_contract(evidence)
         self._assert_prompt_redaction_disabled_contract(evidence)
         self._assert_response_redaction_disabled_contract(evidence)
         self.assertEqual(evidence["provider_request_id"], PROVIDER_ADAPTER_DISABLED_REQUEST_ID)
