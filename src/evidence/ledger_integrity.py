@@ -53,6 +53,7 @@ _EVIDENCE_HASH_EXCLUDED_CHECK_FIELDS = frozenset(
         "executor_capability_exposure_manifest_binding_required",
         "evidence_store_trust_manifest_binding_required",
         "aeg_state_write_denial_manifest_binding_required",
+        "pre_live_executor_gate_manifest_binding_required",
         "ledger_integrity_manifest_binding_required",
     )
 )

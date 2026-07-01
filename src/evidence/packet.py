@@ -15,6 +15,7 @@ from src.evidence.action_boundary import build_action_boundary_metadata
 from src.evidence.capability_exposure import build_capability_exposure_metadata
 from src.evidence.capability_isolation import build_capability_isolation_metadata
 from src.evidence.evidence_store import build_evidence_store_trust_metadata
+from src.evidence.pre_live_executor_gate import build_pre_live_executor_gate_metadata
 from src.evidence.tool_surface import build_tool_surface_metadata
 from src.law import LawResult
 from src.state import git
@@ -49,6 +50,7 @@ def build_evidence_packet(
     capability_exposure = build_capability_exposure_metadata(executor_result)
     evidence_store_trust = build_evidence_store_trust_metadata()
     aeg_state_write_denial = build_aeg_state_write_denial_metadata()
+    pre_live_executor_gate = build_pre_live_executor_gate_metadata()
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -150,6 +152,13 @@ def build_evidence_packet(
             "ledger_tamper_proof_claim_forbidden": True,
             "ledger_integrity_clean_claim_forbidden": True,
             "ledger_integrity_check_not_checked_is_not_pass": True,
+            "pre_live_executor_gate_scaffold_v0_required": True,
+            "pre_live_executor_gate_candidate_e_requires_ledger": True,
+            "pre_live_executor_gate_candidate_e_requires_aeg_state_write_denial": True,
+            "live_executor_authority_granted_default_false": True,
+            "pre_live_executor_gate_pass_clean_allow_forbidden": True,
+            "external_enforcement_absent_keeps_live_executor_on_hold": True,
+            "evidence_store_executor_isolation_absent_keeps_live_executor_on_hold": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
@@ -162,6 +171,7 @@ def build_evidence_packet(
     packet.update(capability_exposure)
     packet.update(evidence_store_trust)
     packet.update(aeg_state_write_denial)
+    packet.update(pre_live_executor_gate)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
