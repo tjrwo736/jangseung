@@ -1868,8 +1868,11 @@ def _validate_ledger_integrity_metadata(packet: dict[str, Any], errors: list[str
         errors.append("INVALID_EVIDENCE: previous_ledger_hash must be explicit genesis/not_available or sha256")
     if sequence == 1 and previous_hash not in (LEDGER_PREVIOUS_HASH_GENESIS, LEDGER_PREVIOUS_HASH_NOT_AVAILABLE):
         errors.append("INVALID_EVIDENCE: first ledger entry must use explicit genesis/not_available previous hash")
-    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > 1 and previous_hash == LEDGER_PREVIOUS_HASH_GENESIS:
-        errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot reuse genesis previous hash")
+    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > 1:
+        if previous_hash == LEDGER_PREVIOUS_HASH_GENESIS:
+            errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot reuse genesis previous hash")
+        if previous_hash == LEDGER_PREVIOUS_HASH_NOT_AVAILABLE:
+            errors.append("INVALID_EVIDENCE: non-genesis ledger entry cannot use unavailable previous hash")
 
     for field in (
         "current_evidence_hash",
