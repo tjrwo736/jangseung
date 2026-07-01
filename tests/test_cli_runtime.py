@@ -67,6 +67,13 @@ from src.contracts import (
     GIT_STAGED,
     GIT_WORKING_TREE,
     HIGH,
+    LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY,
+    LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED,
+    LEDGER_INTEGRITY_FIELDS,
+    LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD,
+    LEDGER_INTEGRITY_SCAFFOLD_V0,
+    LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
+    LEDGER_PREVIOUS_HASH_GENESIS,
     LOW,
     MEDIUM,
     MUTATION_BOUNDARY_CLEAN,
@@ -174,6 +181,13 @@ from src.evidence.capability_isolation import (
     expected_capability_matrix_hash,
 )
 from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
+from src.evidence.ledger_integrity import (
+    expected_current_evidence_hash,
+    expected_current_manifest_hash,
+    expected_ledger_chain_hash,
+    expected_ledger_entry_hash,
+    expected_ledger_integrity_metadata_hash,
+)
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -361,6 +375,12 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence_store_trust_boundary: folder_local_not_executor_isolated", run.stdout)
         self.assertIn("evidence_store_is_executor_isolated: false", run.stdout)
         self.assertIn("evidence_store_integrity_status: NOT_CHECKED", run.stdout)
+        self.assertIn("ledger_integrity_version: ledger_integrity_scaffold_v0", run.stdout)
+        self.assertIn("ledger_integrity_mode: tamper_evident_scaffold", run.stdout)
+        self.assertIn("ledger_integrity_status: TAMPER_EVIDENT_SCAFFOLD_ONLY", run.stdout)
+        self.assertIn("ledger_tamper_evident_enabled: true", run.stdout)
+        self.assertIn("ledger_tamper_proof_claimed: false", run.stdout)
+        self.assertIn("ledger_integrity_check_status: NOT_CHECKED", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -383,6 +403,7 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_tool_surface_scaffold_contract(evidence)
         self._assert_executor_capability_exposure_contract(evidence)
         self._assert_evidence_store_trust_contract(evidence)
+        self._assert_ledger_integrity_scaffold_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
         self.assertFalse(evidence["citizen_one_requested"])
@@ -426,6 +447,15 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence store trust boundary remained folder_local_not_executor_isolated", verify.stdout)
         self.assertIn("evidence_store_is_executor_isolated remained false", verify.stdout)
         self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
+        self.assertIn("ledger integrity scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("ledger_tamper_proof_claimed remained false", verify.stdout)
+        self.assertIn("ledger_integrity_status did not claim CLEAN/PASS", verify.stdout)
+        self.assertIn("ledger_integrity_check_status remained NOT_CHECKED", verify.stdout)
+        self.assertIn("current_evidence_hash replay matched", verify.stdout)
+        self.assertIn("current_manifest_hash replay matched", verify.stdout)
+        self.assertIn("current_ledger_entry_hash replay matched", verify.stdout)
+        self.assertIn("ledger_chain_hash replay matched", verify.stdout)
+        self.assertIn("ledger_integrity_metadata_hash replay matched", verify.stdout)
         self.assertIn("action_count replay matched expected no-op count: 0", verify.stdout)
         self.assertIn("mutation boundary clean did not imply action boundary clean", verify.stdout)
         self.assertNotIn("proposal_status:", run.stdout)
@@ -486,6 +516,8 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._evidence_store_trust_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._ledger_integrity_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
@@ -545,6 +577,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             manifest["evidence_store_trust_manifest_hash"],
             sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
+        )
+        self.assertEqual(
+            manifest["ledger_integrity_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._ledger_integrity_fields()}),
         )
         self.assertEqual(
             evidence["bound_action_boundary_metadata_hash"],
@@ -1509,6 +1545,10 @@ class CliRuntimeTests(unittest.TestCase):
             evidence["bound_evidence_store_trust_metadata_hash"],
             manifest["evidence_store_trust_manifest_hash"],
         )
+        self.assertEqual(
+            evidence["bound_ledger_integrity_metadata_hash"],
+            manifest["ledger_integrity_manifest_hash"],
+        )
 
         verify = self._aeg("verify")
         self._assert_verify_consistent(verify)
@@ -1518,6 +1558,129 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
         self.assertIn(".aeg folder-local state was not treated as executor-isolated", verify.stdout)
         self.assertIn("evidence binding was not treated as evidence store tamper-proof", verify.stdout)
+
+    def test_ledger_integrity_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("ledger_tamper_evident_enabled: true", run.stdout)
+        self.assertIn("ledger_tamper_proof_claimed: false", run.stdout)
+        self.assertIn("ledger_integrity_status: TAMPER_EVIDENT_SCAFFOLD_ONLY", run.stdout)
+        self.assertIn("ledger_integrity_check_status: NOT_CHECKED", run.stdout)
+        self.assertNotIn("ledger_integrity_status: CLEAN", run.stdout)
+        self.assertNotIn("ledger_integrity_status: PASS", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+        ledger_entry = self._latest_ledger_entry()
+
+        self._assert_ledger_integrity_scaffold_contract(evidence)
+        for field in self._ledger_integrity_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+            self.assertEqual(ledger_entry[field], evidence[field])
+        self.assertEqual(
+            manifest["ledger_integrity_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._ledger_integrity_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_ledger_integrity_metadata_hash"],
+            manifest["ledger_integrity_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("ledger integrity scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("ledger scaffold is tamper-evident, not tamper-proof", verify.stdout)
+        self.assertIn("ledger_tamper_proof_claimed remained false", verify.stdout)
+        self.assertIn("current_evidence_hash replay matched", verify.stdout)
+        self.assertIn("current_manifest_hash replay matched", verify.stdout)
+        self.assertIn("current_ledger_entry_hash replay matched", verify.stdout)
+        self.assertIn("ledger_chain_hash replay matched", verify.stdout)
+        self.assertIn("ledger_integrity_metadata_hash replay matched", verify.stdout)
+
+    def test_ledger_hashes_are_deterministic_and_genesis_previous_hash_is_explicit(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        first_evidence = self._latest_evidence()
+        first_manifest, _ = self._latest_manifest_with_path()
+        first_ledger_entry = self._latest_ledger_entry()
+
+        self.assertEqual(first_evidence["ledger_sequence_number"], 1)
+        self.assertEqual(first_evidence["previous_ledger_hash"], LEDGER_PREVIOUS_HASH_GENESIS)
+        self.assertEqual(first_evidence["current_evidence_hash"], expected_current_evidence_hash(first_evidence))
+        self.assertEqual(first_evidence["current_manifest_hash"], expected_current_manifest_hash(first_manifest))
+        self.assertEqual(first_evidence["current_ledger_entry_hash"], expected_ledger_entry_hash(first_ledger_entry))
+        self.assertEqual(first_evidence["ledger_chain_hash"], expected_ledger_chain_hash(first_evidence))
+        self.assertEqual(
+            first_evidence["ledger_integrity_metadata_hash"],
+            expected_ledger_integrity_metadata_hash(first_evidence),
+        )
+        self.assertEqual(first_evidence["current_evidence_hash"], expected_current_evidence_hash(first_evidence))
+        self.assertEqual(first_evidence["current_manifest_hash"], expected_current_manifest_hash(first_manifest))
+
+        first_chain_hash = first_evidence["ledger_chain_hash"]
+        self._aeg("run", "fix typo in README")
+        second_evidence = self._latest_evidence()
+
+        self.assertEqual(second_evidence["ledger_sequence_number"], 2)
+        self.assertEqual(second_evidence["previous_ledger_hash"], first_chain_hash)
+
+    def test_verify_rejects_tamper_proof_ledger_overclaim(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["ledger_tamper_proof_claimed"] = True
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: tamper-evident ledger scaffold cannot claim tamper-proof", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger_chain_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger_integrity_metadata_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_ledger_entry_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        ledger_entry = self._latest_ledger_entry()
+        ledger_entry["current_ledger_entry_hash"] = "0" * 64
+        self._replace_latest_ledger_entry(ledger_entry)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger current_ledger_entry_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_ledger_chain_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["ledger_chain_hash"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: ledger_chain_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger_integrity_metadata_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_ledger_manifest_hash_linkage(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["current_manifest_hash"] = "0" * 64
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: manifest current_manifest_hash mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest current_manifest_hash mismatch with evidence", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: ledger integrity scaffold metadata fields mismatch", verify.stdout)
 
     def test_verify_rejects_tampered_executor_capability_exposure_even_when_rebound(self):
         self._aeg("init")
@@ -2448,6 +2611,17 @@ class CliRuntimeTests(unittest.TestCase):
         path = self.repo / ".aeg" / "runs" / entry["run_id"] / "manifest.json"
         return json.loads(path.read_text(encoding="utf-8")), path
 
+    def _latest_ledger_entry(self):
+        ledger = self.repo / ".aeg" / "ledger.jsonl"
+        line = [line for line in ledger.read_text(encoding="utf-8").splitlines() if line][-1]
+        return json.loads(line)
+
+    def _replace_latest_ledger_entry(self, entry):
+        ledger = self.repo / ".aeg" / "ledger.jsonl"
+        lines = [line for line in ledger.read_text(encoding="utf-8").splitlines() if line]
+        lines[-1] = json.dumps(entry, sort_keys=True)
+        ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def _write_manifest_and_rebind_hash(self, manifest_path, manifest):
         self._write_json(manifest_path, manifest)
         evidence, evidence_path = self._latest_evidence_with_path()
@@ -2500,6 +2674,14 @@ class CliRuntimeTests(unittest.TestCase):
             {field: manifest[field] for field in self._evidence_store_trust_fields()}
         )
         evidence["bound_evidence_store_trust_metadata_hash"] = manifest["evidence_store_trust_manifest_hash"]
+
+    def _sync_ledger_integrity_manifest(self, evidence, manifest):
+        for field in self._ledger_integrity_fields():
+            manifest[field] = evidence[field]
+        manifest["ledger_integrity_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._ledger_integrity_fields()}
+        )
+        evidence["bound_ledger_integrity_metadata_hash"] = manifest["ledger_integrity_manifest_hash"]
 
     def _write_json(self, path, payload):
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -2571,6 +2753,9 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _evidence_store_trust_fields(self):
         return EVIDENCE_STORE_TRUST_FIELDS
+
+    def _ledger_integrity_fields(self):
+        return LEDGER_INTEGRITY_FIELDS
 
     def _proposal_fields(self):
         return (
@@ -2782,6 +2967,39 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["evidence_store_integrity_not_checked_is_not_clean"])
         self.assertTrue(evidence["checks"]["executor_can_write_evidence_store_not_checked_is_not_clean"])
         self.assertTrue(evidence["checks"]["evidence_store_trust_manifest_binding_required"])
+
+    def _assert_ledger_integrity_scaffold_contract(self, evidence):
+        self.assertEqual(evidence["ledger_integrity_version"], LEDGER_INTEGRITY_SCAFFOLD_V0)
+        self.assertEqual(evidence["ledger_integrity_mode"], LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD)
+        self.assertEqual(
+            evidence["ledger_integrity_status"],
+            LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
+        )
+        self.assertTrue(evidence["ledger_tamper_evident_enabled"])
+        self.assertFalse(evidence["ledger_tamper_proof_claimed"])
+        self.assertNotIn(evidence["ledger_integrity_status"], ("CLEAN", "PASS"))
+        self.assertIsInstance(evidence["ledger_sequence_number"], int)
+        self.assertGreaterEqual(evidence["ledger_sequence_number"], 1)
+        self.assertIsInstance(evidence["previous_ledger_hash"], str)
+        self.assertTrue(evidence["previous_ledger_hash"])
+        self.assertEqual(evidence["current_evidence_hash"], expected_current_evidence_hash(evidence))
+        self.assertEqual(evidence["ledger_chain_hash"], expected_ledger_chain_hash(evidence))
+        self.assertEqual(
+            evidence["ledger_integrity_metadata_hash"],
+            expected_ledger_integrity_metadata_hash(evidence),
+        )
+        self.assertEqual(evidence["ledger_integrity_check_status"], LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED)
+        self.assertNotIn(evidence["ledger_integrity_check_status"], ("CLEAN", "PASS"))
+        self.assertEqual(
+            evidence["ledger_integrity_check_reason"],
+            LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY,
+        )
+        self.assertTrue(evidence["checks"]["ledger_integrity_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["ledger_tamper_evident_is_not_tamper_proof"])
+        self.assertTrue(evidence["checks"]["ledger_tamper_proof_claim_forbidden"])
+        self.assertTrue(evidence["checks"]["ledger_integrity_clean_claim_forbidden"])
+        self.assertTrue(evidence["checks"]["ledger_integrity_check_not_checked_is_not_pass"])
+        self.assertTrue(evidence["checks"]["ledger_integrity_manifest_binding_required"])
 
     def _assert_prompt_redaction_not_requested_contract(self, evidence):
         self.assertFalse(evidence["prompt_build_requested"])
