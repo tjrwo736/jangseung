@@ -116,6 +116,75 @@ CITIZEN_ONE_EVIDENCE_FIELDS = (
     "model_output_hash_candidate",
 )
 
+PROVIDER_ADAPTER_DISABLED_REQUEST_ID = "provider_adapter_disabled_v0"
+PROVIDER_MODE_NOT_REQUESTED = "not_requested"
+PROVIDER_MODE_DISABLED = "disabled"
+PROVIDER_NAME_NONE = "none"
+PROVIDER_MODEL_NONE = "none"
+PROVIDER_PROMPT_SOURCE_NONE = "none"
+PROVIDER_PROMPT_SOURCE_DISABLED = "disabled"
+PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED = "no_raw_prompt_or_response_stored"
+PROVIDER_SECRET_SOURCE_NOT_REQUESTED = "not_requested"
+PROVIDER_SECRET_SOURCE_NONE = "none"
+PROVIDER_RESPONSE_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROVIDER_RESPONSE_SOURCE_NONE = "none"
+PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER = "disabled_adapter"
+PROVIDER_RESPONSE_ERROR_CLASS_NONE = ""
+PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE = ""
+PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED = (
+    "provider adapter disabled; provider not configured; no request built"
+)
+PROVIDER_MODES = (
+    PROVIDER_MODE_NOT_REQUESTED,
+    PROVIDER_MODE_DISABLED,
+)
+PROVIDER_PROMPT_SOURCES = (
+    PROVIDER_PROMPT_SOURCE_NONE,
+    PROVIDER_PROMPT_SOURCE_DISABLED,
+)
+PROVIDER_REDACTION_STATUSES = (
+    PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+)
+PROVIDER_SECRET_SOURCES = (
+    PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
+    PROVIDER_SECRET_SOURCE_NONE,
+)
+PROVIDER_RESPONSE_STATUSES = (
+    PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
+    PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_RESPONSE_SOURCES = (
+    PROVIDER_RESPONSE_SOURCE_NONE,
+    PROVIDER_RESPONSE_SOURCE_DISABLED_ADAPTER,
+)
+PROVIDER_RESPONSE_ERROR_CLASSES = (
+    PROVIDER_RESPONSE_ERROR_CLASS_NONE,
+    PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_ADAPTER_DISABLED_FIELDS = (
+    "provider_request_id",
+    "provider_mode",
+    "provider_name",
+    "provider_model",
+    "provider_prompt_source",
+    "provider_prompt_hash_candidate",
+    "provider_request_redaction_status",
+    "provider_network_opt_in",
+    "provider_secret_source",
+    "provider_secret_observed",
+    "provider_response_present",
+    "provider_response_status",
+    "provider_response_source",
+    "provider_response_reported_only",
+    "provider_response_trust_boundary",
+    "provider_response_hash_candidate",
+    "provider_response_redaction_status",
+    "provider_response_error_class",
+    "provider_response_error_safe_summary",
+)
+
 CITIZEN_ONE_PROPOSAL_CONTRACT_V0 = "citizen_one_proposal_contract_v0"
 PROPOSAL_KIND_NOT_GENERATED = "not_generated"
 PROPOSAL_KIND_DETERMINISTIC_STUB = "deterministic_stub"

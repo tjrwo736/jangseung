@@ -34,6 +34,7 @@ from src.contracts import (
     PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
     REPORTED_ONLY,
 )
+from src.provider_adapter import build_disabled_provider_adapter_evidence
 
 
 def build_citizen_one_evidence(
@@ -41,6 +42,7 @@ def build_citizen_one_evidence(
     proposal_requires_user_gate: bool = False,
     proposal_stub_requested: bool = False,
 ) -> dict[str, Any]:
+    provider_adapter = build_disabled_provider_adapter_evidence(requested)
     if not requested:
         return {
             "citizen_one_requested": False,
@@ -53,8 +55,8 @@ def build_citizen_one_evidence(
             "citizen_one_hold_reason": CITIZEN_ONE_HOLD_REASON_NONE,
             "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
             "provider_network_used": False,
-            "provider_secret_observed": False,
             "model_output_hash_candidate": "",
+            **provider_adapter,
         }
 
     if proposal_stub_requested:
@@ -70,8 +72,8 @@ def build_citizen_one_evidence(
             "citizen_one_hold_reason": CITIZEN_ONE_HOLD_REASON_NONE,
             "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
             "provider_network_used": False,
-            "provider_secret_observed": False,
             "model_output_hash_candidate": "",
+            **provider_adapter,
             **proposal,
         }
 
@@ -86,8 +88,8 @@ def build_citizen_one_evidence(
         "citizen_one_hold_reason": CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
         "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
         "provider_network_used": False,
-        "provider_secret_observed": False,
         "model_output_hash_candidate": "",
+        **provider_adapter,
         "proposal_id": "",
         "proposal_version": CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
         "proposal_kind": PROPOSAL_KIND_NOT_GENERATED,

@@ -175,6 +175,7 @@ def _cmd_run(
         ("binding_reason_count", str(len(evidence.get("binding_reasons", [])))),
         ("evidence", paths["evidence_path"]),
     ]
+    rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
     _print_card("Aegis run", evidence["status"], rows, evidence["classification_reasons"] + evidence["status_reasons"])
@@ -243,6 +244,7 @@ def _cmd_verify(cwd: Path) -> int:
                 ("binding_reason_count", str(len(result.evidence.get("binding_reasons", [])))),
             ]
         )
+        rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
     rows.extend(("error", error) for error in result.errors)
@@ -287,6 +289,31 @@ def _proposal_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
         ("proposal_output_hash_candidate", str(evidence.get("proposal_output_hash_candidate", ""))),
         ("proposal_step_count", str(len(steps) if isinstance(steps, list) else "")),
         ("proposal_risk_note_count", str(len(risk_notes) if isinstance(risk_notes, list) else "")),
+    ]
+
+
+def _provider_adapter_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    if evidence.get("citizen_one_requested") is not True:
+        return []
+    return [
+        ("provider_request_id", str(evidence.get("provider_request_id", ""))),
+        ("provider_mode", str(evidence.get("provider_mode", ""))),
+        ("provider_name", str(evidence.get("provider_name", ""))),
+        ("provider_model", str(evidence.get("provider_model", ""))),
+        ("provider_prompt_source", str(evidence.get("provider_prompt_source", ""))),
+        ("provider_prompt_hash_candidate", str(evidence.get("provider_prompt_hash_candidate", ""))),
+        ("provider_request_redaction_status", str(evidence.get("provider_request_redaction_status", ""))),
+        ("provider_network_opt_in", str(evidence.get("provider_network_opt_in", "")).lower()),
+        ("provider_secret_source", str(evidence.get("provider_secret_source", ""))),
+        ("provider_response_present", str(evidence.get("provider_response_present", "")).lower()),
+        ("provider_response_status", str(evidence.get("provider_response_status", ""))),
+        ("provider_response_source", str(evidence.get("provider_response_source", ""))),
+        ("provider_response_reported_only", str(evidence.get("provider_response_reported_only", "")).lower()),
+        ("provider_response_trust_boundary", str(evidence.get("provider_response_trust_boundary", ""))),
+        ("provider_response_hash_candidate", str(evidence.get("provider_response_hash_candidate", ""))),
+        ("provider_response_redaction_status", str(evidence.get("provider_response_redaction_status", ""))),
+        ("provider_response_error_class", str(evidence.get("provider_response_error_class", ""))),
+        ("provider_response_error_safe_summary", str(evidence.get("provider_response_error_safe_summary", ""))),
     ]
 
 
