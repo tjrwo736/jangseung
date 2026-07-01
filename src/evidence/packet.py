@@ -12,6 +12,7 @@ from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
 from src.evidence.action_boundary import build_action_boundary_metadata
 from src.evidence.capability_isolation import build_capability_isolation_metadata
+from src.evidence.tool_surface import build_tool_surface_metadata
 from src.law import LawResult
 from src.state import git
 
@@ -41,6 +42,7 @@ def build_evidence_packet(
     )
     action_boundary = build_action_boundary_metadata(executor_result)
     capability_isolation = build_capability_isolation_metadata(executor_result)
+    tool_surface = build_tool_surface_metadata(executor_result)
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -102,6 +104,18 @@ def build_evidence_packet(
             "executor_reported_capabilities_is_reported_only": True,
             "capability_reported_only_is_not_judgment_basis": True,
             "no_live_executor_authority_before_capability_isolation": True,
+            "tool_surface_authority_grant_scaffold_v0_required": True,
+            "tool_surface_enabled": False,
+            "tool_surface_clean_claim_forbidden": True,
+            "tool_surface_not_implemented_is_not_clean": True,
+            "no_requested_tool_is_not_clean": True,
+            "no_granted_tool_is_not_external_proof": True,
+            "tool_authority_grant_count_expected_zero": True,
+            "tool_authority_flags_default_false": True,
+            "executor_reported_tool_usage_is_reported_only": True,
+            "tool_usage_reported_only_is_not_judgment_basis": True,
+            "command_denylist_alone_grants_no_tool_authority": True,
+            "no_live_executor_authority_before_tool_surface": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
@@ -110,6 +124,7 @@ def build_evidence_packet(
     packet.update(citizen_one)
     packet.update(action_boundary)
     packet.update(capability_isolation)
+    packet.update(tool_surface)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
