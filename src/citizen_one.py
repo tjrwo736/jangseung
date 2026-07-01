@@ -1,4 +1,4 @@
-"""Citizen One control-plane evidence skeleton."""
+"""Citizen One control-plane evidence skeleton with disabled provider metadata."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def build_citizen_one_evidence(
     proposal_requires_user_gate: bool = False,
     proposal_stub_requested: bool = False,
 ) -> dict[str, Any]:
-    provider_adapter = build_disabled_provider_adapter_evidence(requested)
+    provider_adapter_metadata = build_disabled_provider_adapter_evidence(requested)
     if not requested:
         return {
             "citizen_one_requested": False,
@@ -56,7 +56,7 @@ def build_citizen_one_evidence(
             "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NOT_REQUESTED,
             "provider_network_used": False,
             "model_output_hash_candidate": "",
-            **provider_adapter,
+            **provider_adapter_metadata,
         }
 
     if proposal_stub_requested:
@@ -73,7 +73,7 @@ def build_citizen_one_evidence(
             "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
             "provider_network_used": False,
             "model_output_hash_candidate": "",
-            **provider_adapter,
+            **provider_adapter_metadata,
             **proposal,
         }
 
@@ -89,7 +89,7 @@ def build_citizen_one_evidence(
         "provider_config_source": CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE,
         "provider_network_used": False,
         "model_output_hash_candidate": "",
-        **provider_adapter,
+        **provider_adapter_metadata,
         "proposal_id": "",
         "proposal_version": CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
         "proposal_kind": PROPOSAL_KIND_NOT_GENERATED,
