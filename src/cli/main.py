@@ -175,6 +175,7 @@ def _cmd_run(
         ("binding_reason_count", str(len(evidence.get("binding_reasons", [])))),
         ("evidence", paths["evidence_path"]),
     ]
+    rows.extend(_action_boundary_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
@@ -244,6 +245,7 @@ def _cmd_verify(cwd: Path) -> int:
                 ("binding_reason_count", str(len(result.evidence.get("binding_reasons", [])))),
             ]
         )
+        rows.extend(_action_boundary_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
@@ -289,6 +291,27 @@ def _proposal_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
         ("proposal_output_hash_candidate", str(evidence.get("proposal_output_hash_candidate", ""))),
         ("proposal_step_count", str(len(steps) if isinstance(steps, list) else "")),
         ("proposal_risk_note_count", str(len(risk_notes) if isinstance(risk_notes, list) else "")),
+    ]
+
+
+def _action_boundary_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("action_boundary_version", str(evidence.get("action_boundary_version", ""))),
+        ("action_interception_enabled", str(evidence.get("action_interception_enabled", "")).lower()),
+        ("action_boundary_status", str(evidence.get("action_boundary_status", ""))),
+        ("action_log_source", str(evidence.get("action_log_source", ""))),
+        ("action_log_source_trust_boundary", str(evidence.get("action_log_source_trust_boundary", ""))),
+        ("action_count", str(evidence.get("action_count", ""))),
+        ("expected_action_count", str(evidence.get("expected_action_count", ""))),
+        ("action_risk", str(evidence.get("action_risk", ""))),
+        ("command_enumeration_only", str(evidence.get("command_enumeration_only", "")).lower()),
+        ("no_matched_dangerous_command", str(evidence.get("no_matched_dangerous_command", "")).lower()),
+        ("capability_isolation_enabled", str(evidence.get("capability_isolation_enabled", "")).lower()),
+        ("raw_shell_authority_granted", str(evidence.get("raw_shell_authority_granted", "")).lower()),
+        ("network_authority_granted", str(evidence.get("network_authority_granted", "")).lower()),
+        ("provider_authority_granted", str(evidence.get("provider_authority_granted", "")).lower()),
+        ("remote_write_authority_granted", str(evidence.get("remote_write_authority_granted", "")).lower()),
+        ("computed_action_log_hash", _short_hash(evidence.get("computed_action_log_hash", ""))),
     ]
 
 

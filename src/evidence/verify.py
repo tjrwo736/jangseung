@@ -9,6 +9,10 @@ from typing import Any
 
 from src.classify import classify_task
 from src.contracts import (
+    ACTION_AUTHORITY_FIELDS,
+    ACTION_BOUNDARY_CLEAN,
+    ACTION_BOUNDARY_FIELDS,
+    ACTION_BOUNDARY_NOT_CHECKED,
     BOUND,
     CLEAN_CORE,
     CITIZEN_ONE_EVIDENCE_FIELDS,
@@ -35,7 +39,9 @@ from src.contracts import (
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
 )
+from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
+    action_boundary_manifest_fields,
     changed_files_hash,
     expected_artifact_path,
     manifest_hash,
@@ -123,6 +129,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     mutation_checks, mutation_errors = _verify_mutation_boundary(evidence, manifest)
     checks.extend(mutation_checks)
     errors.extend(mutation_errors)
+
+    action_checks, action_errors = _verify_action_boundary(evidence, manifest)
+    checks.extend(action_checks)
+    errors.extend(action_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -504,6 +514,18 @@ def _verify_manifest_binding(
         errors.append("INVALID_EVIDENCE: response redaction metadata fields mismatch")
     checks.append("provider/model response remains reported_only and not an external oracle")
 
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "action boundary scaffold metadata",
+        ACTION_BOUNDARY_FIELDS,
+        "action_boundary_metadata_hash",
+        evidence,
+        manifest,
+        action_boundary_manifest_fields(evidence),
+        action_boundary_manifest_fields(manifest),
+    )
+
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
     if evidence.get("citizen_one_requested") is True:
@@ -655,6 +677,13 @@ def _verify_manifest_binding(
         evidence.get("bound_snapshot_trust_boundary_hash"),
         sha256_json(snapshot_trust_boundary),
     )
+    _check_equal(
+        checks,
+        errors,
+        "bound_action_boundary_metadata_hash",
+        evidence.get("bound_action_boundary_metadata_hash"),
+        sha256_json(action_boundary_manifest_fields(evidence)),
+    )
 
     task_text = evidence.get("task_text")
     if isinstance(task_text, str):
@@ -743,6 +772,81 @@ def _verify_mutation_boundary(evidence: dict[str, Any], manifest: dict[str, Any]
         checks.append("manifest computed_mutation_delta replay matched")
     elif manifest is not None:
         errors.append("INVALID_EVIDENCE: manifest computed_mutation_delta mismatch with replay")
+
+    return checks, errors
+
+
+def _verify_action_boundary(evidence: dict[str, Any], manifest: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("action boundary replay used recorded metadata only")
+    actions = evidence.get("intercepted_actions")
+    if not _is_object_list(actions):
+        errors.append("INVALID_EVIDENCE: intercepted_actions must be list of objects")
+        actions = []
+
+    if evidence.get("computed_action_log_hash") == expected_action_log_hash(evidence):
+        checks.append("computed_action_log_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: computed_action_log_hash mismatch")
+
+    action_count = evidence.get("action_count")
+    expected_action_count = evidence.get("expected_action_count")
+    if action_count == len(actions) == expected_action_count == 0:
+        checks.append("action_count replay matched expected no-op count: 0")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: action_count replay mismatch: "
+            f"action_count={action_count} expected={expected_action_count} intercepted={len(actions)}"
+        )
+
+    authority_defaults = all(evidence.get(field) is False for field in ACTION_AUTHORITY_FIELDS)
+    if authority_defaults:
+        checks.append("action authority flags default false")
+    else:
+        errors.append("INVALID_EVIDENCE: action authority flags must default false")
+
+    executor_reported = evidence.get("executor_reported_actions")
+    if (
+        isinstance(executor_reported, dict)
+        and executor_reported.get("trust_boundary") == "reported_only"
+        and executor_reported.get("judgment_basis") is False
+    ):
+        checks.append("executor_reported_actions remains reported_only context, not judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_actions cannot become judgment basis")
+
+    if evidence.get("command_enumeration_only") is True and evidence.get("action_boundary_status") == ACTION_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: command_enumeration_only cannot produce ACTION_BOUNDARY_CLEAN")
+    else:
+        checks.append("command enumeration alone grants no authority")
+
+    if evidence.get("no_matched_dangerous_command") is True and evidence.get("action_boundary_status") == ACTION_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: NO_MATCHED_DANGEROUS_COMMAND != ACTION_BOUNDARY_CLEAN")
+    else:
+        checks.append("no matched dangerous command did not imply action clean")
+
+    if evidence.get("mutation_boundary_status") == MUTATION_BOUNDARY_CLEAN and evidence.get("action_boundary_status") != ACTION_BOUNDARY_CLEAN:
+        checks.append("mutation boundary clean did not imply action boundary clean")
+    if evidence.get("changed_files") == [] and evidence.get("action_boundary_status") != ACTION_BOUNDARY_CLEAN:
+        checks.append("git diff clean did not imply action clean")
+
+    if evidence.get("action_boundary_status") == ACTION_BOUNDARY_NOT_CHECKED:
+        checks.append("action boundary status remained ACTION_BOUNDARY_NOT_CHECKED")
+    else:
+        errors.append("INVALID_EVIDENCE: action boundary status must not claim ACTION_BOUNDARY_CLEAN")
+
+    if manifest is not None:
+        manifest_actions = manifest.get("intercepted_actions")
+        if manifest_actions == actions:
+            checks.append("manifest intercepted_actions matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest intercepted_actions mismatch with evidence")
+        if manifest.get("computed_action_log_hash") == evidence.get("computed_action_log_hash"):
+            checks.append("manifest computed_action_log_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest computed_action_log_hash mismatch with evidence")
 
     return checks, errors
 
