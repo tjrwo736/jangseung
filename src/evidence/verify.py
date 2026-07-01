@@ -14,6 +14,10 @@ from src.contracts import (
     ACTION_BOUNDARY_FIELDS,
     ACTION_BOUNDARY_NOT_CHECKED,
     BOUND,
+    CAPABILITY_AUTHORITY_FIELDS,
+    CAPABILITY_BOUNDARY_CLEAN,
+    CAPABILITY_BOUNDARY_NOT_CHECKED,
+    CAPABILITY_ISOLATION_FIELDS,
     CLEAN_CORE,
     CITIZEN_ONE_EVIDENCE_FIELDS,
     GIT_STATUS_PORCELAIN_V1,
@@ -42,6 +46,7 @@ from src.contracts import (
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
     action_boundary_manifest_fields,
+    capability_isolation_manifest_fields,
     changed_files_hash,
     expected_artifact_path,
     manifest_hash,
@@ -59,6 +64,10 @@ from src.evidence.binding import (
     provider_adapter_manifest_fields,
     proposal_manifest_fields,
     response_redaction_manifest_fields,
+)
+from src.evidence.capability_isolation import (
+    expected_capability_isolation_proof_hash,
+    expected_capability_matrix_hash,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -133,6 +142,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     action_checks, action_errors = _verify_action_boundary(evidence, manifest)
     checks.extend(action_checks)
     errors.extend(action_errors)
+
+    capability_checks, capability_errors = _verify_capability_isolation(evidence, manifest)
+    checks.extend(capability_checks)
+    errors.extend(capability_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -525,6 +538,17 @@ def _verify_manifest_binding(
         action_boundary_manifest_fields(evidence),
         action_boundary_manifest_fields(manifest),
     )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "capability isolation scaffold metadata",
+        CAPABILITY_ISOLATION_FIELDS,
+        "capability_isolation_metadata_hash",
+        evidence,
+        manifest,
+        capability_isolation_manifest_fields(evidence),
+        capability_isolation_manifest_fields(manifest),
+    )
 
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
@@ -683,6 +707,13 @@ def _verify_manifest_binding(
         "bound_action_boundary_metadata_hash",
         evidence.get("bound_action_boundary_metadata_hash"),
         sha256_json(action_boundary_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_capability_isolation_metadata_hash",
+        evidence.get("bound_capability_isolation_metadata_hash"),
+        sha256_json(capability_isolation_manifest_fields(evidence)),
     )
 
     task_text = evidence.get("task_text")
@@ -847,6 +878,90 @@ def _verify_action_boundary(evidence: dict[str, Any], manifest: dict[str, Any] |
             checks.append("manifest computed_action_log_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest computed_action_log_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_capability_isolation(evidence: dict[str, Any], manifest: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("capability isolation replay used recorded scaffold metadata only")
+
+    if evidence.get("capability_matrix_hash") == expected_capability_matrix_hash(evidence):
+        checks.append("capability_matrix_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_matrix_hash mismatch")
+
+    if evidence.get("capability_isolation_proof_hash") == expected_capability_isolation_proof_hash(evidence):
+        checks.append("capability_isolation_proof_hash replay matched scaffold unavailable proof")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_isolation_proof_hash mismatch")
+
+    if evidence.get("capability_isolation_enabled") is False:
+        checks.append("capability isolation default disabled")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_isolation_enabled must be false in scaffold v0")
+
+    authority_flags_valid = True
+    for field in CAPABILITY_AUTHORITY_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            authority_flags_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must default false")
+            errors.append(
+                "INVALID_EVIDENCE: authority_granted=true without implemented "
+                f"capability isolation proof: {field}"
+            )
+            authority_flags_valid = False
+    if authority_flags_valid:
+        checks.append("capability authority flags default false")
+    else:
+        errors.append("INVALID_EVIDENCE: capability authority flags must default false")
+
+    executor_reported = evidence.get("executor_reported_capabilities")
+    if (
+        isinstance(executor_reported, dict)
+        and isinstance(executor_reported.get("capabilities"), list)
+        and executor_reported.get("reported_capability_count") == len(executor_reported.get("capabilities"))
+        and executor_reported.get("trust_boundary") == "reported_only"
+        and executor_reported.get("judgment_basis") is False
+    ):
+        checks.append("executor_reported_capabilities remains reported_only context, not judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_capabilities cannot become judgment basis")
+
+    boundary_status = evidence.get("capability_boundary_status")
+    if boundary_status == CAPABILITY_BOUNDARY_NOT_CHECKED:
+        checks.append("capability boundary status remained CAPABILITY_BOUNDARY_NOT_CHECKED")
+        checks.append("unavailable capability proof remained NOT_CHECKED")
+    else:
+        errors.append("INVALID_EVIDENCE: capability_boundary_status must not claim CLEAN or implemented isolation")
+
+    if boundary_status == CAPABILITY_BOUNDARY_CLEAN or boundary_status == ACTION_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: capability not implemented cannot be CLEAN")
+    else:
+        checks.append("capability not implemented did not claim CLEAN")
+
+    if evidence.get("command_enumeration_only") is True and boundary_status == CAPABILITY_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: command enumeration only cannot produce CAPABILITY_BOUNDARY_CLEAN")
+    else:
+        checks.append("command enumeration only did not produce capability clean")
+
+    if evidence.get("judgment_basis") == "executor_reported_capabilities":
+        errors.append("INVALID_EVIDENCE: executor_reported_capabilities cannot become judgment basis")
+
+    if manifest is not None:
+        if manifest.get("capability_matrix_hash") == evidence.get("capability_matrix_hash"):
+            checks.append("manifest capability_matrix_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest capability_matrix_hash mismatch with evidence")
+        if manifest.get("capability_isolation_proof_hash") == evidence.get("capability_isolation_proof_hash"):
+            checks.append("manifest capability_isolation_proof_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest capability_isolation_proof_hash mismatch with evidence")
 
     return checks, errors
 

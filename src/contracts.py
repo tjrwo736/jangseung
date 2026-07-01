@@ -124,6 +124,43 @@ ACTION_AUTHORITY_FIELDS = (
     "provider_authority_granted",
     "remote_write_authority_granted",
 )
+
+CAPABILITY_ISOLATION_SCAFFOLD_V0 = "capability_isolation_scaffold_v0"
+CAPABILITY_ISOLATION_MODE_NOT_IMPLEMENTED = "not_implemented"
+CAPABILITY_BOUNDARY_CLEAN = "CAPABILITY_BOUNDARY_CLEAN"
+CAPABILITY_BOUNDARY_NOT_CHECKED = "CAPABILITY_BOUNDARY_NOT_CHECKED"
+CAPABILITY_BOUNDARY_INVALID = "CAPABILITY_BOUNDARY_INVALID"
+CAPABILITY_BOUNDARY_STATUSES = (
+    CAPABILITY_BOUNDARY_CLEAN,
+    CAPABILITY_BOUNDARY_NOT_CHECKED,
+    CAPABILITY_BOUNDARY_INVALID,
+)
+CAPABILITY_BOUNDARY_SOURCE_NONE = "none"
+CAPABILITY_BOUNDARY_TRUST_BOUNDARY_NOT_IMPLEMENTED = "not_implemented_no_judgment_basis"
+CAPABILITY_AUTHORITY_FIELDS = (
+    "raw_shell_authority_granted",
+    "process_execution_authority_granted",
+    "network_authority_granted",
+    "provider_authority_granted",
+    "credential_env_access_authority_granted",
+    "remote_write_authority_granted",
+    "deploy_release_publish_authority_granted",
+    "repo_outside_write_authority_granted",
+    "package_dependency_mutation_authority_granted",
+    "telemetry_authority_granted",
+)
+CAPABILITY_ISOLATION_FIELDS = (
+    "capability_isolation_version",
+    "capability_isolation_enabled",
+    "capability_isolation_mode",
+    "capability_boundary_status",
+    "capability_boundary_source",
+    "capability_boundary_trust_boundary",
+    *CAPABILITY_AUTHORITY_FIELDS,
+    "capability_isolation_proof_hash",
+    "capability_matrix_hash",
+    "executor_reported_capabilities",
+)
 ACTION_HIGH_RISK_KINDS = (
     "git_push",
     "push",
