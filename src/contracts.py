@@ -118,12 +118,29 @@ CITIZEN_ONE_EVIDENCE_FIELDS = (
 
 CITIZEN_ONE_PROPOSAL_CONTRACT_V0 = "citizen_one_proposal_contract_v0"
 PROPOSAL_KIND_NOT_GENERATED = "not_generated"
+PROPOSAL_KIND_DETERMINISTIC_STUB = "deterministic_stub"
 PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED = "deterministic_stub_recorded"
 PROPOSAL_SOURCE_NONE = "none"
+PROPOSAL_SOURCE_DETERMINISTIC_STUB = "deterministic_stub"
 PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED = "no_raw_prompt_or_response_stored"
+PROPOSAL_HOLD_REASON_NONE = ""
 PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+DETERMINISTIC_STUB_PROPOSAL_ID = "deterministic_stub_v0"
+DETERMINISTIC_STUB_PROPOSAL_SUMMARY = "Deterministic local proposal stub recorded without provider, API, network, or model call."
+DETERMINISTIC_STUB_PROPOSAL_STEPS = (
+    "Record fixed local proposal fields.",
+    "Preserve classifier, law, evidence binding, and mutation boundary judgment.",
+    "Perform no command execution and no file mutation.",
+)
+DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES = (
+    "reported_only; not a judgment basis",
+    "does not satisfy, bypass, or downgrade any user gate",
+    "no raw prompt or response stored",
+)
 PROPOSAL_STATUSES = (
     PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
+    PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED,
 )
 PROPOSAL_REDACTION_STATUSES = (
     PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
