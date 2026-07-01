@@ -170,6 +170,17 @@ from src.contracts import (
     PROVIDER_SELECTION_STATUS_NOT_CONFIGURED,
     PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
     PROVIDER_SELECTION_STATUSES,
+    LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
+    PRE_LIVE_EXECUTOR_GATE_FIELDS,
+    PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD,
+    PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS,
+    PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+    PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    PRE_LIVE_EXECUTOR_GATE_RESULTS,
+    PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0,
+    PRE_LIVE_EXECUTOR_GATE_STATUSES,
+    PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
     PROMPT_BUILD_STATUS_NOT_BUILT,
     PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
     PROMPT_BUILD_STATUSES,
@@ -238,6 +249,7 @@ from src.evidence.ledger_integrity import (
     expected_ledger_integrity_metadata_hash,
     is_sha256_hex,
 )
+from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -298,6 +310,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
     *EVIDENCE_STORE_TRUST_FIELDS,
     *AEG_STATE_WRITE_DENIAL_FIELDS,
+    *PRE_LIVE_EXECUTOR_GATE_FIELDS,
     *LEDGER_INTEGRITY_FIELDS,
 )
 
@@ -385,6 +398,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_executor_capability_exposure_metadata(packet, errors)
     _validate_evidence_store_trust_metadata(packet, errors)
     _validate_aeg_state_write_denial_metadata(packet, errors)
+    _validate_pre_live_executor_gate_metadata(packet, errors)
     _validate_ledger_integrity_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
@@ -1670,6 +1684,125 @@ def _validate_aeg_state_write_denial_metadata(packet: dict[str, Any], errors: li
         errors.append("INVALID_EVIDENCE: aeg_state_write_denial_metadata_hash mismatch")
 
 
+def _validate_pre_live_executor_gate_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "live_executor_authority_requested",
+        "live_executor_authority_granted",
+        "requires_tamper_evident_ledger",
+        "tamper_evident_ledger_present",
+        "requires_aeg_state_write_denial",
+        "aeg_state_write_denial_present",
+        "requires_external_enforcement",
+        "external_enforcement_present",
+        "evidence_store_executor_isolated_required",
+        "evidence_store_executor_isolated_present",
+    )
+    string_fields = (
+        "pre_live_executor_gate_version",
+        "pre_live_executor_gate_mode",
+        "pre_live_executor_gate_status",
+        "live_executor_authority_hold_reason",
+        "pre_live_executor_gate_result",
+        "pre_live_executor_gate_reason",
+        "pre_live_executor_gate_metadata_hash",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("pre_live_executor_gate_version") != PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0:
+        errors.append(
+            "INVALID_EVIDENCE: pre_live_executor_gate_version must be "
+            f"{PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0}"
+        )
+    if packet.get("pre_live_executor_gate_mode") != PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_mode must remain metadata scaffold")
+
+    gate_status = packet.get("pre_live_executor_gate_status")
+    if gate_status in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_status cannot claim PASS/CLEAN/ALLOW")
+    if gate_status not in PRE_LIVE_EXECUTOR_GATE_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid pre_live_executor_gate_status: {gate_status}")
+    if gate_status != PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_status must remain PRE_LIVE_EXECUTOR_ON_HOLD")
+
+    if packet.get("live_executor_authority_requested") is not False:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_requested must remain false")
+    if packet.get("live_executor_authority_granted") is not False:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_granted must remain false")
+        errors.append("INVALID_EVIDENCE: live executor authority cannot be granted by pre-live gate scaffold")
+    if packet.get("live_executor_authority_hold_reason") != LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE:
+        errors.append("INVALID_EVIDENCE: live_executor_authority_hold_reason must preserve pre-live gate hold")
+
+    if packet.get("requires_tamper_evident_ledger") is not True:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require tamper-evident ledger scaffold")
+    if packet.get("tamper_evident_ledger_present") is not True:
+        errors.append("INVALID_EVIDENCE: tamper-evident ledger scaffold must be present before live executor")
+    if packet.get("requires_tamper_evident_ledger") is True:
+        if packet.get("ledger_integrity_version") != LEDGER_INTEGRITY_SCAFFOLD_V0:
+            errors.append("INVALID_EVIDENCE: required tamper-evident ledger scaffold is missing")
+        if packet.get("ledger_tamper_evident_enabled") is not True:
+            errors.append("INVALID_EVIDENCE: required tamper-evident ledger scaffold is not enabled")
+        if packet.get("ledger_tamper_proof_claimed") is not False:
+            errors.append("INVALID_EVIDENCE: tamper-evident ledger scaffold cannot satisfy tamper-proof")
+
+    if packet.get("requires_aeg_state_write_denial") is not True:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require aeg state write denial scaffold")
+    if packet.get("aeg_state_write_denial_present") is not True:
+        errors.append("INVALID_EVIDENCE: aeg state write denial scaffold must be present before live executor")
+    if packet.get("requires_aeg_state_write_denial") is True:
+        if packet.get("aeg_state_write_denial_version") != AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0:
+            errors.append("INVALID_EVIDENCE: required aeg state write denial scaffold is missing")
+        if packet.get("capability_write_aeg_state_granted") is not False:
+            errors.append("INVALID_EVIDENCE: aeg state write denial prerequisite cannot grant write authority")
+        if packet.get("capability_write_aeg_state_denied") is not True:
+            errors.append("INVALID_EVIDENCE: aeg state write denial prerequisite must deny explicitly")
+
+    if packet.get("requires_external_enforcement") is not True:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require external enforcement before live executor")
+    if packet.get("external_enforcement_present") is not False:
+        errors.append("INVALID_EVIDENCE: external_enforcement_present must remain false in scaffold v0")
+    if packet.get("evidence_store_executor_isolated_required") is not True:
+        errors.append("INVALID_EVIDENCE: pre-live executor gate must require executor-isolated evidence store")
+    if packet.get("evidence_store_executor_isolated_present") is not False:
+        errors.append("INVALID_EVIDENCE: evidence_store_executor_isolated_present must remain false in scaffold v0")
+    if packet.get("evidence_store_executor_isolated_present") != packet.get("evidence_store_is_executor_isolated"):
+        errors.append("INVALID_EVIDENCE: pre-live gate must mirror evidence_store_is_executor_isolated=false")
+
+    gate_result = packet.get("pre_live_executor_gate_result")
+    if gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_result cannot claim PASS/CLEAN/ALLOW")
+    if gate_result not in PRE_LIVE_EXECUTOR_GATE_RESULTS:
+        errors.append(f"INVALID_EVIDENCE: invalid pre_live_executor_gate_result: {gate_result}")
+    if gate_result not in (
+        PRE_LIVE_EXECUTOR_GATE_RESULT_HOLD_CURRENT_STATE,
+        PRE_LIVE_EXECUTOR_GATE_RESULT_NEEDS_ENFORCEMENT,
+    ):
+        errors.append(
+            "INVALID_EVIDENCE: pre_live_executor_gate_result must remain HOLD_CURRENT_STATE or "
+            "NEEDS_ENFORCEMENT_BEFORE_LIVE_EXECUTOR"
+        )
+    if (
+        packet.get("external_enforcement_present") is False
+        and gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS
+    ):
+        errors.append("INVALID_EVIDENCE: external_enforcement_present=false cannot produce PASS/CLEAN/ALLOW")
+    if (
+        packet.get("evidence_store_executor_isolated_present") is False
+        and gate_result in PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS
+    ):
+        errors.append("INVALID_EVIDENCE: evidence_store_executor_isolated_present=false cannot produce PASS/CLEAN/ALLOW")
+    if packet.get("pre_live_executor_gate_reason") != PRE_LIVE_EXECUTOR_GATE_REASON_SCAFFOLD_ONLY:
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_reason must describe scaffold-only hold")
+
+    metadata_hash = packet.get("pre_live_executor_gate_metadata_hash")
+    if not isinstance(metadata_hash, str) or not _is_sha256_hex(metadata_hash):
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash must be sha256 hex")
+    elif metadata_hash != expected_pre_live_executor_gate_metadata_hash(packet):
+        errors.append("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash mismatch")
+
+
 def _validate_ledger_integrity_metadata(packet: dict[str, Any], errors: list[str]) -> None:
     bool_fields = (
         "ledger_tamper_evident_enabled",
@@ -2039,6 +2172,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_executor_capability_exposure_metadata_hash",
         "bound_evidence_store_trust_metadata_hash",
         "bound_aeg_state_write_denial_metadata_hash",
+        "bound_pre_live_executor_gate_metadata_hash",
         "bound_ledger_integrity_metadata_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
@@ -2078,6 +2212,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_executor_capability_exposure_metadata_hash",
         "bound_evidence_store_trust_metadata_hash",
         "bound_aeg_state_write_denial_metadata_hash",
+        "bound_pre_live_executor_gate_metadata_hash",
         "bound_ledger_integrity_metadata_hash",
         "bound_manifest_hash",
     ):
