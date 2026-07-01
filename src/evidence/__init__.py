@@ -17,6 +17,7 @@ from src.evidence.schema import (
     validate_evidence_binding_v0,
     validate_evidence_binding_v1,
     validate_evidence_packet,
+    validate_no_forbidden_raw_prompt_response_keys,
     validate_user_gate_reason_card_v1,
 )
 
@@ -48,6 +49,7 @@ __all__ = [
     "validate_evidence_binding_v0",
     "validate_evidence_binding_v1",
     "validate_evidence_packet",
+    "validate_no_forbidden_raw_prompt_response_keys",
     "validate_user_gate_reason_card_v1",
     "verify_latest",
 ]

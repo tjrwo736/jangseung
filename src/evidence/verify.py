@@ -23,8 +23,10 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
     NOT_CHECKED_IMPACT_RISKS,
+    PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
+    RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
 )
 from src.evidence.binding import (
@@ -35,8 +37,10 @@ from src.evidence.binding import (
     sha256_json,
     sha256_text,
     citizen_one_manifest_fields,
+    prompt_redaction_manifest_fields,
     provider_adapter_manifest_fields,
     proposal_manifest_fields,
+    response_redaction_manifest_fields,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -44,6 +48,7 @@ from src.evidence.schema import (
     validate_evidence_binding_v0,
     validate_evidence_binding_v1,
     validate_evidence_packet,
+    validate_no_forbidden_raw_prompt_response_keys,
     validate_user_gate_reason_card_v1,
 )
 from src.law import apply_law
@@ -298,6 +303,11 @@ def _verify_manifest_binding(
         errors.append("INVALID_EVIDENCE: manifest must be object")
         return None, checks, errors
     manifest = loaded
+    manifest_forbidden_errors = validate_no_forbidden_raw_prompt_response_keys(manifest, label="manifest")
+    if manifest_forbidden_errors:
+        errors.extend(manifest_forbidden_errors)
+    else:
+        checks.append("manifest contains no forbidden raw prompt/response storage keys")
 
     actual_manifest_hash = manifest_hash(manifest)
     if evidence.get("bound_manifest_hash") == actual_manifest_hash:
@@ -380,6 +390,39 @@ def _verify_manifest_binding(
     else:
         errors.append("INVALID_EVIDENCE: provider adapter disabled fields mismatch")
     checks.append("provider adapter output is reported_only and not an external oracle")
+
+    evidence_prompt_redaction = prompt_redaction_manifest_fields(evidence)
+    manifest_prompt_redaction = prompt_redaction_manifest_fields(manifest)
+    for field in PROMPT_REDACTION_METADATA_FIELDS:
+        _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+    _check_equal(
+        checks,
+        errors,
+        "manifest prompt_redaction_metadata_hash",
+        manifest.get("prompt_redaction_metadata_hash"),
+        sha256_json(manifest_prompt_redaction),
+    )
+    if evidence_prompt_redaction == manifest_prompt_redaction:
+        checks.append("prompt redaction metadata fields matched manifest")
+    else:
+        errors.append("INVALID_EVIDENCE: prompt redaction metadata fields mismatch")
+
+    evidence_response_redaction = response_redaction_manifest_fields(evidence)
+    manifest_response_redaction = response_redaction_manifest_fields(manifest)
+    for field in RESPONSE_REDACTION_METADATA_FIELDS:
+        _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+    _check_equal(
+        checks,
+        errors,
+        "manifest response_redaction_metadata_hash",
+        manifest.get("response_redaction_metadata_hash"),
+        sha256_json(manifest_response_redaction),
+    )
+    if evidence_response_redaction == manifest_response_redaction:
+        checks.append("response redaction metadata fields matched manifest")
+    else:
+        errors.append("INVALID_EVIDENCE: response redaction metadata fields mismatch")
+    checks.append("provider/model response remains reported_only and not an external oracle")
 
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
