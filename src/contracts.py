@@ -185,6 +185,101 @@ PROVIDER_ADAPTER_DISABLED_FIELDS = (
     "provider_response_error_safe_summary",
 )
 
+PROMPT_BUILD_STATUS_NOT_BUILT = "not_built"
+PROMPT_BUILD_STATUS_PROVIDER_DISABLED = "not_built_provider_disabled"
+PROMPT_SOURCE_NONE = "none"
+PROMPT_SOURCE_DISABLED = "disabled"
+PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED = "no_raw_prompt_stored"
+PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE = "no_raw_prompt_storage"
+PROMPT_BUILD_STATUSES = (
+    PROMPT_BUILD_STATUS_NOT_BUILT,
+    PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
+)
+PROMPT_SOURCES = (
+    PROMPT_SOURCE_NONE,
+    PROMPT_SOURCE_DISABLED,
+)
+PROMPT_REDACTION_STATUSES = (
+    PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED,
+)
+PROMPT_STORAGE_POLICIES = (
+    PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE,
+)
+PROMPT_REDACTION_METADATA_FIELDS = (
+    "prompt_build_requested",
+    "prompt_build_status",
+    "prompt_source",
+    "prompt_input_summary",
+    "prompt_redaction_status",
+    "prompt_hash_candidate",
+    "prompt_storage_policy",
+    "prompt_secret_detected",
+    "prompt_raw_stored",
+)
+
+RESPONSE_STATUS_NOT_REQUESTED = "not_requested"
+RESPONSE_STATUS_PROVIDER_DISABLED = "provider_disabled"
+RESPONSE_SOURCE_NONE = "none"
+RESPONSE_SOURCE_DISABLED_ADAPTER = "disabled_adapter"
+RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED = "no_raw_response_stored"
+RESPONSE_ERROR_CLASS_NONE = ""
+RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+RESPONSE_ERROR_SAFE_SUMMARY_NONE = ""
+RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED = (
+    "provider adapter disabled; provider not configured; no response requested"
+)
+RESPONSE_STATUSES = (
+    RESPONSE_STATUS_NOT_REQUESTED,
+    RESPONSE_STATUS_PROVIDER_DISABLED,
+)
+RESPONSE_SOURCES = (
+    RESPONSE_SOURCE_NONE,
+    RESPONSE_SOURCE_DISABLED_ADAPTER,
+)
+RESPONSE_REDACTION_STATUSES = (
+    RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED,
+)
+RESPONSE_ERROR_CLASSES = (
+    RESPONSE_ERROR_CLASS_NONE,
+    RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+)
+RESPONSE_REDACTION_METADATA_FIELDS = (
+    "response_present",
+    "response_status",
+    "response_source",
+    "response_reported_only",
+    "response_trust_boundary",
+    "response_redaction_status",
+    "response_hash_candidate",
+    "response_raw_stored",
+    "response_error_class",
+    "response_error_safe_summary",
+)
+PROMPT_RESPONSE_REDACTION_METADATA_FIELDS = (
+    *PROMPT_REDACTION_METADATA_FIELDS,
+    *RESPONSE_REDACTION_METADATA_FIELDS,
+)
+FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS = (
+    "raw_prompt",
+    "prompt_raw",
+    "prompt_body",
+    "raw_response",
+    "response_raw",
+    "response_body",
+    "provider_raw_prompt",
+    "provider_raw_response",
+    "prompt_text",
+    "response_text",
+    # Historical aliases are also rejected to keep the disabled-provider
+    # boundary closed around request/response bodies.
+    "provider_prompt",
+    "provider_response",
+    "provider_request_body",
+    "provider_response_body",
+    "model_request_body",
+    "model_response_body",
+)
+
 CITIZEN_ONE_PROPOSAL_CONTRACT_V0 = "citizen_one_proposal_contract_v0"
 PROPOSAL_KIND_NOT_GENERATED = "not_generated"
 PROPOSAL_KIND_DETERMINISTIC_STUB = "deterministic_stub"

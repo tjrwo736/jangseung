@@ -12,8 +12,10 @@ from src.contracts import (
     BOUND,
     CITIZEN_ONE_EVIDENCE_FIELDS,
     EVIDENCE_BINDING_V1,
+    PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
+    RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
     RUNS_DIR,
     SAFE_DEFAULT,
@@ -70,6 +72,8 @@ def build_run_manifest(
     executor_created_mutation = _list_field(evidence, "executor_created_mutation")
     citizen_one_fields = citizen_one_manifest_fields(evidence)
     provider_adapter_fields = provider_adapter_manifest_fields(evidence)
+    prompt_redaction_fields = prompt_redaction_manifest_fields(evidence)
+    response_redaction_fields = response_redaction_manifest_fields(evidence)
     proposal_fields = proposal_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
@@ -109,6 +113,10 @@ def build_run_manifest(
         "citizen_one_evidence_hash": sha256_json(citizen_one_fields),
         **provider_adapter_fields,
         "provider_adapter_evidence_hash": sha256_json(provider_adapter_fields),
+        **prompt_redaction_fields,
+        "prompt_redaction_metadata_hash": sha256_json(prompt_redaction_fields),
+        **response_redaction_fields,
+        "response_redaction_metadata_hash": sha256_json(response_redaction_fields),
     }
     if proposal_fields:
         manifest.update(proposal_fields)
@@ -160,6 +168,14 @@ def citizen_one_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
 
 def provider_adapter_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in PROVIDER_ADAPTER_DISABLED_FIELDS}
+
+
+def prompt_redaction_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROMPT_REDACTION_METADATA_FIELDS}
+
+
+def response_redaction_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in RESPONSE_REDACTION_METADATA_FIELDS}
 
 
 def proposal_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:

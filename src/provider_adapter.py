@@ -28,13 +28,30 @@ from src.contracts import (
     PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
     PROVIDER_SECRET_SOURCE_NONE,
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
+    PROMPT_BUILD_STATUS_NOT_BUILT,
+    PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
+    PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED,
+    PROMPT_SOURCE_DISABLED,
+    PROMPT_SOURCE_NONE,
+    PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE,
     REPORTED_ONLY,
+    RESPONSE_ERROR_CLASS_NONE,
+    RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    RESPONSE_ERROR_SAFE_SUMMARY_NONE,
+    RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED,
+    RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED,
+    RESPONSE_SOURCE_DISABLED_ADAPTER,
+    RESPONSE_SOURCE_NONE,
+    RESPONSE_STATUS_NOT_REQUESTED,
+    RESPONSE_STATUS_PROVIDER_DISABLED,
 )
 
 
 def build_disabled_provider_adapter_evidence(requested: bool) -> dict[str, Any]:
     if not requested:
         return {
+            **_prompt_redaction_metadata(requested=False),
+            **_response_redaction_metadata(requested=False),
             "provider_request_id": "",
             "provider_mode": PROVIDER_MODE_NOT_REQUESTED,
             "provider_name": PROVIDER_NAME_NONE,
@@ -57,6 +74,8 @@ def build_disabled_provider_adapter_evidence(requested: bool) -> dict[str, Any]:
         }
 
     return {
+        **_prompt_redaction_metadata(requested=True),
+        **_response_redaction_metadata(requested=True),
         "provider_request_id": PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
         "provider_mode": PROVIDER_MODE_DISABLED,
         "provider_name": PROVIDER_NAME_NONE,
@@ -76,4 +95,39 @@ def build_disabled_provider_adapter_evidence(requested: bool) -> dict[str, Any]:
         "provider_response_redaction_status": PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
         "provider_response_error_class": PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
         "provider_response_error_safe_summary": PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+    }
+
+
+def _prompt_redaction_metadata(requested: bool) -> dict[str, Any]:
+    return {
+        "prompt_build_requested": False,
+        "prompt_build_status": (
+            PROMPT_BUILD_STATUS_PROVIDER_DISABLED if requested else PROMPT_BUILD_STATUS_NOT_BUILT
+        ),
+        "prompt_source": PROMPT_SOURCE_DISABLED if requested else PROMPT_SOURCE_NONE,
+        "prompt_input_summary": "",
+        "prompt_redaction_status": PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED,
+        "prompt_hash_candidate": "",
+        "prompt_storage_policy": PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE,
+        "prompt_secret_detected": False,
+        "prompt_raw_stored": False,
+    }
+
+
+def _response_redaction_metadata(requested: bool) -> dict[str, Any]:
+    return {
+        "response_present": False,
+        "response_status": RESPONSE_STATUS_PROVIDER_DISABLED if requested else RESPONSE_STATUS_NOT_REQUESTED,
+        "response_source": RESPONSE_SOURCE_DISABLED_ADAPTER if requested else RESPONSE_SOURCE_NONE,
+        "response_reported_only": True,
+        "response_trust_boundary": REPORTED_ONLY,
+        "response_redaction_status": RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED,
+        "response_hash_candidate": "",
+        "response_raw_stored": False,
+        "response_error_class": (
+            RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED if requested else RESPONSE_ERROR_CLASS_NONE
+        ),
+        "response_error_safe_summary": (
+            RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED if requested else RESPONSE_ERROR_SAFE_SUMMARY_NONE
+        ),
     }
