@@ -32,6 +32,7 @@ from src.contracts import (
     STATE_DIR,
     TOOL_SURFACE_FIELDS,
 )
+from src.evidence.ledger_integrity import ledger_integrity_manifest_fields
 
 
 def canonical_json(payload: Any) -> str:
@@ -97,6 +98,7 @@ def build_run_manifest(
     tool_surface_fields = tool_surface_manifest_fields(evidence)
     capability_exposure_fields = capability_exposure_manifest_fields(evidence)
     evidence_store_trust_fields = evidence_store_trust_manifest_fields(evidence)
+    ledger_integrity_fields = ledger_integrity_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -161,6 +163,8 @@ def build_run_manifest(
         "executor_capability_exposure_manifest_hash": sha256_json(capability_exposure_fields),
         **evidence_store_trust_fields,
         "evidence_store_trust_manifest_hash": sha256_json(evidence_store_trust_fields),
+        **ledger_integrity_fields,
+        "ledger_integrity_manifest_hash": sha256_json(ledger_integrity_fields),
     }
     if proposal_fields:
         manifest.update(proposal_fields)
@@ -195,6 +199,7 @@ def bind_evidence_to_manifest(
         "",
     )
     evidence["bound_evidence_store_trust_metadata_hash"] = manifest.get("evidence_store_trust_manifest_hash", "")
+    evidence["bound_ledger_integrity_metadata_hash"] = manifest.get("ledger_integrity_manifest_hash", "")
     evidence["bound_manifest_hash"] = bound_manifest_hash
     evidence["bound_manifest_path"] = manifest_path
     evidence["bound_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -210,6 +215,7 @@ def bind_evidence_to_manifest(
         checks["tool_surface_manifest_binding_required"] = True
         checks["executor_capability_exposure_manifest_binding_required"] = True
         checks["evidence_store_trust_manifest_binding_required"] = True
+        checks["ledger_integrity_manifest_binding_required"] = True
 
 
 def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:

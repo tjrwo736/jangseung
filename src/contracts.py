@@ -70,6 +70,63 @@ BINDING_STATUSES = (
     INVALID_EVIDENCE,
     NOT_CHECKED,
 )
+EVIDENCE_BINDING_V1_FIELDS = (
+    "binding_version",
+    "binding_status",
+    "binding_reasons",
+    "bound_run_id",
+    "bound_repo_root",
+    "bound_branch",
+    "bound_head_sha",
+    "bound_tree_sha",
+    "bound_changed_files_hash",
+    "bound_pre_run_changed_files_hash",
+    "bound_post_run_changed_files_hash",
+    "bound_computed_mutation_delta_hash",
+    "bound_snapshot_trust_boundary_hash",
+    "bound_action_boundary_metadata_hash",
+    "bound_capability_isolation_metadata_hash",
+    "bound_tool_surface_metadata_hash",
+    "bound_executor_capability_exposure_metadata_hash",
+    "bound_evidence_store_trust_metadata_hash",
+    "bound_ledger_integrity_metadata_hash",
+    "bound_manifest_hash",
+    "bound_manifest_path",
+    "bound_at",
+)
+
+LEDGER_INTEGRITY_SCAFFOLD_V0 = "ledger_integrity_scaffold_v0"
+LEDGER_INTEGRITY_MODE_TAMPER_EVIDENT_SCAFFOLD = "tamper_evident_scaffold"
+LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY = "TAMPER_EVIDENT_SCAFFOLD_ONLY"
+LEDGER_INTEGRITY_STATUSES = (
+    LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
+    NOT_CHECKED,
+    INVALID_EVIDENCE,
+)
+LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED = NOT_CHECKED
+LEDGER_INTEGRITY_CHECK_STATUSES = (
+    LEDGER_INTEGRITY_CHECK_STATUS_NOT_CHECKED,
+    INVALID_EVIDENCE,
+)
+LEDGER_INTEGRITY_CHECK_REASON_SCAFFOLD_ONLY = "tamper_evident_scaffold_only_not_tamper_proof"
+LEDGER_PREVIOUS_HASH_GENESIS = "GENESIS_NOT_AVAILABLE"
+LEDGER_PREVIOUS_HASH_NOT_AVAILABLE = "PREVIOUS_LEDGER_HASH_NOT_AVAILABLE"
+LEDGER_INTEGRITY_FIELDS = (
+    "ledger_integrity_version",
+    "ledger_integrity_mode",
+    "ledger_integrity_status",
+    "ledger_tamper_evident_enabled",
+    "ledger_tamper_proof_claimed",
+    "ledger_sequence_number",
+    "previous_ledger_hash",
+    "current_evidence_hash",
+    "current_manifest_hash",
+    "current_ledger_entry_hash",
+    "ledger_chain_hash",
+    "ledger_integrity_metadata_hash",
+    "ledger_integrity_check_status",
+    "ledger_integrity_check_reason",
+)
 
 GIT_STATUS_PORCELAIN_V1 = "git_status_porcelain_v1"
 SNAPSHOT_COLLECTOR_GIT_STATUS_V1 = "aeg_git_status_snapshot_v1"

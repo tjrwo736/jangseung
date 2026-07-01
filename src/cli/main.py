@@ -180,6 +180,7 @@ def _cmd_run(
     rows.extend(_tool_surface_rows(evidence))
     rows.extend(_executor_capability_exposure_rows(evidence))
     rows.extend(_evidence_store_trust_rows(evidence))
+    rows.extend(_ledger_integrity_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
@@ -254,6 +255,7 @@ def _cmd_verify(cwd: Path) -> int:
         rows.extend(_tool_surface_rows(result.evidence))
         rows.extend(_executor_capability_exposure_rows(result.evidence))
         rows.extend(_evidence_store_trust_rows(result.evidence))
+        rows.extend(_ledger_integrity_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
@@ -458,6 +460,25 @@ def _evidence_store_trust_rows(evidence: dict[str, Any]) -> list[tuple[str, str]
             "evidence_store_trust_metadata_hash",
             _short_hash(evidence.get("evidence_store_trust_metadata_hash", "")),
         ),
+    ]
+
+
+def _ledger_integrity_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("ledger_integrity_version", str(evidence.get("ledger_integrity_version", ""))),
+        ("ledger_integrity_mode", str(evidence.get("ledger_integrity_mode", ""))),
+        ("ledger_integrity_status", str(evidence.get("ledger_integrity_status", ""))),
+        ("ledger_tamper_evident_enabled", str(evidence.get("ledger_tamper_evident_enabled", "")).lower()),
+        ("ledger_tamper_proof_claimed", str(evidence.get("ledger_tamper_proof_claimed", "")).lower()),
+        ("ledger_sequence_number", str(evidence.get("ledger_sequence_number", ""))),
+        ("previous_ledger_hash", str(evidence.get("previous_ledger_hash", ""))),
+        ("current_evidence_hash", _short_hash(evidence.get("current_evidence_hash", ""))),
+        ("current_manifest_hash", _short_hash(evidence.get("current_manifest_hash", ""))),
+        ("current_ledger_entry_hash", _short_hash(evidence.get("current_ledger_entry_hash", ""))),
+        ("ledger_chain_hash", _short_hash(evidence.get("ledger_chain_hash", ""))),
+        ("ledger_integrity_metadata_hash", _short_hash(evidence.get("ledger_integrity_metadata_hash", ""))),
+        ("ledger_integrity_check_status", str(evidence.get("ledger_integrity_check_status", ""))),
+        ("ledger_integrity_check_reason", str(evidence.get("ledger_integrity_check_reason", ""))),
     ]
 
 
