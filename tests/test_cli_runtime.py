@@ -20,6 +20,14 @@ from src.contracts import (
     ACTION_BOUNDARY_SCAFFOLD_V0,
     ACTION_LOG_SOURCE_NONE,
     ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS,
+    AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    AEG_STATE_WRITE_DENIAL_FIELDS,
+    AEG_STATE_WRITE_DENIAL_MODE_METADATA_SCAFFOLD,
+    AEG_STATE_WRITE_DENIAL_REASON_SCAFFOLD_ONLY,
+    AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0,
+    AEG_STATE_WRITE_DENIAL_SOURCE_AEGIS_RUNTIME_METADATA,
+    AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY,
     BOUND,
     CAPABILITY_AUTHORITY_FIELDS,
     CAPABILITY_BOUNDARY_CLEAN,
@@ -171,6 +179,7 @@ from src.contracts import (
     TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
 )
 from src.evidence.action_boundary import expected_action_log_hash
+from src.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
 from src.evidence.binding import sha256_json
 from src.evidence.capability_exposure import (
     expected_executor_capability_exposure_hash,
@@ -1559,6 +1568,197 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn(".aeg folder-local state was not treated as executor-isolated", verify.stdout)
         self.assertIn("evidence binding was not treated as evidence store tamper-proof", verify.stdout)
 
+    def test_aeg_state_write_denial_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("aeg_state_write_denial_status: DENIAL_SCAFFOLD_ONLY", run.stdout)
+        self.assertIn("capability_write_aeg_state_requested: false", run.stdout)
+        self.assertIn("capability_write_aeg_state_granted: false", run.stdout)
+        self.assertIn("capability_write_aeg_state_denied: true", run.stdout)
+        self.assertIn("aeg_state_write_denial_enforcement_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertNotIn("aeg_state_write_denial_status: CLEAN", run.stdout)
+        self.assertNotIn("aeg_state_write_denial_status: PASS", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_aeg_state_write_denial_scaffold_contract(evidence)
+        for field in self._aeg_state_write_denial_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["aeg_state_write_denial_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._aeg_state_write_denial_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_aeg_state_write_denial_metadata_hash"],
+            manifest["aeg_state_write_denial_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("aeg_state_write_denial_metadata_hash replay matched", verify.stdout)
+        self.assertIn("capability_write_aeg_state_granted remained false", verify.stdout)
+        self.assertIn("capability_write_aeg_state_denied remained explicit true", verify.stdout)
+        self.assertIn("aeg_state_write_denial_enforcement_status remained SCAFFOLD_ONLY_NOT_ENFORCED", verify.stdout)
+        self.assertIn("aeg state write bypass flags default false", verify.stdout)
+        self.assertIn("executor self-report was not treated as aeg state write denial proof", verify.stdout)
+        self.assertIn("capability_write_aeg_state denied metadata was not treated as external enforcement", verify.stdout)
+
+    def test_capability_write_aeg_state_grant_cannot_pass_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["capability_write_aeg_state_requested"] = True
+        evidence["capability_write_aeg_state_granted"] = True
+        evidence["capability_write_aeg_state_denied"] = False
+        evidence["aeg_state_write_denial_metadata_hash"] = expected_aeg_state_write_denial_metadata_hash(evidence)
+        self._sync_aeg_state_write_denial_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: capability_write_aeg_state_requested must remain false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: capability_write_aeg_state_granted must remain false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: capability_write_aeg_state_denied must be explicit true", verify.stdout)
+
+    def test_aeg_state_write_denial_enforced_or_clean_claim_fails_even_when_rebound(self):
+        self._aeg("init")
+        for field, value in (
+            ("aeg_state_write_denial_status", "CLEAN"),
+            ("aeg_state_write_denial_enforcement_status", "ENFORCED"),
+        ):
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = value
+                evidence["aeg_state_write_denial_metadata_hash"] = expected_aeg_state_write_denial_metadata_hash(evidence)
+                self._sync_aeg_state_write_denial_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                if field == "aeg_state_write_denial_status":
+                    self.assertIn(
+                        "INVALID_EVIDENCE: aeg_state_write_denial_status cannot claim CLEAN/PASS/ENFORCED",
+                        verify.stdout,
+                    )
+                    self.assertIn(
+                        "INVALID_EVIDENCE: aeg_state_write_denial_status must remain DENIAL_SCAFFOLD_ONLY",
+                        verify.stdout,
+                    )
+                else:
+                    self.assertIn(
+                        "INVALID_EVIDENCE: aeg_state_write_denial_enforcement_status cannot claim ENFORCED/CLEAN/PASS",
+                        verify.stdout,
+                    )
+                    self.assertIn(
+                        "INVALID_EVIDENCE: aeg_state_write_denial_enforcement_status must remain "
+                        "SCAFFOLD_ONLY_NOT_ENFORCED",
+                        verify.stdout,
+                    )
+
+    def test_aeg_state_write_denial_bypass_flags_cannot_pass_even_when_rebound(self):
+        self._aeg("init")
+        for field in AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS:
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = True
+                evidence["aeg_state_write_denial_metadata_hash"] = expected_aeg_state_write_denial_metadata_hash(evidence)
+                self._sync_aeg_state_write_denial_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {field} must remain false", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: aeg state write bypass flags must default false", verify.stdout)
+
+    def test_executor_self_report_cannot_become_aeg_state_write_denial_proof(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["aeg_state_write_denial_source"] = "executor_self_report"
+        evidence["executor_reported_aeg_state_write_denial"] = {
+            "capability_write_aeg_state_denied": True,
+            "trust_boundary": REPORTED_ONLY,
+            "judgment_basis": True,
+        }
+        evidence["judgment_basis"] = "executor_reported_aeg_state_write_denial"
+        evidence["aeg_state_write_denial_metadata_hash"] = expected_aeg_state_write_denial_metadata_hash(evidence)
+        self._sync_aeg_state_write_denial_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: aeg_state_write_denial_source must be aegis runtime scaffold metadata", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: executor self-report cannot prove aeg state write denial", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: executor_reported_aeg_state_write_denial cannot become judgment basis",
+            verify.stdout,
+        )
+
+    def test_verify_rejects_tampered_aeg_state_write_denial_metadata_hash(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["aeg_state_write_denial_metadata_hash"] = "0" * 64
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: aeg_state_write_denial_metadata_hash mismatch", verify.stdout)
+
+    def test_verify_rejects_tampered_aeg_state_write_denial_manifest_metadata_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        manifest["raw_shell_can_write_aeg_state"] = True
+        manifest["aeg_state_write_denial_metadata_hash"] = expected_aeg_state_write_denial_metadata_hash(manifest)
+        manifest["aeg_state_write_denial_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._aeg_state_write_denial_fields()}
+        )
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: manifest raw_shell_can_write_aeg_state mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: aeg state write denial metadata fields mismatch", verify.stdout)
+
+    def test_verify_rejects_missing_aeg_state_write_denial_fields(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        del evidence["aeg_state_write_denial_version"]
+        del evidence["bound_aeg_state_write_denial_metadata_hash"]
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("missing required field: aeg_state_write_denial_version", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: missing evidence binding v1 field: bound_aeg_state_write_denial_metadata_hash",
+            verify.stdout,
+        )
+
     def test_ledger_integrity_scaffold_defaults_are_bound_and_replayed(self):
         self._aeg("init")
         run = self._aeg("run", "fix typo in README")
@@ -2675,6 +2875,14 @@ class CliRuntimeTests(unittest.TestCase):
         )
         evidence["bound_evidence_store_trust_metadata_hash"] = manifest["evidence_store_trust_manifest_hash"]
 
+    def _sync_aeg_state_write_denial_manifest(self, evidence, manifest):
+        for field in self._aeg_state_write_denial_fields():
+            manifest[field] = evidence[field]
+        manifest["aeg_state_write_denial_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._aeg_state_write_denial_fields()}
+        )
+        evidence["bound_aeg_state_write_denial_metadata_hash"] = manifest["aeg_state_write_denial_manifest_hash"]
+
     def _sync_ledger_integrity_manifest(self, evidence, manifest):
         for field in self._ledger_integrity_fields():
             manifest[field] = evidence[field]
@@ -2753,6 +2961,9 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _evidence_store_trust_fields(self):
         return EVIDENCE_STORE_TRUST_FIELDS
+
+    def _aeg_state_write_denial_fields(self):
+        return AEG_STATE_WRITE_DENIAL_FIELDS
 
     def _ledger_integrity_fields(self):
         return LEDGER_INTEGRITY_FIELDS
@@ -2967,6 +3178,43 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["evidence_store_integrity_not_checked_is_not_clean"])
         self.assertTrue(evidence["checks"]["executor_can_write_evidence_store_not_checked_is_not_clean"])
         self.assertTrue(evidence["checks"]["evidence_store_trust_manifest_binding_required"])
+
+    def _assert_aeg_state_write_denial_scaffold_contract(self, evidence):
+        self.assertEqual(evidence["aeg_state_write_denial_version"], AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0)
+        self.assertEqual(evidence["aeg_state_write_denial_mode"], AEG_STATE_WRITE_DENIAL_MODE_METADATA_SCAFFOLD)
+        self.assertEqual(evidence["aeg_state_write_denial_status"], AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY)
+        self.assertNotIn(evidence["aeg_state_write_denial_status"], ("CLEAN", "PASS", "ENFORCED"))
+        self.assertFalse(evidence["capability_write_aeg_state_requested"])
+        self.assertFalse(evidence["capability_write_aeg_state_granted"])
+        self.assertTrue(evidence["capability_write_aeg_state_denied"])
+        for field in AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS:
+            self.assertFalse(evidence[field])
+        self.assertEqual(
+            evidence["aeg_state_write_denial_enforcement_status"],
+            AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertNotIn(evidence["aeg_state_write_denial_enforcement_status"], ("CLEAN", "PASS", "ENFORCED"))
+        self.assertEqual(
+            evidence["aeg_state_write_denial_source"],
+            AEG_STATE_WRITE_DENIAL_SOURCE_AEGIS_RUNTIME_METADATA,
+        )
+        self.assertEqual(evidence["aeg_state_write_denial_reason"], AEG_STATE_WRITE_DENIAL_REASON_SCAFFOLD_ONLY)
+        self.assertEqual(
+            evidence["aeg_state_write_denial_metadata_hash"],
+            expected_aeg_state_write_denial_metadata_hash(evidence),
+        )
+        self.assertTrue(evidence["checks"]["aeg_state_write_denial_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["capability_write_aeg_state_granted_default_false"])
+        self.assertTrue(evidence["checks"]["capability_write_aeg_state_denied_explicit"])
+        self.assertTrue(evidence["checks"]["aeg_state_write_denial_enforcement_not_claimed"])
+        self.assertTrue(evidence["checks"]["aeg_state_write_denial_metadata_is_not_external_proof"])
+        self.assertTrue(evidence["checks"]["executor_self_report_is_not_aeg_state_denial_proof"])
+        self.assertTrue(evidence["checks"]["raw_shell_write_aeg_state_bypass_forbidden"])
+        self.assertTrue(evidence["checks"]["write_file_write_aeg_state_bypass_forbidden"])
+        self.assertTrue(evidence["checks"]["repo_outside_write_aeg_state_bypass_forbidden"])
+        self.assertTrue(evidence["checks"]["executor_controlled_recorder_write_aeg_state_bypass_forbidden"])
+        self.assertTrue(evidence["checks"]["no_live_executor_authority_before_aeg_state_write_denial_enforcement"])
+        self.assertTrue(evidence["checks"]["aeg_state_write_denial_manifest_binding_required"])
 
     def _assert_ledger_integrity_scaffold_contract(self, evidence):
         self.assertEqual(evidence["ledger_integrity_version"], LEDGER_INTEGRITY_SCAFFOLD_V0)

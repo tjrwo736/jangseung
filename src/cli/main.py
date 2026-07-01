@@ -180,6 +180,7 @@ def _cmd_run(
     rows.extend(_tool_surface_rows(evidence))
     rows.extend(_executor_capability_exposure_rows(evidence))
     rows.extend(_evidence_store_trust_rows(evidence))
+    rows.extend(_aeg_state_write_denial_rows(evidence))
     rows.extend(_ledger_integrity_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
@@ -255,6 +256,7 @@ def _cmd_verify(cwd: Path) -> int:
         rows.extend(_tool_surface_rows(result.evidence))
         rows.extend(_executor_capability_exposure_rows(result.evidence))
         rows.extend(_evidence_store_trust_rows(result.evidence))
+        rows.extend(_aeg_state_write_denial_rows(result.evidence))
         rows.extend(_ledger_integrity_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
@@ -459,6 +461,46 @@ def _evidence_store_trust_rows(evidence: dict[str, Any]) -> list[tuple[str, str]
         (
             "evidence_store_trust_metadata_hash",
             _short_hash(evidence.get("evidence_store_trust_metadata_hash", "")),
+        ),
+    ]
+
+
+def _aeg_state_write_denial_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("aeg_state_write_denial_version", str(evidence.get("aeg_state_write_denial_version", ""))),
+        ("aeg_state_write_denial_mode", str(evidence.get("aeg_state_write_denial_mode", ""))),
+        ("aeg_state_write_denial_status", str(evidence.get("aeg_state_write_denial_status", ""))),
+        (
+            "capability_write_aeg_state_requested",
+            str(evidence.get("capability_write_aeg_state_requested", "")).lower(),
+        ),
+        (
+            "capability_write_aeg_state_granted",
+            str(evidence.get("capability_write_aeg_state_granted", "")).lower(),
+        ),
+        (
+            "capability_write_aeg_state_denied",
+            str(evidence.get("capability_write_aeg_state_denied", "")).lower(),
+        ),
+        ("raw_shell_can_write_aeg_state", str(evidence.get("raw_shell_can_write_aeg_state", "")).lower()),
+        ("write_file_can_write_aeg_state", str(evidence.get("write_file_can_write_aeg_state", "")).lower()),
+        (
+            "repo_outside_write_can_write_aeg_state",
+            str(evidence.get("repo_outside_write_can_write_aeg_state", "")).lower(),
+        ),
+        (
+            "executor_controlled_recorder_can_write_aeg_state",
+            str(evidence.get("executor_controlled_recorder_can_write_aeg_state", "")).lower(),
+        ),
+        (
+            "aeg_state_write_denial_enforcement_status",
+            str(evidence.get("aeg_state_write_denial_enforcement_status", "")),
+        ),
+        ("aeg_state_write_denial_source", str(evidence.get("aeg_state_write_denial_source", ""))),
+        ("aeg_state_write_denial_reason", str(evidence.get("aeg_state_write_denial_reason", ""))),
+        (
+            "aeg_state_write_denial_metadata_hash",
+            _short_hash(evidence.get("aeg_state_write_denial_metadata_hash", "")),
         ),
     ]
 
