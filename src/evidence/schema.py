@@ -7,6 +7,17 @@ import json
 from typing import Any
 
 from src.contracts import (
+    ACTION_AUTHORITY_FIELDS,
+    ACTION_BOUNDARY_CLEAN,
+    ACTION_BOUNDARY_FIELDS,
+    ACTION_BOUNDARY_NOT_CHECKED,
+    ACTION_BOUNDARY_SCAFFOLD_V0,
+    ACTION_BOUNDARY_STATUSES,
+    ACTION_HIGH_RISK_KINDS,
+    ACTION_LOG_SOURCE_NONE,
+    ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    ACTION_LOG_SOURCE_TRUST_BOUNDARIES,
+    ACTION_LOG_SOURCES,
     AEG_VERSION,
     BINDING_STATUSES,
     BOUND,
@@ -37,7 +48,11 @@ from src.contracts import (
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
     IMPACT_RISKS,
+    LOW,
+    MEDIUM,
     NEEDS_USER_GATE,
+    NOT_CHECKED,
+    MUTATION_BOUNDARY_CLEAN,
     MUTATION_BOUNDARY_STATUSES,
     MUTATION_BOUNDARY_UNTRUSTED_SNAPSHOT,
     MUTATION_DELTA_SOURCE_COMPUTED,
@@ -150,6 +165,7 @@ from src.contracts import (
     RESPONSE_STATUS_PROVIDER_DISABLED,
     RESPONSE_STATUSES,
 )
+from src.evidence.action_boundary import expected_action_log_hash
 
 
 REQUIRED_FIELDS: tuple[str, ...] = (
@@ -200,6 +216,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
     *PROMPT_REDACTION_METADATA_FIELDS,
     *RESPONSE_REDACTION_METADATA_FIELDS,
+    *ACTION_BOUNDARY_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -228,6 +245,7 @@ BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
     "bound_post_run_changed_files_hash",
     "bound_computed_mutation_delta_hash",
     "bound_snapshot_trust_boundary_hash",
+    "bound_action_boundary_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
     "bound_at",
@@ -297,6 +315,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_provider_response_error_metadata(packet, errors)
     _validate_prompt_redaction_metadata_fields(packet, errors)
     _validate_response_redaction_metadata_fields(packet, errors)
+    _validate_action_boundary_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -963,6 +982,152 @@ def _validate_response_redaction_metadata_fields(packet: dict[str, Any], errors:
             errors.append("INVALID_EVIDENCE: non-requested response_error_safe_summary must be empty")
 
 
+def _validate_action_boundary_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "action_interception_enabled",
+        "command_enumeration_only",
+        "no_matched_dangerous_command",
+        *ACTION_AUTHORITY_FIELDS,
+    )
+    string_fields = (
+        "action_boundary_version",
+        "action_boundary_status",
+        "action_log_source",
+        "action_log_source_trust_boundary",
+        "action_risk",
+        "computed_action_log_hash",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+    _expect(packet, "intercepted_actions", list, errors)
+    _expect(packet, "executor_reported_actions", dict, errors)
+
+    for field in ("action_count", "expected_action_count"):
+        value = packet.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be integer")
+        elif value < 0:
+            errors.append(f"INVALID_EVIDENCE: {field} must be non-negative")
+
+    if packet.get("action_boundary_version") != ACTION_BOUNDARY_SCAFFOLD_V0:
+        errors.append(f"INVALID_EVIDENCE: action_boundary_version must be {ACTION_BOUNDARY_SCAFFOLD_V0}")
+    if packet.get("action_boundary_status") not in ACTION_BOUNDARY_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid action_boundary_status: {packet.get('action_boundary_status')}")
+    if packet.get("action_log_source") not in ACTION_LOG_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid action_log_source: {packet.get('action_log_source')}")
+    if packet.get("action_log_source") != ACTION_LOG_SOURCE_NONE:
+        errors.append("INVALID_EVIDENCE: action_log_source must be none in scaffold v0")
+    if packet.get("action_log_source_trust_boundary") not in ACTION_LOG_SOURCE_TRUST_BOUNDARIES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid action_log_source_trust_boundary: "
+            f"{packet.get('action_log_source_trust_boundary')}"
+        )
+    if packet.get("action_log_source_trust_boundary") != ACTION_LOG_SOURCE_TRUST_BOUNDARY_NOT_IMPLEMENTED:
+        errors.append("INVALID_EVIDENCE: action log trust boundary is not implemented in scaffold v0")
+
+    intercepted_actions = packet.get("intercepted_actions")
+    if not isinstance(intercepted_actions, list):
+        intercepted_actions = []
+    elif not all(isinstance(item, dict) for item in intercepted_actions):
+        errors.append("INVALID_EVIDENCE: intercepted_actions must contain only objects")
+        intercepted_actions = [item for item in intercepted_actions if isinstance(item, dict)]
+
+    if packet.get("action_interception_enabled") is not False:
+        errors.append("INVALID_EVIDENCE: action_interception_enabled must be false in scaffold v0")
+    if packet.get("action_interception_enabled") is False and intercepted_actions:
+        errors.append("INVALID_EVIDENCE: intercepted_actions must be empty when action interception is disabled")
+
+    if packet.get("expected_action_count") != 0:
+        errors.append("INVALID_EVIDENCE: expected_action_count must be 0 for no-op scaffold v0")
+    if isinstance(packet.get("action_count"), int) and not isinstance(packet.get("action_count"), bool):
+        if packet.get("action_count") != len(intercepted_actions):
+            errors.append("INVALID_EVIDENCE: action_count must equal intercepted_actions length")
+    if packet.get("action_count") != packet.get("expected_action_count"):
+        errors.append("INVALID_EVIDENCE: action_count must equal expected_action_count for no-op scaffold v0")
+
+    action_risk = packet.get("action_risk")
+    if action_risk not in (NOT_CHECKED, LOW, MEDIUM, HIGH):
+        errors.append(f"INVALID_EVIDENCE: invalid action_risk: {action_risk}")
+    expected_risk = _expected_action_risk(intercepted_actions)
+    if action_risk != expected_risk:
+        errors.append(f"INVALID_EVIDENCE: action_risk mismatch: evidence={action_risk} replay={expected_risk}")
+
+    action_hash = packet.get("computed_action_log_hash")
+    if not isinstance(action_hash, str) or not _is_sha256_hex(action_hash):
+        errors.append("INVALID_EVIDENCE: computed_action_log_hash must be sha256 hex")
+    elif action_hash != expected_action_log_hash(packet):
+        errors.append("INVALID_EVIDENCE: computed_action_log_hash mismatch")
+
+    for field in ACTION_AUTHORITY_FIELDS:
+        if packet.get(field) is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must be false in scaffold v0")
+
+    executor_reported = packet.get("executor_reported_actions")
+    if isinstance(executor_reported, dict):
+        reported_actions = executor_reported.get("actions")
+        if not isinstance(reported_actions, list):
+            errors.append("INVALID_EVIDENCE: executor_reported_actions.actions must be list")
+            reported_actions = []
+        if not isinstance(executor_reported.get("reported_action_count"), int) or isinstance(
+            executor_reported.get("reported_action_count"), bool
+        ):
+            errors.append("INVALID_EVIDENCE: executor_reported_actions.reported_action_count must be integer")
+        elif executor_reported.get("reported_action_count") != len(reported_actions):
+            errors.append("INVALID_EVIDENCE: executor_reported_actions.reported_action_count mismatch")
+        if executor_reported.get("trust_boundary") != REPORTED_ONLY:
+            errors.append("INVALID_EVIDENCE: executor_reported_actions must be reported_only")
+        if executor_reported.get("judgment_basis") is not False:
+            errors.append("INVALID_EVIDENCE: executor_reported_actions cannot be judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_actions must be object")
+
+    if packet.get("judgment_basis") == "executor_reported_actions":
+        errors.append("INVALID_EVIDENCE: executor_reported_actions cannot become judgment basis")
+
+    if packet.get("command_enumeration_only") is True:
+        if any(packet.get(field) is True for field in ACTION_AUTHORITY_FIELDS):
+            errors.append("INVALID_EVIDENCE: command enumeration alone cannot grant authority")
+        if packet.get("action_boundary_status") == ACTION_BOUNDARY_CLEAN:
+            errors.append("INVALID_EVIDENCE: command_enumeration_only cannot produce ACTION_BOUNDARY_CLEAN")
+
+    if packet.get("no_matched_dangerous_command") is True and packet.get("action_boundary_status") == ACTION_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: NO_MATCHED_DANGEROUS_COMMAND != ACTION_BOUNDARY_CLEAN")
+
+    if packet.get("action_boundary_status") == ACTION_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: ACTION_BOUNDARY_CLEAN is unavailable before action interception/capability isolation")
+        if packet.get("action_risk") == HIGH or expected_risk == HIGH:
+            errors.append("INVALID_EVIDENCE: HIGH action cannot be ACTION_BOUNDARY_CLEAN")
+        if packet.get("mutation_boundary_status") == MUTATION_BOUNDARY_CLEAN:
+            errors.append("INVALID_EVIDENCE: MUTATION_BOUNDARY_CLEAN does not imply ACTION_BOUNDARY_CLEAN")
+        if packet.get("changed_files") == []:
+            errors.append("INVALID_EVIDENCE: git diff clean does not imply action clean")
+
+    if packet.get("action_boundary_status") != ACTION_BOUNDARY_NOT_CHECKED:
+        errors.append("INVALID_EVIDENCE: action_boundary_status must remain ACTION_BOUNDARY_NOT_CHECKED in scaffold v0")
+
+
+def _expected_action_risk(actions: list[dict[str, Any]]) -> str:
+    if not actions:
+        return NOT_CHECKED
+    for action in actions:
+        risk = action.get("risk") or action.get("action_risk")
+        if risk == HIGH:
+            return HIGH
+        if _action_kind(action) in ACTION_HIGH_RISK_KINDS:
+            return HIGH
+    return NOT_CHECKED
+
+
+def _action_kind(action: dict[str, Any]) -> str:
+    for field in ("action_type", "action_kind", "kind", "category", "operation", "name"):
+        value = action.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower().replace("-", "_").replace(" ", "_")
+    return ""
+
+
 def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]) -> None:
     for field in PROPOSAL_CONTRACT_FIELDS:
         if field not in packet:
@@ -1197,6 +1362,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_post_run_changed_files_hash",
         "bound_computed_mutation_delta_hash",
         "bound_snapshot_trust_boundary_hash",
+        "bound_action_boundary_metadata_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
         "bound_at",
@@ -1229,6 +1395,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_post_run_changed_files_hash",
         "bound_computed_mutation_delta_hash",
         "bound_snapshot_trust_boundary_hash",
+        "bound_action_boundary_metadata_hash",
         "bound_manifest_hash",
     ):
         value = packet.get(field)
@@ -1289,6 +1456,19 @@ def validate_completion_contract_v0(packet: dict[str, Any]) -> list[str]:
             errors.append(f"INVALID_EVIDENCE: executor {field} must be false")
         if completion_contract.get(field) is not False:
             errors.append(f"INVALID_EVIDENCE: completion contract {field} must be false")
+
+    if executor.get("actions") != []:
+        errors.append("INVALID_EVIDENCE: no-op executor actions must be empty")
+    if completion_contract.get("actions") != []:
+        errors.append("INVALID_EVIDENCE: no-op completion contract actions must be empty")
+    if executor.get("action_count") != 0:
+        errors.append("INVALID_EVIDENCE: no-op executor action_count must be 0")
+    if completion_contract.get("action_count") != 0:
+        errors.append("INVALID_EVIDENCE: no-op completion contract action_count must be 0")
+    if executor.get("expected_action_count") != 0:
+        errors.append("INVALID_EVIDENCE: no-op executor expected_action_count must be 0")
+    if completion_contract.get("expected_action_count") != 0:
+        errors.append("INVALID_EVIDENCE: no-op completion contract expected_action_count must be 0")
 
     completion_reported = completion_contract.get("completion_reported")
     completion_satisfied = completion_contract.get("completion_satisfied")
