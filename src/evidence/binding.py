@@ -11,6 +11,8 @@ from typing import Any
 from src.contracts import (
     ACTION_BOUNDARY_FIELDS,
     BOUND,
+    EVIDENCE_STORE_TRUST_FIELDS,
+    EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
     CAPABILITY_ISOLATION_FIELDS,
     CITIZEN_ONE_EVIDENCE_FIELDS,
     EVIDENCE_BINDING_V1,
@@ -93,6 +95,8 @@ def build_run_manifest(
     action_boundary_fields = action_boundary_manifest_fields(evidence)
     capability_isolation_fields = capability_isolation_manifest_fields(evidence)
     tool_surface_fields = tool_surface_manifest_fields(evidence)
+    capability_exposure_fields = capability_exposure_manifest_fields(evidence)
+    evidence_store_trust_fields = evidence_store_trust_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -153,6 +157,10 @@ def build_run_manifest(
         "capability_isolation_metadata_hash": sha256_json(capability_isolation_fields),
         **tool_surface_fields,
         "tool_surface_authority_metadata_hash": sha256_json(tool_surface_fields),
+        **capability_exposure_fields,
+        "executor_capability_exposure_manifest_hash": sha256_json(capability_exposure_fields),
+        **evidence_store_trust_fields,
+        "evidence_store_trust_manifest_hash": sha256_json(evidence_store_trust_fields),
     }
     if proposal_fields:
         manifest.update(proposal_fields)
@@ -182,6 +190,11 @@ def bind_evidence_to_manifest(
     evidence["bound_action_boundary_metadata_hash"] = manifest.get("action_boundary_metadata_hash", "")
     evidence["bound_capability_isolation_metadata_hash"] = manifest.get("capability_isolation_metadata_hash", "")
     evidence["bound_tool_surface_metadata_hash"] = manifest.get("tool_surface_authority_metadata_hash", "")
+    evidence["bound_executor_capability_exposure_metadata_hash"] = manifest.get(
+        "executor_capability_exposure_manifest_hash",
+        "",
+    )
+    evidence["bound_evidence_store_trust_metadata_hash"] = manifest.get("evidence_store_trust_manifest_hash", "")
     evidence["bound_manifest_hash"] = bound_manifest_hash
     evidence["bound_manifest_path"] = manifest_path
     evidence["bound_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -195,6 +208,8 @@ def bind_evidence_to_manifest(
         checks["action_boundary_manifest_binding_required"] = True
         checks["capability_isolation_manifest_binding_required"] = True
         checks["tool_surface_manifest_binding_required"] = True
+        checks["executor_capability_exposure_manifest_binding_required"] = True
+        checks["evidence_store_trust_manifest_binding_required"] = True
 
 
 def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:
@@ -260,3 +275,11 @@ def capability_isolation_manifest_fields(evidence: dict[str, Any]) -> dict[str, 
 
 def tool_surface_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in TOOL_SURFACE_FIELDS}
+
+
+def capability_exposure_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in EXECUTOR_CAPABILITY_EXPOSURE_FIELDS}
+
+
+def evidence_store_trust_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in EVIDENCE_STORE_TRUST_FIELDS}

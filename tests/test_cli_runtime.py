@@ -48,6 +48,21 @@ from src.contracts import (
     DETERMINISTIC_STUB_PROPOSAL_STEPS,
     DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
     EVIDENCE_BINDING_V1,
+    EVIDENCE_STORE_CLEAN,
+    EVIDENCE_STORE_INTEGRITY_NOT_CHECKED,
+    EVIDENCE_STORE_TRUST_BOUNDARY_FOLDER_LOCAL_NOT_EXECUTOR_ISOLATED,
+    EVIDENCE_STORE_TRUST_FIELDS,
+    EVIDENCE_STORE_WRITE_SOURCE_FOLDER_LOCAL_STATE,
+    EVIDENCE_STORE_WRITER_AEGIS_RUNTIME,
+    EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY,
+    EXECUTOR_CAPABILITY_BOOL_FIELDS,
+    EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
+    EXECUTOR_CAPABILITY_EXPOSURE_SCAFFOLD_V0,
+    EXECUTOR_CAPABILITY_EXPOSURE_SCOPE_CURRENT_NOOP,
+    EXECUTOR_CAPABILITY_EXPOSURE_SOURCE_NOOP_CONTRACT,
+    EXECUTOR_CAPABILITY_EXPOSURE_TRUST_BOUNDARY_AEGIS_RUNTIME,
+    EXECUTOR_CAPABILITY_TRANSPORT_NONE,
+    EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL,
     FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS,
     GIT_STAGED,
     GIT_WORKING_TREE,
@@ -64,6 +79,7 @@ from src.contracts import (
     NO_CHANGED_FILES_SOURCE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
+    NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
     PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
     PROVIDER_ENV_LOADING_STATUS_DISABLED,
@@ -149,10 +165,15 @@ from src.contracts import (
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import sha256_json
+from src.evidence.capability_exposure import (
+    expected_executor_capability_exposure_hash,
+    expected_executor_capability_exposure_metadata_hash,
+)
 from src.evidence.capability_isolation import (
     expected_capability_isolation_proof_hash,
     expected_capability_matrix_hash,
 )
+from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -330,6 +351,16 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("expected_tool_authority_grant_count: 0", run.stdout)
         self.assertIn("raw_shell_tool_authority_granted: false", run.stdout)
         self.assertIn("network_tool_authority_granted: false", run.stdout)
+        self.assertIn("executor_capability_exposure_version: executor_capability_exposure_scaffold_v0", run.stdout)
+        self.assertIn("current_executor_capability_status: NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION", run.stdout)
+        self.assertIn("capability_shell: false", run.stdout)
+        self.assertIn("capability_network: false", run.stdout)
+        self.assertIn("capability_provider_call: false", run.stdout)
+        self.assertIn("executor_capability_action_count: 0", run.stdout)
+        self.assertIn("executor_capability_expected_action_count: 0", run.stdout)
+        self.assertIn("evidence_store_trust_boundary: folder_local_not_executor_isolated", run.stdout)
+        self.assertIn("evidence_store_is_executor_isolated: false", run.stdout)
+        self.assertIn("evidence_store_integrity_status: NOT_CHECKED", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -350,6 +381,8 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_action_boundary_scaffold_contract(evidence)
         self._assert_capability_isolation_scaffold_contract(evidence)
         self._assert_tool_surface_scaffold_contract(evidence)
+        self._assert_executor_capability_exposure_contract(evidence)
+        self._assert_evidence_store_trust_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
         self.assertEqual(evidence["binding_status"], BOUND)
         self.assertFalse(evidence["citizen_one_requested"])
@@ -385,6 +418,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("tool authority flags default false", verify.stdout)
         self.assertIn("tool authority grant count replay matched expected zero: 0", verify.stdout)
         self.assertIn("tool surface status remained TOOL_SURFACE_SCAFFOLD_ONLY", verify.stdout)
+        self.assertIn("executor capability exposure metadata fields matched manifest", verify.stdout)
+        self.assertIn("executor capability exposure fields default false", verify.stdout)
+        self.assertIn("current no-op executor has no shell/network/provider/action capability", verify.stdout)
+        self.assertIn("structured tool call was not treated as safe capability", verify.stdout)
+        self.assertIn("evidence store trust boundary metadata fields matched manifest", verify.stdout)
+        self.assertIn("evidence store trust boundary remained folder_local_not_executor_isolated", verify.stdout)
+        self.assertIn("evidence_store_is_executor_isolated remained false", verify.stdout)
+        self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
         self.assertIn("action_count replay matched expected no-op count: 0", verify.stdout)
         self.assertIn("mutation boundary clean did not imply action boundary clean", verify.stdout)
         self.assertNotIn("proposal_status:", run.stdout)
@@ -441,6 +482,10 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._tool_surface_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._executor_capability_exposure_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._evidence_store_trust_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
@@ -494,6 +539,14 @@ class CliRuntimeTests(unittest.TestCase):
             sha256_json({field: evidence[field] for field in self._tool_surface_fields()}),
         )
         self.assertEqual(
+            manifest["executor_capability_exposure_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._executor_capability_exposure_fields()}),
+        )
+        self.assertEqual(
+            manifest["evidence_store_trust_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
+        )
+        self.assertEqual(
             evidence["bound_action_boundary_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._action_boundary_fields()}),
         )
@@ -504,6 +557,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             evidence["bound_tool_surface_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._tool_surface_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_executor_capability_exposure_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._executor_capability_exposure_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_evidence_store_trust_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
         )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -1393,6 +1454,187 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("tool surface not implemented did not claim CLEAN", verify.stdout)
         self.assertIn("command denylist alone grants no tool authority", verify.stdout)
 
+    def test_executor_capability_exposure_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("current_executor_capability_status: NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION", run.stdout)
+        self.assertIn("capability_shell: false", run.stdout)
+        self.assertIn("capability_network: false", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_executor_capability_exposure_contract(evidence)
+        for field in self._executor_capability_exposure_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["executor_capability_exposure_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._executor_capability_exposure_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_executor_capability_exposure_metadata_hash"],
+            manifest["executor_capability_exposure_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("executor_capability_exposure_hash replay matched", verify.stdout)
+        self.assertIn("executor capability exposure fields default false", verify.stdout)
+        self.assertIn("current no-op executor capability status matched: NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION", verify.stdout)
+        self.assertIn("current no-op executor has no shell/network/provider/action capability", verify.stdout)
+        self.assertIn("no raw shell was not treated as proof of no dangerous capability", verify.stdout)
+        self.assertIn("structured tool call was not treated as safe capability", verify.stdout)
+
+    def test_evidence_store_trust_boundary_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("evidence_store_trust_boundary: folder_local_not_executor_isolated", run.stdout)
+        self.assertIn("evidence_store_is_executor_isolated: false", run.stdout)
+        self.assertIn("executor_can_write_evidence_store: NOT_CHECKED_SAME_USER_AUTHORITY", run.stdout)
+        self.assertIn("evidence_store_integrity_status: NOT_CHECKED", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_evidence_store_trust_contract(evidence)
+        for field in self._evidence_store_trust_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["evidence_store_trust_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_evidence_store_trust_metadata_hash"],
+            manifest["evidence_store_trust_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("evidence_store_trust_metadata_hash replay matched folder-local scaffold", verify.stdout)
+        self.assertIn("evidence store trust boundary remained folder_local_not_executor_isolated", verify.stdout)
+        self.assertIn("evidence_store_is_executor_isolated remained false", verify.stdout)
+        self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
+        self.assertIn(".aeg folder-local state was not treated as executor-isolated", verify.stdout)
+        self.assertIn("evidence binding was not treated as evidence store tamper-proof", verify.stdout)
+
+    def test_verify_rejects_tampered_executor_capability_exposure_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["capability_network"] = True
+        evidence["executor_capability_exposure_hash"] = expected_executor_capability_exposure_hash(evidence)
+        evidence["executor_capability_exposure_metadata_hash"] = expected_executor_capability_exposure_metadata_hash(evidence)
+        self._sync_executor_capability_exposure_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: capability_network must default false for current no-op executor", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: NO_RAW_SHELL != NO_DANGEROUS_CAPABILITY", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: executor capability exposure fields must default false", verify.stdout)
+
+    def test_structured_tool_capability_exposure_cannot_be_treated_as_safe(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["executor_capability_transport"] = EXECUTOR_CAPABILITY_TRANSPORT_STRUCTURED_TOOL_CALL
+        evidence["capability_write_repo"] = True
+        evidence["capability_shell"] = False
+        evidence["executor_capability_exposure_hash"] = expected_executor_capability_exposure_hash(evidence)
+        evidence["executor_capability_exposure_metadata_hash"] = expected_executor_capability_exposure_metadata_hash(evidence)
+        self._sync_executor_capability_exposure_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: STRUCTURED_TOOL_CALL != SAFE_CAPABILITY", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: current no-op executor must not expose structured tool transport", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: capability_write_repo must default false for current no-op executor", verify.stdout)
+
+    def test_executor_reported_capability_exposure_cannot_become_judgment_basis(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["executor_reported_capability_exposure"] = {
+            "capabilities": ["network"],
+            "tools": ["http_request"],
+            "reported_capability_count": 1,
+            "reported_tool_count": 1,
+            "trust_boundary": REPORTED_ONLY,
+            "judgment_basis": True,
+        }
+        evidence["executor_capability_exposure_metadata_hash"] = expected_executor_capability_exposure_metadata_hash(evidence)
+        self._sync_executor_capability_exposure_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: executor_reported_capability_exposure cannot become judgment basis", verify.stdout)
+
+    def test_verify_rejects_tampered_evidence_store_isolated_claim_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["evidence_store_is_executor_isolated"] = True
+        evidence["evidence_store_trust_metadata_hash"] = expected_evidence_store_trust_metadata_hash(evidence)
+        self._sync_evidence_store_trust_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: AEG_FOLDER_LOCAL_STATE != EXECUTOR_ISOLATED_EVIDENCE_STORE", verify.stdout)
+
+    def test_verify_rejects_tampered_executor_can_write_evidence_store_false_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["executor_can_write_evidence_store"] = False
+        evidence["evidence_store_trust_metadata_hash"] = expected_evidence_store_trust_metadata_hash(evidence)
+        self._sync_evidence_store_trust_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn(
+            "INVALID_EVIDENCE: executor_can_write_evidence_store must remain NOT_CHECKED_SAME_USER_AUTHORITY",
+            verify.stdout,
+        )
+
+    def test_verify_rejects_evidence_store_clean_claim_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["evidence_store_integrity_status"] = EVIDENCE_STORE_CLEAN
+        evidence["evidence_store_trust_metadata_hash"] = expected_evidence_store_trust_metadata_hash(evidence)
+        self._sync_evidence_store_trust_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: evidence_store_integrity_status must remain NOT_CHECKED", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: evidence_store_is_executor_isolated=false cannot claim EVIDENCE_STORE_CLEAN", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: EVIDENCE_BINDING != EVIDENCE_STORE_TAMPER_PROOF", verify.stdout)
+
     def test_verify_rejects_tampered_tool_authority_flags_even_when_rebound(self):
         self._aeg("init")
         authority_fields = (
@@ -2241,6 +2483,24 @@ class CliRuntimeTests(unittest.TestCase):
         )
         evidence["bound_tool_surface_metadata_hash"] = manifest["tool_surface_authority_metadata_hash"]
 
+    def _sync_executor_capability_exposure_manifest(self, evidence, manifest):
+        for field in self._executor_capability_exposure_fields():
+            manifest[field] = evidence[field]
+        manifest["executor_capability_exposure_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._executor_capability_exposure_fields()}
+        )
+        evidence["bound_executor_capability_exposure_metadata_hash"] = manifest[
+            "executor_capability_exposure_manifest_hash"
+        ]
+
+    def _sync_evidence_store_trust_manifest(self, evidence, manifest):
+        for field in self._evidence_store_trust_fields():
+            manifest[field] = evidence[field]
+        manifest["evidence_store_trust_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._evidence_store_trust_fields()}
+        )
+        evidence["bound_evidence_store_trust_metadata_hash"] = manifest["evidence_store_trust_manifest_hash"]
+
     def _write_json(self, path, payload):
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -2305,6 +2565,12 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _tool_surface_fields(self):
         return TOOL_SURFACE_FIELDS
+
+    def _executor_capability_exposure_fields(self):
+        return EXECUTOR_CAPABILITY_EXPOSURE_FIELDS
+
+    def _evidence_store_trust_fields(self):
+        return EVIDENCE_STORE_TRUST_FIELDS
 
     def _proposal_fields(self):
         return (
@@ -2440,6 +2706,82 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["command_denylist_alone_grants_no_tool_authority"])
         self.assertTrue(evidence["checks"]["no_live_executor_authority_before_tool_surface"])
         self.assertTrue(evidence["checks"]["tool_surface_manifest_binding_required"])
+
+    def _assert_executor_capability_exposure_contract(self, evidence):
+        self.assertEqual(evidence["executor_capability_exposure_version"], EXECUTOR_CAPABILITY_EXPOSURE_SCAFFOLD_V0)
+        self.assertEqual(evidence["executor_capability_exposure_scope"], EXECUTOR_CAPABILITY_EXPOSURE_SCOPE_CURRENT_NOOP)
+        self.assertEqual(
+            evidence["executor_capability_exposure_source"],
+            EXECUTOR_CAPABILITY_EXPOSURE_SOURCE_NOOP_CONTRACT,
+        )
+        self.assertEqual(
+            evidence["executor_capability_exposure_trust_boundary"],
+            EXECUTOR_CAPABILITY_EXPOSURE_TRUST_BOUNDARY_AEGIS_RUNTIME,
+        )
+        self.assertEqual(evidence["executor_capability_transport"], EXECUTOR_CAPABILITY_TRANSPORT_NONE)
+        self.assertEqual(
+            evidence["current_executor_capability_status"],
+            NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
+        )
+        for field in EXECUTOR_CAPABILITY_BOOL_FIELDS:
+            self.assertFalse(evidence[field])
+        self.assertFalse(evidence["executor_capability_file_mutation"])
+        self.assertFalse(evidence["executor_capability_provider_calls"])
+        self.assertFalse(evidence["executor_capability_network_calls"])
+        self.assertEqual(evidence["executor_capability_actions"], [])
+        self.assertEqual(evidence["executor_capability_action_count"], 0)
+        self.assertEqual(evidence["executor_capability_expected_action_count"], 0)
+        self.assertEqual(
+            evidence["executor_capability_exposure_hash"],
+            expected_executor_capability_exposure_hash(evidence),
+        )
+        self.assertEqual(
+            evidence["executor_capability_exposure_metadata_hash"],
+            expected_executor_capability_exposure_metadata_hash(evidence),
+        )
+        self.assertEqual(
+            evidence["executor_reported_capability_exposure"],
+            {
+                "capabilities": [],
+                "tools": [],
+                "reported_capability_count": 0,
+                "reported_tool_count": 0,
+                "trust_boundary": REPORTED_ONLY,
+                "judgment_basis": False,
+            },
+        )
+        self.assertTrue(evidence["checks"]["executor_capability_exposure_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["executor_capability_exposure_current_noop_only"])
+        self.assertTrue(evidence["checks"]["executor_capability_fields_default_false"])
+        self.assertTrue(evidence["checks"]["current_noop_executor_has_no_shell_network_provider_action"])
+        self.assertTrue(evidence["checks"]["no_raw_shell_is_not_no_dangerous_capability"])
+        self.assertTrue(evidence["checks"]["structured_tool_call_is_not_safe_capability"])
+        self.assertTrue(evidence["checks"]["executor_capability_exposure_reported_only_is_not_judgment_basis"])
+        self.assertTrue(evidence["checks"]["executor_capability_exposure_manifest_binding_required"])
+
+    def _assert_evidence_store_trust_contract(self, evidence):
+        self.assertEqual(
+            evidence["evidence_store_trust_boundary"],
+            EVIDENCE_STORE_TRUST_BOUNDARY_FOLDER_LOCAL_NOT_EXECUTOR_ISOLATED,
+        )
+        self.assertEqual(evidence["evidence_store_writer"], EVIDENCE_STORE_WRITER_AEGIS_RUNTIME)
+        self.assertEqual(
+            evidence["executor_can_write_evidence_store"],
+            EXECUTOR_CAN_WRITE_EVIDENCE_STORE_NOT_CHECKED_SAME_USER_AUTHORITY,
+        )
+        self.assertFalse(evidence["evidence_store_is_executor_isolated"])
+        self.assertEqual(evidence["evidence_store_write_source"], EVIDENCE_STORE_WRITE_SOURCE_FOLDER_LOCAL_STATE)
+        self.assertEqual(evidence["evidence_store_integrity_status"], EVIDENCE_STORE_INTEGRITY_NOT_CHECKED)
+        self.assertEqual(
+            evidence["evidence_store_trust_metadata_hash"],
+            expected_evidence_store_trust_metadata_hash(evidence),
+        )
+        self.assertTrue(evidence["checks"]["evidence_store_trust_boundary_metadata_required"])
+        self.assertTrue(evidence["checks"]["aeg_folder_local_state_is_not_executor_isolated"])
+        self.assertTrue(evidence["checks"]["evidence_binding_is_not_evidence_store_tamper_proof"])
+        self.assertTrue(evidence["checks"]["evidence_store_integrity_not_checked_is_not_clean"])
+        self.assertTrue(evidence["checks"]["executor_can_write_evidence_store_not_checked_is_not_clean"])
+        self.assertTrue(evidence["checks"]["evidence_store_trust_manifest_binding_required"])
 
     def _assert_prompt_redaction_not_requested_contract(self, evidence):
         self.assertFalse(evidence["prompt_build_requested"])
