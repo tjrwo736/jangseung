@@ -11,7 +11,9 @@ from src.classify import Classification
 from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
 from src.evidence.action_boundary import build_action_boundary_metadata
+from src.evidence.capability_exposure import build_capability_exposure_metadata
 from src.evidence.capability_isolation import build_capability_isolation_metadata
+from src.evidence.evidence_store import build_evidence_store_trust_metadata
 from src.evidence.tool_surface import build_tool_surface_metadata
 from src.law import LawResult
 from src.state import git
@@ -43,6 +45,8 @@ def build_evidence_packet(
     action_boundary = build_action_boundary_metadata(executor_result)
     capability_isolation = build_capability_isolation_metadata(executor_result)
     tool_surface = build_tool_surface_metadata(executor_result)
+    capability_exposure = build_capability_exposure_metadata(executor_result)
+    evidence_store_trust = build_evidence_store_trust_metadata()
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -116,6 +120,18 @@ def build_evidence_packet(
             "tool_usage_reported_only_is_not_judgment_basis": True,
             "command_denylist_alone_grants_no_tool_authority": True,
             "no_live_executor_authority_before_tool_surface": True,
+            "executor_capability_exposure_scaffold_v0_required": True,
+            "executor_capability_exposure_current_noop_only": True,
+            "executor_capability_fields_default_false": True,
+            "current_noop_executor_has_no_shell_network_provider_action": True,
+            "no_raw_shell_is_not_no_dangerous_capability": True,
+            "structured_tool_call_is_not_safe_capability": True,
+            "executor_capability_exposure_reported_only_is_not_judgment_basis": True,
+            "evidence_store_trust_boundary_metadata_required": True,
+            "aeg_folder_local_state_is_not_executor_isolated": True,
+            "evidence_binding_is_not_evidence_store_tamper_proof": True,
+            "evidence_store_integrity_not_checked_is_not_clean": True,
+            "executor_can_write_evidence_store_not_checked_is_not_clean": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
@@ -125,6 +141,8 @@ def build_evidence_packet(
     packet.update(action_boundary)
     packet.update(capability_isolation)
     packet.update(tool_surface)
+    packet.update(capability_exposure)
+    packet.update(evidence_store_trust)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
