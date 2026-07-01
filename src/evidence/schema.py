@@ -21,6 +21,15 @@ from src.contracts import (
     AEG_VERSION,
     BINDING_STATUSES,
     BOUND,
+    CAPABILITY_AUTHORITY_FIELDS,
+    CAPABILITY_BOUNDARY_CLEAN,
+    CAPABILITY_BOUNDARY_NOT_CHECKED,
+    CAPABILITY_BOUNDARY_SOURCE_NONE,
+    CAPABILITY_BOUNDARY_STATUSES,
+    CAPABILITY_BOUNDARY_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    CAPABILITY_ISOLATION_FIELDS,
+    CAPABILITY_ISOLATION_MODE_NOT_IMPLEMENTED,
+    CAPABILITY_ISOLATION_SCAFFOLD_V0,
     CHANGED_FILES_SOURCES,
     CLEAN_CORE,
     COMPLETION_CONTRACT_V0,
@@ -166,6 +175,10 @@ from src.contracts import (
     RESPONSE_STATUSES,
 )
 from src.evidence.action_boundary import expected_action_log_hash
+from src.evidence.capability_isolation import (
+    expected_capability_isolation_proof_hash,
+    expected_capability_matrix_hash,
+)
 
 
 REQUIRED_FIELDS: tuple[str, ...] = (
@@ -217,6 +230,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *PROMPT_REDACTION_METADATA_FIELDS,
     *RESPONSE_REDACTION_METADATA_FIELDS,
     *ACTION_BOUNDARY_FIELDS,
+    *CAPABILITY_ISOLATION_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -246,6 +260,7 @@ BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
     "bound_computed_mutation_delta_hash",
     "bound_snapshot_trust_boundary_hash",
     "bound_action_boundary_metadata_hash",
+    "bound_capability_isolation_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
     "bound_at",
@@ -316,6 +331,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_prompt_redaction_metadata_fields(packet, errors)
     _validate_response_redaction_metadata_fields(packet, errors)
     _validate_action_boundary_metadata(packet, errors)
+    _validate_capability_isolation_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -1108,6 +1124,94 @@ def _validate_action_boundary_metadata(packet: dict[str, Any], errors: list[str]
         errors.append("INVALID_EVIDENCE: action_boundary_status must remain ACTION_BOUNDARY_NOT_CHECKED in scaffold v0")
 
 
+def _validate_capability_isolation_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "capability_isolation_enabled",
+        *CAPABILITY_AUTHORITY_FIELDS,
+    )
+    string_fields = (
+        "capability_isolation_version",
+        "capability_isolation_mode",
+        "capability_boundary_status",
+        "capability_boundary_source",
+        "capability_boundary_trust_boundary",
+        "capability_isolation_proof_hash",
+        "capability_matrix_hash",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+    _expect(packet, "executor_reported_capabilities", dict, errors)
+
+    if packet.get("capability_isolation_version") != CAPABILITY_ISOLATION_SCAFFOLD_V0:
+        errors.append(
+            "INVALID_EVIDENCE: capability_isolation_version must be "
+            f"{CAPABILITY_ISOLATION_SCAFFOLD_V0}"
+        )
+    if packet.get("capability_isolation_enabled") is not False:
+        errors.append("INVALID_EVIDENCE: capability_isolation_enabled must be false in scaffold v0")
+    if packet.get("capability_isolation_mode") != CAPABILITY_ISOLATION_MODE_NOT_IMPLEMENTED:
+        errors.append("INVALID_EVIDENCE: capability isolation mode is not implemented in scaffold v0")
+
+    boundary_status = packet.get("capability_boundary_status")
+    if boundary_status not in CAPABILITY_BOUNDARY_STATUSES and boundary_status != ACTION_BOUNDARY_CLEAN:
+        errors.append(f"INVALID_EVIDENCE: invalid capability_boundary_status: {boundary_status}")
+    if boundary_status in (CAPABILITY_BOUNDARY_CLEAN, ACTION_BOUNDARY_CLEAN):
+        errors.append("INVALID_EVIDENCE: capability_boundary_status cannot claim CLEAN before isolation proof")
+    if boundary_status != CAPABILITY_BOUNDARY_NOT_CHECKED:
+        errors.append("INVALID_EVIDENCE: capability_boundary_status must remain CAPABILITY_BOUNDARY_NOT_CHECKED in scaffold v0")
+
+    if packet.get("capability_boundary_source") != CAPABILITY_BOUNDARY_SOURCE_NONE:
+        errors.append("INVALID_EVIDENCE: capability_boundary_source must be none in scaffold v0")
+    if packet.get("capability_boundary_trust_boundary") != CAPABILITY_BOUNDARY_TRUST_BOUNDARY_NOT_IMPLEMENTED:
+        errors.append("INVALID_EVIDENCE: capability boundary trust boundary is not implemented in scaffold v0")
+
+    for field in CAPABILITY_AUTHORITY_FIELDS:
+        if packet.get(field) is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must be false in capability isolation scaffold v0")
+            errors.append(
+                "INVALID_EVIDENCE: authority_granted=true without implemented "
+                f"capability isolation proof: {field}"
+            )
+
+    matrix_hash = packet.get("capability_matrix_hash")
+    if not isinstance(matrix_hash, str) or not _is_sha256_hex(matrix_hash):
+        errors.append("INVALID_EVIDENCE: capability_matrix_hash must be sha256 hex")
+    elif matrix_hash != expected_capability_matrix_hash(packet):
+        errors.append("INVALID_EVIDENCE: capability_matrix_hash mismatch")
+
+    proof_hash = packet.get("capability_isolation_proof_hash")
+    if not isinstance(proof_hash, str) or not _is_sha256_hex(proof_hash):
+        errors.append("INVALID_EVIDENCE: capability_isolation_proof_hash must be sha256 hex")
+    elif proof_hash != expected_capability_isolation_proof_hash(packet):
+        errors.append("INVALID_EVIDENCE: capability_isolation_proof_hash mismatch")
+
+    executor_reported = packet.get("executor_reported_capabilities")
+    if isinstance(executor_reported, dict):
+        reported_capabilities = executor_reported.get("capabilities")
+        if not isinstance(reported_capabilities, list):
+            errors.append("INVALID_EVIDENCE: executor_reported_capabilities.capabilities must be list")
+            reported_capabilities = []
+        if not isinstance(executor_reported.get("reported_capability_count"), int) or isinstance(
+            executor_reported.get("reported_capability_count"), bool
+        ):
+            errors.append("INVALID_EVIDENCE: executor_reported_capabilities.reported_capability_count must be integer")
+        elif executor_reported.get("reported_capability_count") != len(reported_capabilities):
+            errors.append("INVALID_EVIDENCE: executor_reported_capabilities.reported_capability_count mismatch")
+        if executor_reported.get("trust_boundary") != REPORTED_ONLY:
+            errors.append("INVALID_EVIDENCE: executor_reported_capabilities must be reported_only")
+        if executor_reported.get("judgment_basis") is not False:
+            errors.append("INVALID_EVIDENCE: executor_reported_capabilities cannot be judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_capabilities must be object")
+
+    if packet.get("judgment_basis") == "executor_reported_capabilities":
+        errors.append("INVALID_EVIDENCE: executor_reported_capabilities cannot become judgment basis")
+    if packet.get("command_enumeration_only") is True and boundary_status == CAPABILITY_BOUNDARY_CLEAN:
+        errors.append("INVALID_EVIDENCE: command_enumeration_only cannot produce CAPABILITY_BOUNDARY_CLEAN")
+
+
 def _expected_action_risk(actions: list[dict[str, Any]]) -> str:
     if not actions:
         return NOT_CHECKED
@@ -1363,6 +1467,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_computed_mutation_delta_hash",
         "bound_snapshot_trust_boundary_hash",
         "bound_action_boundary_metadata_hash",
+        "bound_capability_isolation_metadata_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
         "bound_at",
@@ -1396,6 +1501,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_computed_mutation_delta_hash",
         "bound_snapshot_trust_boundary_hash",
         "bound_action_boundary_metadata_hash",
+        "bound_capability_isolation_metadata_hash",
         "bound_manifest_hash",
     ):
         value = packet.get(field)

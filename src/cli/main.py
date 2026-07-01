@@ -176,6 +176,7 @@ def _cmd_run(
         ("evidence", paths["evidence_path"]),
     ]
     rows.extend(_action_boundary_rows(evidence))
+    rows.extend(_capability_isolation_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
@@ -246,6 +247,7 @@ def _cmd_verify(cwd: Path) -> int:
             ]
         )
         rows.extend(_action_boundary_rows(result.evidence))
+        rows.extend(_capability_isolation_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
@@ -312,6 +314,39 @@ def _action_boundary_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
         ("provider_authority_granted", str(evidence.get("provider_authority_granted", "")).lower()),
         ("remote_write_authority_granted", str(evidence.get("remote_write_authority_granted", "")).lower()),
         ("computed_action_log_hash", _short_hash(evidence.get("computed_action_log_hash", ""))),
+    ]
+
+
+def _capability_isolation_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("capability_isolation_version", str(evidence.get("capability_isolation_version", ""))),
+        ("capability_isolation_mode", str(evidence.get("capability_isolation_mode", ""))),
+        ("capability_boundary_status", str(evidence.get("capability_boundary_status", ""))),
+        ("capability_boundary_source", str(evidence.get("capability_boundary_source", ""))),
+        ("capability_boundary_trust_boundary", str(evidence.get("capability_boundary_trust_boundary", ""))),
+        (
+            "process_execution_authority_granted",
+            str(evidence.get("process_execution_authority_granted", "")).lower(),
+        ),
+        (
+            "credential_env_access_authority_granted",
+            str(evidence.get("credential_env_access_authority_granted", "")).lower(),
+        ),
+        (
+            "deploy_release_publish_authority_granted",
+            str(evidence.get("deploy_release_publish_authority_granted", "")).lower(),
+        ),
+        (
+            "repo_outside_write_authority_granted",
+            str(evidence.get("repo_outside_write_authority_granted", "")).lower(),
+        ),
+        (
+            "package_dependency_mutation_authority_granted",
+            str(evidence.get("package_dependency_mutation_authority_granted", "")).lower(),
+        ),
+        ("telemetry_authority_granted", str(evidence.get("telemetry_authority_granted", "")).lower()),
+        ("capability_matrix_hash", _short_hash(evidence.get("capability_matrix_hash", ""))),
+        ("capability_isolation_proof_hash", _short_hash(evidence.get("capability_isolation_proof_hash", ""))),
     ]
 
 

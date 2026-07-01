@@ -11,6 +11,7 @@ from src.classify import Classification
 from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
 from src.evidence.action_boundary import build_action_boundary_metadata
+from src.evidence.capability_isolation import build_capability_isolation_metadata
 from src.law import LawResult
 from src.state import git
 
@@ -39,6 +40,7 @@ def build_evidence_packet(
         proposal_stub_requested=proposal_stub_requested,
     )
     action_boundary = build_action_boundary_metadata(executor_result)
+    capability_isolation = build_capability_isolation_metadata(executor_result)
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -90,6 +92,16 @@ def build_evidence_packet(
             "executor_reported_actions_is_reported_only": True,
             "reported_only_is_not_judgment_basis": True,
             "command_enumeration_only_grants_no_authority": True,
+            "capability_isolation_scaffold_v0_required": True,
+            "capability_isolation_enabled": False,
+            "capability_boundary_clean_claim_forbidden": True,
+            "capability_not_implemented_is_not_clean": True,
+            "capability_not_observed_is_not_clean": True,
+            "missing_isolation_proof_is_not_clean": True,
+            "unavailable_capability_proof_is_not_checked": True,
+            "executor_reported_capabilities_is_reported_only": True,
+            "capability_reported_only_is_not_judgment_basis": True,
+            "no_live_executor_authority_before_capability_isolation": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),
@@ -97,6 +109,7 @@ def build_evidence_packet(
     }
     packet.update(citizen_one)
     packet.update(action_boundary)
+    packet.update(capability_isolation)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
