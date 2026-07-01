@@ -89,6 +89,7 @@ EVIDENCE_BINDING_V1_FIELDS = (
     "bound_tool_surface_metadata_hash",
     "bound_executor_capability_exposure_metadata_hash",
     "bound_evidence_store_trust_metadata_hash",
+    "bound_aeg_state_write_denial_metadata_hash",
     "bound_ledger_integrity_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
@@ -324,6 +325,44 @@ EVIDENCE_STORE_TRUST_FIELDS = (
     "evidence_store_write_source",
     "evidence_store_integrity_status",
     "evidence_store_trust_metadata_hash",
+)
+
+AEG_STATE_WRITE_DENIAL_SCAFFOLD_V0 = "aeg_state_write_denial_scaffold_v0"
+AEG_STATE_WRITE_DENIAL_MODE_METADATA_SCAFFOLD = "capability_write_aeg_state_denial_metadata_scaffold"
+AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY = "DENIAL_SCAFFOLD_ONLY"
+AEG_STATE_WRITE_DENIAL_STATUSES = (
+    AEG_STATE_WRITE_DENIAL_STATUS_SCAFFOLD_ONLY,
+    NOT_CHECKED,
+    INVALID_EVIDENCE,
+)
+AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED = "SCAFFOLD_ONLY_NOT_ENFORCED"
+AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUSES = (
+    AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    NOT_CHECKED,
+    INVALID_EVIDENCE,
+)
+AEG_STATE_WRITE_DENIAL_SOURCE_AEGIS_RUNTIME_METADATA = "aegis_runtime_scaffold_metadata"
+AEG_STATE_WRITE_DENIAL_REASON_SCAFFOLD_ONLY = (
+    "capability_write_aeg_state_denied_by_scaffold_metadata_not_external_enforcement"
+)
+AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS = (
+    "raw_shell_can_write_aeg_state",
+    "write_file_can_write_aeg_state",
+    "repo_outside_write_can_write_aeg_state",
+    "executor_controlled_recorder_can_write_aeg_state",
+)
+AEG_STATE_WRITE_DENIAL_FIELDS = (
+    "aeg_state_write_denial_version",
+    "aeg_state_write_denial_mode",
+    "aeg_state_write_denial_status",
+    "capability_write_aeg_state_requested",
+    "capability_write_aeg_state_granted",
+    "capability_write_aeg_state_denied",
+    *AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS,
+    "aeg_state_write_denial_enforcement_status",
+    "aeg_state_write_denial_source",
+    "aeg_state_write_denial_reason",
+    "aeg_state_write_denial_metadata_hash",
 )
 ACTION_HIGH_RISK_KINDS = (
     "git_push",

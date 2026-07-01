@@ -10,6 +10,7 @@ from uuid import uuid4
 from src.classify import Classification
 from src.citizen_one import build_citizen_one_evidence
 from src.contracts import AEG_VERSION, NEEDS_USER_GATE, SAFE_DEFAULT, STATE_DIR
+from src.evidence.aeg_state_write_denial import build_aeg_state_write_denial_metadata
 from src.evidence.action_boundary import build_action_boundary_metadata
 from src.evidence.capability_exposure import build_capability_exposure_metadata
 from src.evidence.capability_isolation import build_capability_isolation_metadata
@@ -47,6 +48,7 @@ def build_evidence_packet(
     tool_surface = build_tool_surface_metadata(executor_result)
     capability_exposure = build_capability_exposure_metadata(executor_result)
     evidence_store_trust = build_evidence_store_trust_metadata()
+    aeg_state_write_denial = build_aeg_state_write_denial_metadata()
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
         "run_id": run_id or new_run_id(),
@@ -132,6 +134,17 @@ def build_evidence_packet(
             "evidence_binding_is_not_evidence_store_tamper_proof": True,
             "evidence_store_integrity_not_checked_is_not_clean": True,
             "executor_can_write_evidence_store_not_checked_is_not_clean": True,
+            "aeg_state_write_denial_scaffold_v0_required": True,
+            "capability_write_aeg_state_granted_default_false": True,
+            "capability_write_aeg_state_denied_explicit": True,
+            "aeg_state_write_denial_enforcement_not_claimed": True,
+            "aeg_state_write_denial_metadata_is_not_external_proof": True,
+            "executor_self_report_is_not_aeg_state_denial_proof": True,
+            "raw_shell_write_aeg_state_bypass_forbidden": True,
+            "write_file_write_aeg_state_bypass_forbidden": True,
+            "repo_outside_write_aeg_state_bypass_forbidden": True,
+            "executor_controlled_recorder_write_aeg_state_bypass_forbidden": True,
+            "no_live_executor_authority_before_aeg_state_write_denial_enforcement": True,
             "ledger_integrity_scaffold_v0_required": True,
             "ledger_tamper_evident_is_not_tamper_proof": True,
             "ledger_tamper_proof_claim_forbidden": True,
@@ -148,6 +161,7 @@ def build_evidence_packet(
     packet.update(tool_surface)
     packet.update(capability_exposure)
     packet.update(evidence_store_trust)
+    packet.update(aeg_state_write_denial)
     packet.update(
         {
             "pre_run_changed_files": list(boundary.get("pre_run_changed_files", [])),
