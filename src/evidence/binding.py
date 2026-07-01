@@ -28,6 +28,7 @@ from src.contracts import (
     RUNS_DIR,
     SAFE_DEFAULT,
     STATE_DIR,
+    TOOL_SURFACE_FIELDS,
 )
 
 
@@ -91,6 +92,7 @@ def build_run_manifest(
     proposal_fields = proposal_manifest_fields(evidence)
     action_boundary_fields = action_boundary_manifest_fields(evidence)
     capability_isolation_fields = capability_isolation_manifest_fields(evidence)
+    tool_surface_fields = tool_surface_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
         "run_id": evidence.get("run_id", ""),
@@ -149,6 +151,8 @@ def build_run_manifest(
         "action_boundary_metadata_hash": sha256_json(action_boundary_fields),
         **capability_isolation_fields,
         "capability_isolation_metadata_hash": sha256_json(capability_isolation_fields),
+        **tool_surface_fields,
+        "tool_surface_authority_metadata_hash": sha256_json(tool_surface_fields),
     }
     if proposal_fields:
         manifest.update(proposal_fields)
@@ -177,6 +181,7 @@ def bind_evidence_to_manifest(
     evidence["bound_snapshot_trust_boundary_hash"] = manifest.get("snapshot_trust_boundary_hash", "")
     evidence["bound_action_boundary_metadata_hash"] = manifest.get("action_boundary_metadata_hash", "")
     evidence["bound_capability_isolation_metadata_hash"] = manifest.get("capability_isolation_metadata_hash", "")
+    evidence["bound_tool_surface_metadata_hash"] = manifest.get("tool_surface_authority_metadata_hash", "")
     evidence["bound_manifest_hash"] = bound_manifest_hash
     evidence["bound_manifest_path"] = manifest_path
     evidence["bound_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -189,6 +194,7 @@ def bind_evidence_to_manifest(
         checks["mutation_boundary_v1_required"] = True
         checks["action_boundary_manifest_binding_required"] = True
         checks["capability_isolation_manifest_binding_required"] = True
+        checks["tool_surface_manifest_binding_required"] = True
 
 
 def _list_field(evidence: dict[str, Any], field: str) -> list[Any]:
@@ -250,3 +256,7 @@ def action_boundary_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
 
 def capability_isolation_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in CAPABILITY_ISOLATION_FIELDS}
+
+
+def tool_surface_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in TOOL_SURFACE_FIELDS}

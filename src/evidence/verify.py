@@ -42,6 +42,10 @@ from src.contracts import (
     PROVIDER_SELECTION_METADATA_FIELDS,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
+    TOOL_AUTHORITY_GRANT_FIELDS,
+    TOOL_SURFACE_CLEAN,
+    TOOL_SURFACE_FIELDS,
+    TOOL_SURFACE_SCAFFOLD_ONLY,
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
@@ -64,10 +68,15 @@ from src.evidence.binding import (
     provider_adapter_manifest_fields,
     proposal_manifest_fields,
     response_redaction_manifest_fields,
+    tool_surface_manifest_fields,
 )
 from src.evidence.capability_isolation import (
     expected_capability_isolation_proof_hash,
     expected_capability_matrix_hash,
+)
+from src.evidence.tool_surface import (
+    expected_tool_authority_grant_hash,
+    expected_tool_surface_metadata_hash,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -146,6 +155,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     capability_checks, capability_errors = _verify_capability_isolation(evidence, manifest)
     checks.extend(capability_checks)
     errors.extend(capability_errors)
+
+    tool_surface_checks, tool_surface_errors = _verify_tool_surface_authority(evidence, manifest)
+    checks.extend(tool_surface_checks)
+    errors.extend(tool_surface_errors)
 
     completion_errors = validate_completion_contract_v0(evidence)
     if completion_errors:
@@ -549,6 +562,17 @@ def _verify_manifest_binding(
         capability_isolation_manifest_fields(evidence),
         capability_isolation_manifest_fields(manifest),
     )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "tool surface scaffold metadata",
+        TOOL_SURFACE_FIELDS,
+        "tool_surface_authority_metadata_hash",
+        evidence,
+        manifest,
+        tool_surface_manifest_fields(evidence),
+        tool_surface_manifest_fields(manifest),
+    )
 
     evidence_proposal = proposal_manifest_fields(evidence)
     manifest_proposal = proposal_manifest_fields(manifest)
@@ -714,6 +738,13 @@ def _verify_manifest_binding(
         "bound_capability_isolation_metadata_hash",
         evidence.get("bound_capability_isolation_metadata_hash"),
         sha256_json(capability_isolation_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_tool_surface_metadata_hash",
+        evidence.get("bound_tool_surface_metadata_hash"),
+        sha256_json(tool_surface_manifest_fields(evidence)),
     )
 
     task_text = evidence.get("task_text")
@@ -962,6 +993,114 @@ def _verify_capability_isolation(evidence: dict[str, Any], manifest: dict[str, A
             checks.append("manifest capability_isolation_proof_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest capability_isolation_proof_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_tool_surface_authority(evidence: dict[str, Any], manifest: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("tool surface replay used recorded scaffold metadata only")
+
+    if evidence.get("tool_authority_grant_hash") == expected_tool_authority_grant_hash(evidence):
+        checks.append("tool_authority_grant_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_hash mismatch")
+
+    if evidence.get("tool_surface_metadata_hash") == expected_tool_surface_metadata_hash(evidence):
+        checks.append("tool_surface_metadata_hash replay matched scaffold unavailable proof")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_metadata_hash mismatch")
+
+    if evidence.get("tool_surface_enabled") is False:
+        checks.append("tool surface default disabled")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_enabled must be false in scaffold v0")
+
+    requested = evidence.get("requested_tool_capabilities")
+    granted = evidence.get("granted_tool_capabilities")
+    denied = evidence.get("denied_tool_capabilities")
+    if requested == [] and granted == [] and denied == []:
+        checks.append("tool capability request/grant/deny lists default empty")
+    else:
+        errors.append("INVALID_EVIDENCE: tool capability lists must default empty")
+
+    if (
+        evidence.get("tool_authority_grant_count")
+        == evidence.get("expected_tool_authority_grant_count")
+        == 0
+        and granted == []
+    ):
+        checks.append("tool authority grant count replay matched expected zero: 0")
+        checks.append("no granted tool authority by default")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: tool authority grant count mismatch: "
+            f"grant_count={evidence.get('tool_authority_grant_count')} "
+            f"expected={evidence.get('expected_tool_authority_grant_count')} granted={granted}"
+        )
+
+    authority_flags_valid = True
+    for field in TOOL_AUTHORITY_GRANT_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            authority_flags_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must default false")
+            errors.append(
+                "INVALID_EVIDENCE: authority_granted=true without implemented "
+                f"tool surface proof/source/trust boundary: {field}"
+            )
+            authority_flags_valid = False
+    if authority_flags_valid:
+        checks.append("tool authority flags default false")
+    else:
+        errors.append("INVALID_EVIDENCE: tool authority flags must default false")
+
+    executor_reported = evidence.get("executor_reported_tool_usage")
+    if (
+        isinstance(executor_reported, dict)
+        and isinstance(executor_reported.get("tools"), list)
+        and executor_reported.get("reported_tool_count") == len(executor_reported.get("tools"))
+        and executor_reported.get("trust_boundary") == "reported_only"
+        and executor_reported.get("judgment_basis") is False
+    ):
+        checks.append("executor_reported_tool_usage remains reported_only context, not judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+
+    surface_status = evidence.get("tool_surface_status")
+    if surface_status == TOOL_SURFACE_SCAFFOLD_ONLY:
+        checks.append("tool surface status remained TOOL_SURFACE_SCAFFOLD_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: tool_surface_status must not claim CLEAN or implemented tool surface")
+
+    if surface_status in (TOOL_SURFACE_CLEAN, ACTION_BOUNDARY_CLEAN, CAPABILITY_BOUNDARY_CLEAN):
+        errors.append("INVALID_EVIDENCE: tool surface not implemented cannot be CLEAN")
+    else:
+        checks.append("tool surface not implemented did not claim CLEAN")
+
+    if evidence.get("command_enumeration_only") is True and any(
+        evidence.get(field) is True for field in TOOL_AUTHORITY_GRANT_FIELDS
+    ):
+        errors.append("INVALID_EVIDENCE: command denylist/enumeration alone cannot grant tool authority")
+    else:
+        checks.append("command denylist alone grants no tool authority")
+
+    if evidence.get("judgment_basis") == "executor_reported_tool_usage":
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+
+    if manifest is not None:
+        if manifest.get("tool_authority_grant_hash") == evidence.get("tool_authority_grant_hash"):
+            checks.append("manifest tool_authority_grant_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest tool_authority_grant_hash mismatch with evidence")
+        if manifest.get("tool_surface_metadata_hash") == evidence.get("tool_surface_metadata_hash"):
+            checks.append("manifest tool_surface_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest tool_surface_metadata_hash mismatch with evidence")
 
     return checks, errors
 

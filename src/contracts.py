@@ -161,6 +161,46 @@ CAPABILITY_ISOLATION_FIELDS = (
     "capability_matrix_hash",
     "executor_reported_capabilities",
 )
+
+TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0 = "tool_surface_authority_grant_scaffold_v0"
+TOOL_SURFACE_CLEAN = "TOOL_SURFACE_CLEAN"
+TOOL_SURFACE_SCAFFOLD_ONLY = "TOOL_SURFACE_SCAFFOLD_ONLY"
+TOOL_SURFACE_INVALID = "TOOL_SURFACE_INVALID"
+TOOL_SURFACE_STATUSES = (
+    TOOL_SURFACE_CLEAN,
+    TOOL_SURFACE_SCAFFOLD_ONLY,
+    TOOL_SURFACE_INVALID,
+)
+TOOL_SURFACE_SOURCE_NONE = "none"
+TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED = "not_implemented_no_judgment_basis"
+TOOL_AUTHORITY_GRANT_FIELDS = (
+    "raw_shell_tool_authority_granted",
+    "process_execution_tool_authority_granted",
+    "network_tool_authority_granted",
+    "provider_tool_authority_granted",
+    "credential_env_tool_authority_granted",
+    "remote_write_tool_authority_granted",
+    "deploy_release_publish_tool_authority_granted",
+    "repo_outside_write_tool_authority_granted",
+    "file_mutation_tool_authority_granted",
+    "telemetry_tool_authority_granted",
+)
+TOOL_SURFACE_FIELDS = (
+    "tool_surface_version",
+    "tool_surface_enabled",
+    "tool_surface_status",
+    "tool_surface_source",
+    "tool_surface_trust_boundary",
+    "requested_tool_capabilities",
+    "granted_tool_capabilities",
+    "denied_tool_capabilities",
+    "tool_authority_grant_count",
+    "expected_tool_authority_grant_count",
+    *TOOL_AUTHORITY_GRANT_FIELDS,
+    "executor_reported_tool_usage",
+    "tool_authority_grant_hash",
+    "tool_surface_metadata_hash",
+)
 ACTION_HIGH_RISK_KINDS = (
     "git_push",
     "push",

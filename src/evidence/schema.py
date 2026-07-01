@@ -173,11 +173,23 @@ from src.contracts import (
     RESPONSE_STATUS_NOT_REQUESTED,
     RESPONSE_STATUS_PROVIDER_DISABLED,
     RESPONSE_STATUSES,
+    TOOL_AUTHORITY_GRANT_FIELDS,
+    TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0,
+    TOOL_SURFACE_CLEAN,
+    TOOL_SURFACE_FIELDS,
+    TOOL_SURFACE_SCAFFOLD_ONLY,
+    TOOL_SURFACE_SOURCE_NONE,
+    TOOL_SURFACE_STATUSES,
+    TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.capability_isolation import (
     expected_capability_isolation_proof_hash,
     expected_capability_matrix_hash,
+)
+from src.evidence.tool_surface import (
+    expected_tool_authority_grant_hash,
+    expected_tool_surface_metadata_hash,
 )
 
 
@@ -231,6 +243,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *RESPONSE_REDACTION_METADATA_FIELDS,
     *ACTION_BOUNDARY_FIELDS,
     *CAPABILITY_ISOLATION_FIELDS,
+    *TOOL_SURFACE_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -261,6 +274,7 @@ BINDING_V1_REQUIRED_FIELDS: tuple[str, ...] = (
     "bound_snapshot_trust_boundary_hash",
     "bound_action_boundary_metadata_hash",
     "bound_capability_isolation_metadata_hash",
+    "bound_tool_surface_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
     "bound_at",
@@ -332,6 +346,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_response_redaction_metadata_fields(packet, errors)
     _validate_action_boundary_metadata(packet, errors)
     _validate_capability_isolation_metadata(packet, errors)
+    _validate_tool_surface_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -1212,6 +1227,134 @@ def _validate_capability_isolation_metadata(packet: dict[str, Any], errors: list
         errors.append("INVALID_EVIDENCE: command_enumeration_only cannot produce CAPABILITY_BOUNDARY_CLEAN")
 
 
+def _validate_tool_surface_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "tool_surface_enabled",
+        *TOOL_AUTHORITY_GRANT_FIELDS,
+    )
+    string_fields = (
+        "tool_surface_version",
+        "tool_surface_status",
+        "tool_surface_source",
+        "tool_surface_trust_boundary",
+        "tool_authority_grant_hash",
+        "tool_surface_metadata_hash",
+    )
+    list_fields = (
+        "requested_tool_capabilities",
+        "granted_tool_capabilities",
+        "denied_tool_capabilities",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+    for field in list_fields:
+        _expect(packet, field, list, errors)
+    _expect(packet, "executor_reported_tool_usage", dict, errors)
+
+    if packet.get("tool_surface_version") != TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0:
+        errors.append(
+            "INVALID_EVIDENCE: tool_surface_version must be "
+            f"{TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0}"
+        )
+    if packet.get("tool_surface_enabled") is not False:
+        errors.append("INVALID_EVIDENCE: tool_surface_enabled must be false in scaffold v0")
+
+    surface_status = packet.get("tool_surface_status")
+    if surface_status not in TOOL_SURFACE_STATUSES and surface_status not in (
+        ACTION_BOUNDARY_CLEAN,
+        CAPABILITY_BOUNDARY_CLEAN,
+    ):
+        errors.append(f"INVALID_EVIDENCE: invalid tool_surface_status: {surface_status}")
+    if surface_status in (TOOL_SURFACE_CLEAN, ACTION_BOUNDARY_CLEAN, CAPABILITY_BOUNDARY_CLEAN):
+        errors.append("INVALID_EVIDENCE: tool_surface_status cannot claim CLEAN before tool surface proof")
+    if surface_status != TOOL_SURFACE_SCAFFOLD_ONLY:
+        errors.append("INVALID_EVIDENCE: tool_surface_status must remain TOOL_SURFACE_SCAFFOLD_ONLY in scaffold v0")
+
+    if packet.get("tool_surface_source") != TOOL_SURFACE_SOURCE_NONE:
+        errors.append("INVALID_EVIDENCE: tool_surface_source must be none in scaffold v0")
+    if packet.get("tool_surface_trust_boundary") != TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED:
+        errors.append("INVALID_EVIDENCE: tool surface trust boundary is not implemented in scaffold v0")
+
+    for field in list_fields:
+        value = packet.get(field)
+        if isinstance(value, list) and not all(isinstance(item, str) for item in value):
+            errors.append(f"INVALID_EVIDENCE: {field} must contain only strings")
+
+    requested = packet.get("requested_tool_capabilities")
+    granted = packet.get("granted_tool_capabilities")
+    denied = packet.get("denied_tool_capabilities")
+    if requested != []:
+        errors.append("INVALID_EVIDENCE: requested_tool_capabilities must be empty in scaffold v0")
+    if granted != []:
+        errors.append("INVALID_EVIDENCE: granted_tool_capabilities must be empty in scaffold v0")
+    if denied != []:
+        errors.append("INVALID_EVIDENCE: denied_tool_capabilities must be empty in scaffold v0")
+
+    for field in ("tool_authority_grant_count", "expected_tool_authority_grant_count"):
+        value = packet.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be integer")
+        elif value < 0:
+            errors.append(f"INVALID_EVIDENCE: {field} must be non-negative")
+    if packet.get("tool_authority_grant_count") != 0:
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_count must be 0 in scaffold v0")
+    if packet.get("expected_tool_authority_grant_count") != 0:
+        errors.append("INVALID_EVIDENCE: expected_tool_authority_grant_count must be 0 in scaffold v0")
+    if packet.get("tool_authority_grant_count") != packet.get("expected_tool_authority_grant_count"):
+        errors.append("INVALID_EVIDENCE: tool authority grant count must equal expected count")
+    if isinstance(granted, list) and packet.get("tool_authority_grant_count") != len(granted):
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_count must equal granted_tool_capabilities length")
+
+    for field in TOOL_AUTHORITY_GRANT_FIELDS:
+        if packet.get(field) is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must be false in tool surface scaffold v0")
+            errors.append(
+                "INVALID_EVIDENCE: authority_granted=true without implemented "
+                f"tool surface proof/source/trust boundary: {field}"
+            )
+
+    grant_hash = packet.get("tool_authority_grant_hash")
+    if not isinstance(grant_hash, str) or not _is_sha256_hex(grant_hash):
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_hash must be sha256 hex")
+    elif grant_hash != expected_tool_authority_grant_hash(packet):
+        errors.append("INVALID_EVIDENCE: tool_authority_grant_hash mismatch")
+
+    surface_hash = packet.get("tool_surface_metadata_hash")
+    if not isinstance(surface_hash, str) or not _is_sha256_hex(surface_hash):
+        errors.append("INVALID_EVIDENCE: tool_surface_metadata_hash must be sha256 hex")
+    elif surface_hash != expected_tool_surface_metadata_hash(packet):
+        errors.append("INVALID_EVIDENCE: tool_surface_metadata_hash mismatch")
+
+    executor_reported = packet.get("executor_reported_tool_usage")
+    if isinstance(executor_reported, dict):
+        reported_tools = executor_reported.get("tools")
+        if not isinstance(reported_tools, list):
+            errors.append("INVALID_EVIDENCE: executor_reported_tool_usage.tools must be list")
+            reported_tools = []
+        if not isinstance(executor_reported.get("reported_tool_count"), int) or isinstance(
+            executor_reported.get("reported_tool_count"), bool
+        ):
+            errors.append("INVALID_EVIDENCE: executor_reported_tool_usage.reported_tool_count must be integer")
+        elif executor_reported.get("reported_tool_count") != len(reported_tools):
+            errors.append("INVALID_EVIDENCE: executor_reported_tool_usage.reported_tool_count mismatch")
+        if executor_reported.get("trust_boundary") != REPORTED_ONLY:
+            errors.append("INVALID_EVIDENCE: executor_reported_tool_usage must be reported_only")
+        if executor_reported.get("judgment_basis") is not False:
+            errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage must be object")
+
+    if packet.get("judgment_basis") == "executor_reported_tool_usage":
+        errors.append("INVALID_EVIDENCE: executor_reported_tool_usage cannot become judgment basis")
+    if packet.get("command_enumeration_only") is True:
+        if any(packet.get(field) is True for field in TOOL_AUTHORITY_GRANT_FIELDS):
+            errors.append("INVALID_EVIDENCE: command denylist/enumeration alone cannot grant tool authority")
+        if surface_status == TOOL_SURFACE_CLEAN:
+            errors.append("INVALID_EVIDENCE: no requested or granted tool cannot produce TOOL_SURFACE_CLEAN")
+
+
 def _expected_action_risk(actions: list[dict[str, Any]]) -> str:
     if not actions:
         return NOT_CHECKED
@@ -1468,6 +1611,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_snapshot_trust_boundary_hash",
         "bound_action_boundary_metadata_hash",
         "bound_capability_isolation_metadata_hash",
+        "bound_tool_surface_metadata_hash",
         "bound_manifest_hash",
         "bound_manifest_path",
         "bound_at",
@@ -1502,6 +1646,7 @@ def validate_evidence_binding_v1(packet: dict[str, Any]) -> list[str]:
         "bound_snapshot_trust_boundary_hash",
         "bound_action_boundary_metadata_hash",
         "bound_capability_isolation_metadata_hash",
+        "bound_tool_surface_metadata_hash",
         "bound_manifest_hash",
     ):
         value = packet.get(field)
