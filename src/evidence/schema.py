@@ -44,16 +44,31 @@ from src.contracts import (
     MUTATION_DELTA_SOURCE_UNTRUSTED,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
     PROVIDER_ADAPTER_DISABLED_REQUEST_ID,
+    PROVIDER_ENV_LOADING_STATUS_DISABLED,
+    PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED,
+    PROVIDER_ENV_LOADING_STATUSES,
     PROVIDER_MODE_DISABLED,
     PROVIDER_MODE_NOT_REQUESTED,
     PROVIDER_MODES,
     PROVIDER_MODEL_NONE,
     PROVIDER_NAME_NONE,
+    PROVIDER_NETWORK_BLOCK_REASON_NONE,
+    PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED,
+    PROVIDER_NETWORK_BLOCK_REASONS,
+    PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN,
+    PROVIDER_NETWORK_STATUS_NOT_REQUESTED,
+    PROVIDER_NETWORK_STATUSES,
     PROVIDER_PROMPT_SOURCE_DISABLED,
     PROVIDER_PROMPT_SOURCE_NONE,
     PROVIDER_PROMPT_SOURCES,
     PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
     PROVIDER_REDACTION_STATUSES,
+    PROVIDER_REQUEST_METADATA_FIELDS,
+    PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_REQUEST_STATUS_NOT_REQUESTED,
+    PROVIDER_REQUEST_STATUSES,
+    PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
     PROVIDER_RESPONSE_ERROR_CLASS_NONE,
     PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
     PROVIDER_RESPONSE_ERROR_CLASSES,
@@ -65,9 +80,33 @@ from src.contracts import (
     PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
     PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
     PROVIDER_RESPONSE_STATUSES,
+    PROVIDER_RUNTIME_ERROR_CLASS_NONE,
+    PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_ERROR_CLASSES,
+    PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NONE,
+    PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED,
+    PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_HOLD_REASONS,
+    PROVIDER_RUNTIME_STATE_FIELDS,
+    PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE,
+    PROVIDER_RUNTIME_STATES,
+    PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED,
+    PROVIDER_RUNTIME_STATUS_NOT_REQUESTED,
+    PROVIDER_RUNTIME_STATUSES,
+    PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED,
+    PROVIDER_SECRET_REDACTION_STATUSES,
     PROVIDER_SECRET_SOURCE_NONE,
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
     PROVIDER_SECRET_SOURCES,
+    PROVIDER_SELECTION_METADATA_FIELDS,
+    PROVIDER_SELECTION_SOURCE_DISABLED,
+    PROVIDER_SELECTION_SOURCE_NOT_REQUESTED,
+    PROVIDER_SELECTION_SOURCES,
+    PROVIDER_SELECTION_STATUS_NOT_CONFIGURED,
+    PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
+    PROVIDER_SELECTION_STATUSES,
     PROMPT_BUILD_STATUS_NOT_BUILT,
     PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
     PROMPT_BUILD_STATUSES,
@@ -153,6 +192,12 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "mutation_boundary_status",
     *CITIZEN_ONE_EVIDENCE_FIELDS,
     *PROVIDER_ADAPTER_DISABLED_FIELDS,
+    *PROVIDER_RUNTIME_STATE_FIELDS,
+    *PROVIDER_SELECTION_METADATA_FIELDS,
+    *PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    *PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    *PROVIDER_REQUEST_METADATA_FIELDS,
+    *PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
     *PROMPT_REDACTION_METADATA_FIELDS,
     *RESPONSE_REDACTION_METADATA_FIELDS,
 )
@@ -244,6 +289,12 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "mutation_boundary_status", str, errors)
     _validate_citizen_one_fields(packet, errors)
     _validate_provider_adapter_disabled_fields(packet, errors)
+    _validate_provider_runtime_state_metadata(packet, errors)
+    _validate_provider_selection_metadata(packet, errors)
+    _validate_provider_secret_env_metadata(packet, errors)
+    _validate_provider_network_guard_metadata(packet, errors)
+    _validate_provider_request_metadata(packet, errors)
+    _validate_provider_response_error_metadata(packet, errors)
     _validate_prompt_redaction_metadata_fields(packet, errors)
     _validate_response_redaction_metadata_fields(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
@@ -497,6 +548,298 @@ def _validate_provider_adapter_disabled_fields(packet: dict[str, Any], errors: l
             errors.append("INVALID_EVIDENCE: non-requested provider response safe summary must be empty")
 
 
+def _validate_provider_runtime_state_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    string_fields = (
+        "provider_runtime_state",
+        "provider_runtime_status",
+        "provider_runtime_hold_reason",
+        "provider_runtime_error_class",
+        "provider_runtime_error_safe_summary",
+    )
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_runtime_state") not in PROVIDER_RUNTIME_STATES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_runtime_state: {packet.get('provider_runtime_state')}")
+    if packet.get("provider_runtime_state") != PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE:
+        errors.append("INVALID_EVIDENCE: provider_runtime_state must preserve hold_current_state")
+    if packet.get("provider_runtime_status") not in PROVIDER_RUNTIME_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_runtime_status: {packet.get('provider_runtime_status')}")
+    if packet.get("provider_runtime_hold_reason") not in PROVIDER_RUNTIME_HOLD_REASONS:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_runtime_hold_reason: "
+            f"{packet.get('provider_runtime_hold_reason')}"
+        )
+    if packet.get("provider_runtime_error_class") not in PROVIDER_RUNTIME_ERROR_CLASSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_runtime_error_class: "
+            f"{packet.get('provider_runtime_error_class')}"
+        )
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_runtime_status") != PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider runtime must hold as provider_not_configured")
+        if packet.get("provider_runtime_hold_reason") != PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider runtime hold reason must be provider_not_configured")
+        if packet.get("provider_runtime_error_class") != PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider runtime error class must be provider_not_configured")
+        if packet.get("provider_runtime_error_safe_summary") != PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider runtime safe summary mismatch")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_runtime_status") != PROVIDER_RUNTIME_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider runtime status must be not_requested")
+        if packet.get("provider_runtime_hold_reason") != PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider runtime hold reason must be not_requested")
+        if packet.get("provider_runtime_error_class") != PROVIDER_RUNTIME_ERROR_CLASS_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider runtime error class must be empty")
+        if packet.get("provider_runtime_error_safe_summary") != PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider runtime safe summary must be empty")
+
+
+def _validate_provider_selection_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_selection_requested",
+        "provider_selected",
+    )
+    string_fields = (
+        "provider_name",
+        "provider_model",
+        "provider_selection_source",
+        "provider_selection_status",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_selected") is not False:
+        errors.append("INVALID_EVIDENCE: provider_selected must be false while provider runtime is disabled")
+    if packet.get("provider_name") != PROVIDER_NAME_NONE:
+        errors.append("INVALID_EVIDENCE: provider_name must be none in selection metadata")
+    if packet.get("provider_model") != PROVIDER_MODEL_NONE:
+        errors.append("INVALID_EVIDENCE: provider_model must be none in selection metadata")
+    if packet.get("provider_selection_source") not in PROVIDER_SELECTION_SOURCES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_selection_source: "
+            f"{packet.get('provider_selection_source')}"
+        )
+    if packet.get("provider_selection_status") not in PROVIDER_SELECTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_selection_status: "
+            f"{packet.get('provider_selection_status')}"
+        )
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_selection_requested") is not True:
+            errors.append("INVALID_EVIDENCE: Citizen One opt-in must record provider selection requested")
+        if packet.get("provider_selection_source") != PROVIDER_SELECTION_SOURCE_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested provider selection source must be disabled")
+        if packet.get("provider_selection_status") != PROVIDER_SELECTION_STATUS_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider selection status must be not_configured")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_selection_requested") is not False:
+            errors.append("INVALID_EVIDENCE: default run must not request provider selection")
+        if packet.get("provider_selection_source") != PROVIDER_SELECTION_SOURCE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider selection source must be not_requested")
+        if packet.get("provider_selection_status") != PROVIDER_SELECTION_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider selection status must be not_requested")
+
+
+def _validate_provider_secret_env_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_secret_required",
+        "provider_secret_observed",
+        "provider_secret_value_recorded",
+        "provider_env_loading_requested",
+    )
+    string_fields = (
+        "provider_secret_source",
+        "provider_secret_redaction_status",
+        "provider_env_loading_status",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_secret_required") is not False:
+        errors.append("INVALID_EVIDENCE: provider_secret_required must be false without provider runtime")
+    if packet.get("provider_secret_observed") is not False:
+        errors.append("INVALID_EVIDENCE: provider_secret_observed must be false")
+    if packet.get("provider_secret_value_recorded") is not False:
+        errors.append("INVALID_EVIDENCE: provider_secret_value_recorded must be false")
+    if packet.get("provider_secret_source") not in PROVIDER_SECRET_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_secret_source: {packet.get('provider_secret_source')}")
+    if packet.get("provider_secret_redaction_status") not in PROVIDER_SECRET_REDACTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_secret_redaction_status: "
+            f"{packet.get('provider_secret_redaction_status')}"
+        )
+    if packet.get("provider_secret_redaction_status") != PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED:
+        errors.append("INVALID_EVIDENCE: provider secret redaction must declare no secret value recorded")
+    if packet.get("provider_env_loading_requested") is not False:
+        errors.append("INVALID_EVIDENCE: provider_env_loading_requested must be false")
+    if packet.get("provider_env_loading_status") not in PROVIDER_ENV_LOADING_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_env_loading_status: "
+            f"{packet.get('provider_env_loading_status')}"
+        )
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_secret_source") != PROVIDER_SECRET_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: requested provider secret source must remain none")
+        if packet.get("provider_env_loading_status") != PROVIDER_ENV_LOADING_STATUS_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested provider env loading status must be disabled")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_secret_source") != PROVIDER_SECRET_SOURCE_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider secret source must be not_requested")
+        if packet.get("provider_env_loading_status") != PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider env loading status must be not_requested")
+
+
+def _validate_provider_network_guard_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_network_opt_in_requested",
+        "provider_network_opt_in_allowed",
+        "provider_network_used",
+    )
+    string_fields = (
+        "provider_network_status",
+        "provider_network_block_reason",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_network_opt_in_requested") is not False:
+        errors.append("INVALID_EVIDENCE: provider_network_opt_in_requested must be false")
+    if packet.get("provider_network_opt_in_allowed") is not False:
+        errors.append("INVALID_EVIDENCE: provider_network_opt_in_allowed must be false")
+    if packet.get("provider_network_used") is not False:
+        errors.append("INVALID_EVIDENCE: provider_network_used must be false")
+    if packet.get("provider_network_status") not in PROVIDER_NETWORK_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_network_status: {packet.get('provider_network_status')}")
+    if packet.get("provider_network_block_reason") not in PROVIDER_NETWORK_BLOCK_REASONS:
+        errors.append(
+            "INVALID_EVIDENCE: invalid provider_network_block_reason: "
+            f"{packet.get('provider_network_block_reason')}"
+        )
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_network_status") != PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN:
+            errors.append("INVALID_EVIDENCE: requested provider network status must be blocked_no_opt_in")
+        if packet.get("provider_network_block_reason") != PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: requested provider network block reason must record missing opt-in")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_network_status") != PROVIDER_NETWORK_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider network status must be not_requested")
+        if packet.get("provider_network_block_reason") != PROVIDER_NETWORK_BLOCK_REASON_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider network block reason must be empty")
+
+
+def _validate_provider_request_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_request_requested",
+        "provider_request_raw_stored",
+    )
+    string_fields = (
+        "provider_request_status",
+        "provider_request_id",
+        "provider_request_metadata_hash",
+        "provider_request_redaction_status",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_request_requested") is not False:
+        errors.append("INVALID_EVIDENCE: provider_request_requested must be false")
+    if packet.get("provider_request_status") not in PROVIDER_REQUEST_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_request_status: {packet.get('provider_request_status')}")
+    if packet.get("provider_request_redaction_status") != PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: provider request redaction must declare no raw prompt/response storage")
+    if packet.get("provider_request_raw_stored") is not False:
+        errors.append("INVALID_EVIDENCE: provider_request_raw_stored must be false")
+    request_hash = packet.get("provider_request_metadata_hash")
+    if not isinstance(request_hash, str) or not _is_sha256_hex(request_hash):
+        errors.append("INVALID_EVIDENCE: provider_request_metadata_hash must be sha256 hex")
+    elif request_hash != _expected_provider_request_metadata_hash(packet):
+        errors.append("INVALID_EVIDENCE: provider_request_metadata_hash mismatch")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_request_status") != PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider request status must be blocked_provider_not_configured")
+        if packet.get("provider_request_id") != PROVIDER_ADAPTER_DISABLED_REQUEST_ID:
+            errors.append("INVALID_EVIDENCE: requested provider request id must be provider_adapter_disabled_v0")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_request_status") != PROVIDER_REQUEST_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider request status must be not_requested")
+        if packet.get("provider_request_id") != "":
+            errors.append("INVALID_EVIDENCE: non-requested provider request id must be empty")
+
+
+def _validate_provider_response_error_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "provider_response_present",
+        "provider_response_reported_only",
+        "provider_response_raw_stored",
+    )
+    string_fields = (
+        "provider_response_status",
+        "provider_response_trust_boundary",
+        "provider_response_metadata_hash",
+        "provider_response_redaction_status",
+        "provider_error_class",
+        "provider_error_safe_summary",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("provider_response_present") is not False:
+        errors.append("INVALID_EVIDENCE: provider_response_present must be false")
+    if packet.get("provider_response_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: provider_response_reported_only must be true")
+    if packet.get("provider_response_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: provider_response_trust_boundary must be reported_only")
+    if packet.get("provider_response_status") not in PROVIDER_RESPONSE_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_response_status: {packet.get('provider_response_status')}")
+    if packet.get("provider_response_redaction_status") != PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: provider response redaction must declare no raw prompt/response storage")
+    if packet.get("provider_response_raw_stored") is not False:
+        errors.append("INVALID_EVIDENCE: provider_response_raw_stored must be false")
+    if packet.get("provider_error_class") not in PROVIDER_RESPONSE_ERROR_CLASSES:
+        errors.append(f"INVALID_EVIDENCE: invalid provider_error_class: {packet.get('provider_error_class')}")
+    response_hash = packet.get("provider_response_metadata_hash")
+    if not isinstance(response_hash, str) or not _is_sha256_hex(response_hash):
+        errors.append("INVALID_EVIDENCE: provider_response_metadata_hash must be sha256 hex")
+    elif response_hash != _expected_provider_response_metadata_hash(packet):
+        errors.append("INVALID_EVIDENCE: provider_response_metadata_hash mismatch")
+
+    if packet.get("provider_error_class") != packet.get("provider_response_error_class"):
+        errors.append("INVALID_EVIDENCE: provider_error_class must mirror provider_response_error_class")
+    if packet.get("provider_error_safe_summary") != packet.get("provider_response_error_safe_summary"):
+        errors.append("INVALID_EVIDENCE: provider_error_safe_summary must mirror provider_response_error_safe_summary")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("provider_response_status") != PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider response status must be provider_not_configured")
+        if packet.get("provider_error_class") != PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider error class must be provider_not_configured")
+        if packet.get("provider_error_safe_summary") != PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested provider error safe summary mismatch")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("provider_response_status") != PROVIDER_RESPONSE_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested provider response status must be not_requested")
+        if packet.get("provider_error_class") != PROVIDER_RESPONSE_ERROR_CLASS_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider error class must be empty")
+        if packet.get("provider_error_safe_summary") != PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested provider error safe summary must be empty")
+
+
 def _validate_prompt_redaction_metadata_fields(packet: dict[str, Any], errors: list[str]) -> None:
     bool_fields = (
         "prompt_build_requested",
@@ -741,6 +1084,38 @@ def _expected_deterministic_stub_output_hash(packet: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _expected_provider_request_metadata_hash(packet: dict[str, Any]) -> str:
+    return _sha256_json(
+        {
+            "provider_request_requested": packet.get("provider_request_requested"),
+            "provider_request_status": packet.get("provider_request_status"),
+            "provider_request_id": packet.get("provider_request_id"),
+            "provider_request_redaction_status": packet.get("provider_request_redaction_status"),
+            "provider_request_raw_stored": packet.get("provider_request_raw_stored"),
+        }
+    )
+
+
+def _expected_provider_response_metadata_hash(packet: dict[str, Any]) -> str:
+    return _sha256_json(
+        {
+            "provider_response_present": packet.get("provider_response_present"),
+            "provider_response_status": packet.get("provider_response_status"),
+            "provider_response_reported_only": packet.get("provider_response_reported_only"),
+            "provider_response_trust_boundary": packet.get("provider_response_trust_boundary"),
+            "provider_response_redaction_status": packet.get("provider_response_redaction_status"),
+            "provider_response_raw_stored": packet.get("provider_response_raw_stored"),
+            "provider_error_class": packet.get("provider_error_class"),
+            "provider_error_safe_summary": packet.get("provider_error_safe_summary"),
+        }
+    )
+
+
+def _sha256_json(payload: Any) -> str:
+    canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _validate_forbidden_raw_prompt_response_fields(packet: dict[str, Any], errors: list[str]) -> None:
     errors.extend(validate_no_forbidden_raw_prompt_response_keys(packet, label="evidence"))
 
@@ -749,7 +1124,7 @@ def validate_no_forbidden_raw_prompt_response_keys(payload: Any, label: str) -> 
     errors: list[str] = []
     forbidden = set(FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS)
     for path in _forbidden_key_paths(payload, forbidden):
-        errors.append(f"INVALID_EVIDENCE: forbidden raw prompt/response storage key in {label}: {path}")
+        errors.append(f"INVALID_EVIDENCE: forbidden raw/secret storage key in {label}: {path}")
     return errors
 
 

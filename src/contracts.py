@@ -117,6 +117,21 @@ CITIZEN_ONE_EVIDENCE_FIELDS = (
 )
 
 PROVIDER_ADAPTER_DISABLED_REQUEST_ID = "provider_adapter_disabled_v0"
+PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE = SAFE_DEFAULT
+PROVIDER_RUNTIME_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED = "held_provider_not_configured"
+PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED = "not_requested"
+PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROVIDER_RUNTIME_ERROR_CLASS_NONE = ""
+PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NONE = ""
+PROVIDER_RUNTIME_ERROR_SAFE_SUMMARY_NOT_CONFIGURED = (
+    "provider runtime held; provider not configured; no request executed"
+)
+PROVIDER_SELECTION_SOURCE_NOT_REQUESTED = "not_requested"
+PROVIDER_SELECTION_SOURCE_DISABLED = "disabled"
+PROVIDER_SELECTION_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_SELECTION_STATUS_NOT_CONFIGURED = "not_configured"
 PROVIDER_MODE_NOT_REQUESTED = "not_requested"
 PROVIDER_MODE_DISABLED = "disabled"
 PROVIDER_NAME_NONE = "none"
@@ -126,6 +141,16 @@ PROVIDER_PROMPT_SOURCE_DISABLED = "disabled"
 PROVIDER_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED = "no_raw_prompt_or_response_stored"
 PROVIDER_SECRET_SOURCE_NOT_REQUESTED = "not_requested"
 PROVIDER_SECRET_SOURCE_NONE = "none"
+PROVIDER_SECRET_SOURCE_DISABLED = "disabled"
+PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED = "no_secret_value_recorded"
+PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_ENV_LOADING_STATUS_DISABLED = "disabled"
+PROVIDER_NETWORK_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN = "blocked_no_opt_in"
+PROVIDER_NETWORK_BLOCK_REASON_NONE = ""
+PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED = "provider_network_opt_in_not_requested"
+PROVIDER_REQUEST_STATUS_NOT_REQUESTED = "not_requested"
+PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED = "blocked_provider_not_configured"
 PROVIDER_RESPONSE_STATUS_NOT_REQUESTED = "not_requested"
 PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
 PROVIDER_RESPONSE_SOURCE_NONE = "none"
@@ -140,6 +165,29 @@ PROVIDER_MODES = (
     PROVIDER_MODE_NOT_REQUESTED,
     PROVIDER_MODE_DISABLED,
 )
+PROVIDER_RUNTIME_STATES = (
+    PROVIDER_RUNTIME_STATE_HOLD_CURRENT_STATE,
+)
+PROVIDER_RUNTIME_STATUSES = (
+    PROVIDER_RUNTIME_STATUS_NOT_REQUESTED,
+    PROVIDER_RUNTIME_STATUS_HELD_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_RUNTIME_HOLD_REASONS = (
+    PROVIDER_RUNTIME_HOLD_REASON_NOT_REQUESTED,
+    PROVIDER_RUNTIME_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_RUNTIME_ERROR_CLASSES = (
+    PROVIDER_RUNTIME_ERROR_CLASS_NONE,
+    PROVIDER_RUNTIME_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_SELECTION_SOURCES = (
+    PROVIDER_SELECTION_SOURCE_NOT_REQUESTED,
+    PROVIDER_SELECTION_SOURCE_DISABLED,
+)
+PROVIDER_SELECTION_STATUSES = (
+    PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
+    PROVIDER_SELECTION_STATUS_NOT_CONFIGURED,
+)
 PROVIDER_PROMPT_SOURCES = (
     PROVIDER_PROMPT_SOURCE_NONE,
     PROVIDER_PROMPT_SOURCE_DISABLED,
@@ -150,6 +198,26 @@ PROVIDER_REDACTION_STATUSES = (
 PROVIDER_SECRET_SOURCES = (
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
     PROVIDER_SECRET_SOURCE_NONE,
+    PROVIDER_SECRET_SOURCE_DISABLED,
+)
+PROVIDER_SECRET_REDACTION_STATUSES = (
+    PROVIDER_SECRET_REDACTION_STATUS_NO_SECRET_VALUE_RECORDED,
+)
+PROVIDER_ENV_LOADING_STATUSES = (
+    PROVIDER_ENV_LOADING_STATUS_NOT_REQUESTED,
+    PROVIDER_ENV_LOADING_STATUS_DISABLED,
+)
+PROVIDER_NETWORK_STATUSES = (
+    PROVIDER_NETWORK_STATUS_NOT_REQUESTED,
+    PROVIDER_NETWORK_STATUS_BLOCKED_NO_OPT_IN,
+)
+PROVIDER_NETWORK_BLOCK_REASONS = (
+    PROVIDER_NETWORK_BLOCK_REASON_NONE,
+    PROVIDER_NETWORK_BLOCK_REASON_OPT_IN_NOT_REQUESTED,
+)
+PROVIDER_REQUEST_STATUSES = (
+    PROVIDER_REQUEST_STATUS_NOT_REQUESTED,
+    PROVIDER_REQUEST_STATUS_BLOCKED_PROVIDER_NOT_CONFIGURED,
 )
 PROVIDER_RESPONSE_STATUSES = (
     PROVIDER_RESPONSE_STATUS_NOT_REQUESTED,
@@ -162,6 +230,64 @@ PROVIDER_RESPONSE_SOURCES = (
 PROVIDER_RESPONSE_ERROR_CLASSES = (
     PROVIDER_RESPONSE_ERROR_CLASS_NONE,
     PROVIDER_RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+)
+PROVIDER_RUNTIME_STATE_FIELDS = (
+    "provider_runtime_state",
+    "provider_runtime_status",
+    "provider_runtime_hold_reason",
+    "provider_runtime_error_class",
+    "provider_runtime_error_safe_summary",
+)
+PROVIDER_SELECTION_METADATA_FIELDS = (
+    "provider_selection_requested",
+    "provider_selected",
+    "provider_name",
+    "provider_model",
+    "provider_selection_source",
+    "provider_selection_status",
+)
+PROVIDER_SECRET_ENV_METADATA_FIELDS = (
+    "provider_secret_required",
+    "provider_secret_source",
+    "provider_secret_observed",
+    "provider_secret_value_recorded",
+    "provider_secret_redaction_status",
+    "provider_env_loading_requested",
+    "provider_env_loading_status",
+)
+PROVIDER_NETWORK_GUARD_METADATA_FIELDS = (
+    "provider_network_opt_in_requested",
+    "provider_network_opt_in_allowed",
+    "provider_network_used",
+    "provider_network_status",
+    "provider_network_block_reason",
+)
+PROVIDER_REQUEST_METADATA_FIELDS = (
+    "provider_request_requested",
+    "provider_request_status",
+    "provider_request_id",
+    "provider_request_metadata_hash",
+    "provider_request_redaction_status",
+    "provider_request_raw_stored",
+)
+PROVIDER_RESPONSE_ERROR_METADATA_FIELDS = (
+    "provider_response_present",
+    "provider_response_status",
+    "provider_response_reported_only",
+    "provider_response_trust_boundary",
+    "provider_response_metadata_hash",
+    "provider_response_redaction_status",
+    "provider_response_raw_stored",
+    "provider_error_class",
+    "provider_error_safe_summary",
+)
+PROVIDER_RUNTIME_METADATA_FIELDS = (
+    *PROVIDER_RUNTIME_STATE_FIELDS,
+    *PROVIDER_SELECTION_METADATA_FIELDS,
+    *PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    *PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    *PROVIDER_REQUEST_METADATA_FIELDS,
+    *PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
 )
 PROVIDER_ADAPTER_DISABLED_FIELDS = (
     "provider_request_id",
@@ -263,22 +389,40 @@ FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS = (
     "raw_prompt",
     "prompt_raw",
     "prompt_body",
+    "prompt_text",
+    "raw_request",
+    "request_raw",
+    "request_body",
+    "request_text",
     "raw_response",
     "response_raw",
     "response_body",
-    "provider_raw_prompt",
-    "provider_raw_response",
-    "prompt_text",
     "response_text",
+    "raw_error",
+    "error_raw",
+    "error_body",
+    "error_text",
+    "provider_raw_prompt",
+    "provider_raw_request",
+    "provider_raw_response",
+    "provider_raw_error",
     # Historical aliases are also rejected to keep the disabled-provider
     # boundary closed around request/response bodies.
     "provider_prompt",
     "provider_response",
     "provider_request_body",
     "provider_response_body",
+    "provider_error_body",
     "model_request_body",
     "model_response_body",
+    "api_key",
+    "api_token",
+    "access_token",
+    "secret_value",
+    "env_value",
+    "dotenv_value",
 )
+FORBIDDEN_RAW_SECRET_STORAGE_KEYS = FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS
 
 CITIZEN_ONE_PROPOSAL_CONTRACT_V0 = "citizen_one_proposal_contract_v0"
 PROPOSAL_KIND_NOT_GENERATED = "not_generated"
