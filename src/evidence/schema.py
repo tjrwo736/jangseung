@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from src.contracts import (
@@ -24,7 +26,12 @@ from src.contracts import (
     CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED,
     CITIZEN_ONE_PROVIDER_STATUS_NOT_REQUESTED,
     CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
+    CITIZEN_ONE_PROPOSAL_RECORDED,
     CITIZEN_ONE_STATUSES,
+    DETERMINISTIC_STUB_PROPOSAL_ID,
+    DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES,
+    DETERMINISTIC_STUB_PROPOSAL_STEPS,
+    DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
     EVIDENCE_BINDING_V1,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
@@ -35,12 +42,16 @@ from src.contracts import (
     MUTATION_DELTA_SOURCE_COMPUTED,
     MUTATION_DELTA_SOURCE_UNTRUSTED,
     PROPOSAL_CONTRACT_FIELDS,
+    PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
+    PROPOSAL_KIND_DETERMINISTIC_STUB,
     PROPOSAL_KIND_NOT_GENERATED,
     PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
     PROPOSAL_REDACTION_STATUSES,
+    PROPOSAL_SOURCE_DETERMINISTIC_STUB,
     PROPOSAL_SOURCE_NONE,
     PROPOSAL_STATUSES,
+    PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED,
     PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
     RISK_LEVELS,
     SAFE_DEFAULT,
@@ -263,8 +274,6 @@ def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> N
 
     if packet.get("citizen_one_status") not in CITIZEN_ONE_STATUSES:
         errors.append(f"invalid citizen_one_status: {packet.get('citizen_one_status')}")
-    if packet.get("citizen_one_output_present") is not False:
-        errors.append("INVALID_EVIDENCE: Citizen One output must be absent in provider-not-configured skeleton")
     if packet.get("citizen_one_output_trust_boundary") != REPORTED_ONLY:
         errors.append("INVALID_EVIDENCE: Citizen One output trust boundary must be reported_only")
     if packet.get("citizen_one_reported_only") is not True:
@@ -279,15 +288,25 @@ def _validate_citizen_one_fields(packet: dict[str, Any], errors: list[str]) -> N
     if packet.get("citizen_one_requested") is True:
         if packet.get("citizen_one_mode") != CITIZEN_ONE_MODE_PROPOSE:
             errors.append("INVALID_EVIDENCE: requested Citizen One mode must be propose")
-        if packet.get("citizen_one_status") != CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED:
-            errors.append("INVALID_EVIDENCE: requested Citizen One must hold when provider is not configured")
         if packet.get("citizen_one_provider_status") != CITIZEN_ONE_PROVIDER_STATUS_NOT_CONFIGURED:
             errors.append("INVALID_EVIDENCE: requested Citizen One provider status must be not_configured")
-        if packet.get("citizen_one_hold_reason") != CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
-            errors.append("INVALID_EVIDENCE: requested Citizen One hold reason must be provider_not_configured")
         if packet.get("provider_config_source") != CITIZEN_ONE_PROVIDER_CONFIG_SOURCE_NONE:
             errors.append("INVALID_EVIDENCE: requested Citizen One provider_config_source must be none")
         _validate_proposal_contract_fields(packet, errors)
+        if packet.get("proposal_present") is True:
+            if packet.get("citizen_one_status") != CITIZEN_ONE_PROPOSAL_RECORDED:
+                errors.append("INVALID_EVIDENCE: deterministic proposal stub must record Citizen One proposal status")
+            if packet.get("citizen_one_hold_reason") != CITIZEN_ONE_HOLD_REASON_NONE:
+                errors.append("INVALID_EVIDENCE: deterministic proposal stub hold reason must be empty")
+            if packet.get("citizen_one_output_present") is not True:
+                errors.append("INVALID_EVIDENCE: deterministic proposal stub must mark Citizen One output present")
+        else:
+            if packet.get("citizen_one_status") != CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED:
+                errors.append("INVALID_EVIDENCE: requested Citizen One must hold when provider is not configured")
+            if packet.get("citizen_one_hold_reason") != CITIZEN_ONE_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
+                errors.append("INVALID_EVIDENCE: requested Citizen One hold reason must be provider_not_configured")
+            if packet.get("citizen_one_output_present") is not False:
+                errors.append("INVALID_EVIDENCE: Citizen One output must be absent in provider-not-configured skeleton")
     elif packet.get("citizen_one_requested") is False:
         if packet.get("citizen_one_mode") != CITIZEN_ONE_MODE_OFF:
             errors.append("INVALID_EVIDENCE: non-requested Citizen One mode must be off")
@@ -341,6 +360,28 @@ def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]
 
     if packet.get("proposal_version") != CITIZEN_ONE_PROPOSAL_CONTRACT_V0:
         errors.append(f"INVALID_EVIDENCE: proposal_version must be {CITIZEN_ONE_PROPOSAL_CONTRACT_V0}")
+    if packet.get("proposal_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: proposal_trust_boundary must be reported_only")
+    if packet.get("proposal_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: proposal must be marked reported_only")
+    if packet.get("proposal_redaction_status") not in PROPOSAL_REDACTION_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid proposal_redaction_status: {packet.get('proposal_redaction_status')}")
+    if packet.get("proposal_redaction_status") != PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: proposal_redaction_status must declare no raw prompt/response storage")
+    if packet.get("proposal_status") not in PROPOSAL_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid proposal_status: {packet.get('proposal_status')}")
+    expected_user_gate = packet.get("status") == NEEDS_USER_GATE or packet.get("risk_level") == HIGH
+    if packet.get("proposal_requires_user_gate") != expected_user_gate:
+        errors.append("INVALID_EVIDENCE: proposal_requires_user_gate must preserve law/user-gate status")
+    if packet.get("proposal_present") is True:
+        _validate_deterministic_stub_proposal_fields(packet, errors)
+    elif packet.get("proposal_present") is False:
+        _validate_provider_hold_proposal_fields(packet, errors)
+
+
+def _validate_provider_hold_proposal_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    if packet.get("proposal_id") != "":
+        errors.append("INVALID_EVIDENCE: proposal_id must be empty when proposal is not generated")
     if packet.get("proposal_kind") != PROPOSAL_KIND_NOT_GENERATED:
         errors.append("INVALID_EVIDENCE: proposal_kind must be not_generated when provider is not configured")
     if packet.get("proposal_summary") != "":
@@ -349,29 +390,60 @@ def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]
         errors.append("INVALID_EVIDENCE: proposal_steps must be empty when proposal is not generated")
     if packet.get("proposal_risk_notes") != []:
         errors.append("INVALID_EVIDENCE: proposal_risk_notes must be empty when proposal is not generated")
-    if packet.get("proposal_trust_boundary") != REPORTED_ONLY:
-        errors.append("INVALID_EVIDENCE: proposal_trust_boundary must be reported_only")
-    if packet.get("proposal_reported_only") is not True:
-        errors.append("INVALID_EVIDENCE: proposal must be marked reported_only")
     if packet.get("proposal_source") != PROPOSAL_SOURCE_NONE:
         errors.append("INVALID_EVIDENCE: proposal_source must be none when provider is not configured")
     if packet.get("proposal_output_hash_candidate") != "":
         errors.append("INVALID_EVIDENCE: proposal_output_hash_candidate must be empty when proposal is not generated")
-    if packet.get("proposal_redaction_status") not in PROPOSAL_REDACTION_STATUSES:
-        errors.append(f"INVALID_EVIDENCE: invalid proposal_redaction_status: {packet.get('proposal_redaction_status')}")
-    if packet.get("proposal_redaction_status") != PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED:
-        errors.append("INVALID_EVIDENCE: proposal_redaction_status must declare no raw prompt/response storage")
-    if packet.get("proposal_status") not in PROPOSAL_STATUSES:
-        errors.append(f"INVALID_EVIDENCE: invalid proposal_status: {packet.get('proposal_status')}")
     if packet.get("proposal_status") != PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED:
         errors.append("INVALID_EVIDENCE: proposal_status must hold as provider_not_configured")
-    if packet.get("proposal_present") is not False:
-        errors.append("INVALID_EVIDENCE: proposal_present must be false when provider is not configured")
     if packet.get("proposal_hold_reason") != PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED:
         errors.append("INVALID_EVIDENCE: proposal_hold_reason must be provider_not_configured")
-    expected_user_gate = packet.get("status") == NEEDS_USER_GATE or packet.get("risk_level") == HIGH
-    if packet.get("proposal_requires_user_gate") != expected_user_gate:
-        errors.append("INVALID_EVIDENCE: proposal_requires_user_gate must preserve law/user-gate status")
+
+
+def _validate_deterministic_stub_proposal_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    if packet.get("proposal_id") != DETERMINISTIC_STUB_PROPOSAL_ID:
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub id mismatch")
+    if packet.get("proposal_kind") != PROPOSAL_KIND_DETERMINISTIC_STUB:
+        errors.append("INVALID_EVIDENCE: proposal_kind must be deterministic_stub when proposal stub is recorded")
+    if packet.get("proposal_summary") != DETERMINISTIC_STUB_PROPOSAL_SUMMARY:
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub summary mismatch")
+    if packet.get("proposal_steps") != list(DETERMINISTIC_STUB_PROPOSAL_STEPS):
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub steps mismatch")
+    if packet.get("proposal_risk_notes") != list(DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES):
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub risk notes mismatch")
+    if packet.get("proposal_source") != PROPOSAL_SOURCE_DETERMINISTIC_STUB:
+        errors.append("INVALID_EVIDENCE: proposal_source must be deterministic_stub when proposal stub is recorded")
+    if packet.get("proposal_status") != PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED:
+        errors.append("INVALID_EVIDENCE: proposal_status must be deterministic_stub_recorded")
+    if packet.get("proposal_hold_reason") != PROPOSAL_HOLD_REASON_NONE:
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub hold reason must be empty")
+
+    output_hash = packet.get("proposal_output_hash_candidate")
+    if not isinstance(output_hash, str) or not _is_sha256_hex(output_hash):
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub output hash candidate must be sha256 hex")
+    elif output_hash != _expected_deterministic_stub_output_hash(packet):
+        errors.append("INVALID_EVIDENCE: deterministic proposal stub output hash candidate mismatch")
+
+
+def _expected_deterministic_stub_output_hash(packet: dict[str, Any]) -> str:
+    hash_payload = {
+        "proposal_id": DETERMINISTIC_STUB_PROPOSAL_ID,
+        "proposal_version": CITIZEN_ONE_PROPOSAL_CONTRACT_V0,
+        "proposal_kind": PROPOSAL_KIND_DETERMINISTIC_STUB,
+        "proposal_summary": DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
+        "proposal_steps": list(DETERMINISTIC_STUB_PROPOSAL_STEPS),
+        "proposal_risk_notes": list(DETERMINISTIC_STUB_PROPOSAL_RISK_NOTES),
+        "proposal_requires_user_gate": packet.get("proposal_requires_user_gate"),
+        "proposal_trust_boundary": REPORTED_ONLY,
+        "proposal_reported_only": True,
+        "proposal_source": PROPOSAL_SOURCE_DETERMINISTIC_STUB,
+        "proposal_redaction_status": PROPOSAL_REDACTION_STATUS_NO_RAW_PROMPT_OR_RESPONSE_STORED,
+        "proposal_status": PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED,
+        "proposal_present": True,
+        "proposal_hold_reason": PROPOSAL_HOLD_REASON_NONE,
+    }
+    canonical = json.dumps(hash_payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _validate_forbidden_raw_prompt_response_fields(packet: dict[str, Any], errors: list[str]) -> None:
