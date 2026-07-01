@@ -23,9 +23,15 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
     NOT_CHECKED_IMPACT_RISKS,
+    PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
     PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
+    PROVIDER_REQUEST_METADATA_FIELDS,
+    PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
+    PROVIDER_RUNTIME_STATE_FIELDS,
+    PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    PROVIDER_SELECTION_METADATA_FIELDS,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
 )
@@ -37,6 +43,12 @@ from src.evidence.binding import (
     sha256_json,
     sha256_text,
     citizen_one_manifest_fields,
+    provider_network_guard_manifest_fields,
+    provider_request_manifest_fields,
+    provider_response_error_manifest_fields,
+    provider_runtime_state_manifest_fields,
+    provider_secret_env_manifest_fields,
+    provider_selection_manifest_fields,
     prompt_redaction_manifest_fields,
     provider_adapter_manifest_fields,
     proposal_manifest_fields,
@@ -307,7 +319,7 @@ def _verify_manifest_binding(
     if manifest_forbidden_errors:
         errors.extend(manifest_forbidden_errors)
     else:
-        checks.append("manifest contains no forbidden raw prompt/response storage keys")
+        checks.append("manifest contains no forbidden raw/secret storage keys")
 
     actual_manifest_hash = manifest_hash(manifest)
     if evidence.get("bound_manifest_hash") == actual_manifest_hash:
@@ -390,6 +402,74 @@ def _verify_manifest_binding(
     else:
         errors.append("INVALID_EVIDENCE: provider adapter disabled fields mismatch")
     checks.append("provider adapter output is reported_only and not an external oracle")
+
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider runtime state metadata",
+        PROVIDER_RUNTIME_STATE_FIELDS,
+        "provider_runtime_state_metadata_hash",
+        evidence,
+        manifest,
+        provider_runtime_state_manifest_fields(evidence),
+        provider_runtime_state_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider selection metadata",
+        PROVIDER_SELECTION_METADATA_FIELDS,
+        "provider_selection_metadata_hash",
+        evidence,
+        manifest,
+        provider_selection_manifest_fields(evidence),
+        provider_selection_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider secret/env safe metadata",
+        PROVIDER_SECRET_ENV_METADATA_FIELDS,
+        "provider_secret_env_metadata_hash",
+        evidence,
+        manifest,
+        provider_secret_env_manifest_fields(evidence),
+        provider_secret_env_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider network opt-in guard metadata",
+        PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+        "provider_network_guard_metadata_hash",
+        evidence,
+        manifest,
+        provider_network_guard_manifest_fields(evidence),
+        provider_network_guard_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider request safe metadata",
+        PROVIDER_REQUEST_METADATA_FIELDS,
+        "provider_request_safe_metadata_hash",
+        evidence,
+        manifest,
+        provider_request_manifest_fields(evidence),
+        provider_request_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
+        "provider response/error safe metadata",
+        PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
+        "provider_response_error_safe_metadata_hash",
+        evidence,
+        manifest,
+        provider_response_error_manifest_fields(evidence),
+        provider_response_error_manifest_fields(manifest),
+    )
+    checks.append("provider runtime opt-in guard metadata is not an external oracle")
 
     evidence_prompt_redaction = prompt_redaction_manifest_fields(evidence)
     manifest_prompt_redaction = prompt_redaction_manifest_fields(manifest)
@@ -686,6 +766,32 @@ def _check_equal(checks: list[str], errors: list[str], label: str, actual: Any, 
         checks.append(f"{label} matched")
     else:
         errors.append(f"INVALID_EVIDENCE: {label} mismatch: actual={actual} expected={expected}")
+
+
+def _check_manifest_field_group(
+    checks: list[str],
+    errors: list[str],
+    label: str,
+    fields: tuple[str, ...],
+    hash_field: str,
+    evidence: dict[str, Any],
+    manifest: dict[str, Any],
+    evidence_fields: dict[str, Any],
+    manifest_fields: dict[str, Any],
+) -> None:
+    for field in fields:
+        _check_equal(checks, errors, f"manifest {field}", manifest.get(field), evidence.get(field))
+    _check_equal(
+        checks,
+        errors,
+        f"manifest {hash_field}",
+        manifest.get(hash_field),
+        sha256_json(manifest_fields),
+    )
+    if evidence_fields == manifest_fields:
+        checks.append(f"{label} fields matched manifest")
+    else:
+        errors.append(f"INVALID_EVIDENCE: {label} fields mismatch")
 
 
 def _is_string_list(value: Any) -> bool:

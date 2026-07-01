@@ -15,6 +15,12 @@ from src.contracts import (
     PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
+    PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
+    PROVIDER_REQUEST_METADATA_FIELDS,
+    PROVIDER_RESPONSE_ERROR_METADATA_FIELDS,
+    PROVIDER_RUNTIME_STATE_FIELDS,
+    PROVIDER_SECRET_ENV_METADATA_FIELDS,
+    PROVIDER_SELECTION_METADATA_FIELDS,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RUN_MANIFEST_V1,
     RUNS_DIR,
@@ -72,6 +78,12 @@ def build_run_manifest(
     executor_created_mutation = _list_field(evidence, "executor_created_mutation")
     citizen_one_fields = citizen_one_manifest_fields(evidence)
     provider_adapter_fields = provider_adapter_manifest_fields(evidence)
+    provider_runtime_state_fields = provider_runtime_state_manifest_fields(evidence)
+    provider_selection_fields = provider_selection_manifest_fields(evidence)
+    provider_secret_env_fields = provider_secret_env_manifest_fields(evidence)
+    provider_network_guard_fields = provider_network_guard_manifest_fields(evidence)
+    provider_request_fields = provider_request_manifest_fields(evidence)
+    provider_response_error_fields = provider_response_error_manifest_fields(evidence)
     prompt_redaction_fields = prompt_redaction_manifest_fields(evidence)
     response_redaction_fields = response_redaction_manifest_fields(evidence)
     proposal_fields = proposal_manifest_fields(evidence)
@@ -113,6 +125,18 @@ def build_run_manifest(
         "citizen_one_evidence_hash": sha256_json(citizen_one_fields),
         **provider_adapter_fields,
         "provider_adapter_evidence_hash": sha256_json(provider_adapter_fields),
+        **provider_runtime_state_fields,
+        "provider_runtime_state_metadata_hash": sha256_json(provider_runtime_state_fields),
+        **provider_selection_fields,
+        "provider_selection_metadata_hash": sha256_json(provider_selection_fields),
+        **provider_secret_env_fields,
+        "provider_secret_env_metadata_hash": sha256_json(provider_secret_env_fields),
+        **provider_network_guard_fields,
+        "provider_network_guard_metadata_hash": sha256_json(provider_network_guard_fields),
+        **provider_request_fields,
+        "provider_request_safe_metadata_hash": sha256_json(provider_request_fields),
+        **provider_response_error_fields,
+        "provider_response_error_safe_metadata_hash": sha256_json(provider_response_error_fields),
         **prompt_redaction_fields,
         "prompt_redaction_metadata_hash": sha256_json(prompt_redaction_fields),
         **response_redaction_fields,
@@ -168,6 +192,30 @@ def citizen_one_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
 
 def provider_adapter_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in PROVIDER_ADAPTER_DISABLED_FIELDS}
+
+
+def provider_runtime_state_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_RUNTIME_STATE_FIELDS}
+
+
+def provider_selection_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_SELECTION_METADATA_FIELDS}
+
+
+def provider_secret_env_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_SECRET_ENV_METADATA_FIELDS}
+
+
+def provider_network_guard_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_NETWORK_GUARD_METADATA_FIELDS}
+
+
+def provider_request_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_REQUEST_METADATA_FIELDS}
+
+
+def provider_response_error_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in PROVIDER_RESPONSE_ERROR_METADATA_FIELDS}
 
 
 def prompt_redaction_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
