@@ -177,6 +177,9 @@ def _cmd_run(
     ]
     rows.extend(_action_boundary_rows(evidence))
     rows.extend(_capability_isolation_rows(evidence))
+    rows.extend(_tool_surface_rows(evidence))
+    rows.extend(_executor_capability_exposure_rows(evidence))
+    rows.extend(_evidence_store_trust_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
     rows.extend(_proposal_rows(evidence))
     rows.extend(_user_gate_rows(evidence.get("user_gate_reason_card")))
@@ -248,6 +251,9 @@ def _cmd_verify(cwd: Path) -> int:
         )
         rows.extend(_action_boundary_rows(result.evidence))
         rows.extend(_capability_isolation_rows(result.evidence))
+        rows.extend(_tool_surface_rows(result.evidence))
+        rows.extend(_executor_capability_exposure_rows(result.evidence))
+        rows.extend(_evidence_store_trust_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
         rows.extend(_proposal_rows(result.evidence))
     rows.extend(("check", check) for check in result.checks)
@@ -350,6 +356,111 @@ def _capability_isolation_rows(evidence: dict[str, Any]) -> list[tuple[str, str]
     ]
 
 
+def _tool_surface_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("tool_surface_version", str(evidence.get("tool_surface_version", ""))),
+        ("tool_surface_enabled", str(evidence.get("tool_surface_enabled", "")).lower()),
+        ("tool_surface_status", str(evidence.get("tool_surface_status", ""))),
+        ("tool_surface_source", str(evidence.get("tool_surface_source", ""))),
+        ("tool_surface_trust_boundary", str(evidence.get("tool_surface_trust_boundary", ""))),
+        ("requested_tool_capability_count", str(_list_count(evidence.get("requested_tool_capabilities")))),
+        ("granted_tool_capability_count", str(_list_count(evidence.get("granted_tool_capabilities")))),
+        ("denied_tool_capability_count", str(_list_count(evidence.get("denied_tool_capabilities")))),
+        ("tool_authority_grant_count", str(evidence.get("tool_authority_grant_count", ""))),
+        ("expected_tool_authority_grant_count", str(evidence.get("expected_tool_authority_grant_count", ""))),
+        ("raw_shell_tool_authority_granted", str(evidence.get("raw_shell_tool_authority_granted", "")).lower()),
+        (
+            "process_execution_tool_authority_granted",
+            str(evidence.get("process_execution_tool_authority_granted", "")).lower(),
+        ),
+        ("network_tool_authority_granted", str(evidence.get("network_tool_authority_granted", "")).lower()),
+        ("provider_tool_authority_granted", str(evidence.get("provider_tool_authority_granted", "")).lower()),
+        (
+            "credential_env_tool_authority_granted",
+            str(evidence.get("credential_env_tool_authority_granted", "")).lower(),
+        ),
+        ("remote_write_tool_authority_granted", str(evidence.get("remote_write_tool_authority_granted", "")).lower()),
+        (
+            "deploy_release_publish_tool_authority_granted",
+            str(evidence.get("deploy_release_publish_tool_authority_granted", "")).lower(),
+        ),
+        (
+            "repo_outside_write_tool_authority_granted",
+            str(evidence.get("repo_outside_write_tool_authority_granted", "")).lower(),
+        ),
+        (
+            "file_mutation_tool_authority_granted",
+            str(evidence.get("file_mutation_tool_authority_granted", "")).lower(),
+        ),
+        ("telemetry_tool_authority_granted", str(evidence.get("telemetry_tool_authority_granted", "")).lower()),
+        ("tool_authority_grant_hash", _short_hash(evidence.get("tool_authority_grant_hash", ""))),
+        ("tool_surface_metadata_hash", _short_hash(evidence.get("tool_surface_metadata_hash", ""))),
+    ]
+
+
+def _executor_capability_exposure_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        (
+            "executor_capability_exposure_version",
+            str(evidence.get("executor_capability_exposure_version", "")),
+        ),
+        ("executor_capability_exposure_scope", str(evidence.get("executor_capability_exposure_scope", ""))),
+        ("executor_capability_transport", str(evidence.get("executor_capability_transport", ""))),
+        ("current_executor_capability_status", str(evidence.get("current_executor_capability_status", ""))),
+        ("capability_read_repo", str(evidence.get("capability_read_repo", "")).lower()),
+        ("capability_write_repo", str(evidence.get("capability_write_repo", "")).lower()),
+        ("capability_read_aeg_state", str(evidence.get("capability_read_aeg_state", "")).lower()),
+        ("capability_write_aeg_state", str(evidence.get("capability_write_aeg_state", "")).lower()),
+        ("capability_read_outside_repo", str(evidence.get("capability_read_outside_repo", "")).lower()),
+        ("capability_write_outside_repo", str(evidence.get("capability_write_outside_repo", "")).lower()),
+        ("capability_delete_outside_repo", str(evidence.get("capability_delete_outside_repo", "")).lower()),
+        ("capability_network", str(evidence.get("capability_network", "")).lower()),
+        ("capability_remote_write", str(evidence.get("capability_remote_write", "")).lower()),
+        ("capability_provider_call", str(evidence.get("capability_provider_call", "")).lower()),
+        ("capability_env_read", str(evidence.get("capability_env_read", "")).lower()),
+        ("capability_secret_read", str(evidence.get("capability_secret_read", "")).lower()),
+        ("capability_process_spawn", str(evidence.get("capability_process_spawn", "")).lower()),
+        ("capability_shell", str(evidence.get("capability_shell", "")).lower()),
+        (
+            "executor_capability_action_count",
+            str(evidence.get("executor_capability_action_count", "")),
+        ),
+        (
+            "executor_capability_expected_action_count",
+            str(evidence.get("executor_capability_expected_action_count", "")),
+        ),
+        (
+            "executor_capability_exposure_hash",
+            _short_hash(evidence.get("executor_capability_exposure_hash", "")),
+        ),
+        (
+            "executor_capability_exposure_metadata_hash",
+            _short_hash(evidence.get("executor_capability_exposure_metadata_hash", "")),
+        ),
+    ]
+
+
+def _evidence_store_trust_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("evidence_store_trust_boundary", str(evidence.get("evidence_store_trust_boundary", ""))),
+        ("evidence_store_writer", str(evidence.get("evidence_store_writer", ""))),
+        (
+            "executor_can_write_evidence_store",
+            str(evidence.get("executor_can_write_evidence_store", "")),
+        ),
+        (
+            "evidence_store_is_executor_isolated",
+            str(evidence.get("evidence_store_is_executor_isolated", "")).lower(),
+        ),
+        ("evidence_store_write_source", str(evidence.get("evidence_store_write_source", ""))),
+        ("evidence_store_integrity_status", str(evidence.get("evidence_store_integrity_status", ""))),
+        (
+            "evidence_store_trust_metadata_hash",
+            _short_hash(evidence.get("evidence_store_trust_metadata_hash", "")),
+        ),
+    ]
+
+
 def _provider_adapter_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
     if evidence.get("citizen_one_requested") is not True:
         return []
@@ -423,6 +534,12 @@ def _short_hash(value: object) -> str:
     if not isinstance(value, str):
         return ""
     return value[:12]
+
+
+def _list_count(value: object) -> int | str:
+    if not isinstance(value, list):
+        return ""
+    return len(value)
 
 
 def _print_card(title: str, status: str, rows: list[tuple[str, str]], reasons: list[str] | None = None) -> None:
