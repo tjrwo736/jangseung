@@ -70,6 +70,8 @@ def build_evidence_packet(
             "citizen_one_proposal_contract_v0_required": citizen_one_requested,
             "proposal_reported_only_is_not_judgment_basis": citizen_one_requested,
             "deterministic_proposal_stub_opt_in": citizen_one_requested and proposal_stub_requested,
+            "prompt_response_redaction_metadata_v0_required": True,
+            "raw_prompt_response_storage_forbidden": True,
         },
         "status": law_result.status,
         "status_reasons": list(law_result.status_reasons),

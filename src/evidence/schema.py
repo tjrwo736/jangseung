@@ -33,6 +33,7 @@ from src.contracts import (
     DETERMINISTIC_STUB_PROPOSAL_STEPS,
     DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
     EVIDENCE_BINDING_V1,
+    FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS,
     GIT_STATUS_PORCELAIN_V1,
     HIGH,
     IMPACT_RISKS,
@@ -67,6 +68,17 @@ from src.contracts import (
     PROVIDER_SECRET_SOURCE_NONE,
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
     PROVIDER_SECRET_SOURCES,
+    PROMPT_BUILD_STATUS_NOT_BUILT,
+    PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
+    PROMPT_BUILD_STATUSES,
+    PROMPT_REDACTION_METADATA_FIELDS,
+    PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED,
+    PROMPT_REDACTION_STATUSES,
+    PROMPT_SOURCE_DISABLED,
+    PROMPT_SOURCE_NONE,
+    PROMPT_SOURCES,
+    PROMPT_STORAGE_POLICIES,
+    PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE,
     PROPOSAL_CONTRACT_FIELDS,
     PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
@@ -84,6 +96,20 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     STATUSES,
     REPORTED_ONLY,
+    RESPONSE_ERROR_CLASS_NONE,
+    RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    RESPONSE_ERROR_CLASSES,
+    RESPONSE_ERROR_SAFE_SUMMARY_NONE,
+    RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED,
+    RESPONSE_REDACTION_METADATA_FIELDS,
+    RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED,
+    RESPONSE_REDACTION_STATUSES,
+    RESPONSE_SOURCE_DISABLED_ADAPTER,
+    RESPONSE_SOURCE_NONE,
+    RESPONSE_SOURCES,
+    RESPONSE_STATUS_NOT_REQUESTED,
+    RESPONSE_STATUS_PROVIDER_DISABLED,
+    RESPONSE_STATUSES,
 )
 
 
@@ -127,6 +153,8 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "mutation_boundary_status",
     *CITIZEN_ONE_EVIDENCE_FIELDS,
     *PROVIDER_ADAPTER_DISABLED_FIELDS,
+    *PROMPT_REDACTION_METADATA_FIELDS,
+    *RESPONSE_REDACTION_METADATA_FIELDS,
 )
 
 BINDING_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -216,6 +244,8 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _expect(packet, "mutation_boundary_status", str, errors)
     _validate_citizen_one_fields(packet, errors)
     _validate_provider_adapter_disabled_fields(packet, errors)
+    _validate_prompt_redaction_metadata_fields(packet, errors)
+    _validate_response_redaction_metadata_fields(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
     if packet.get("aeg_version") != AEG_VERSION:
@@ -467,6 +497,129 @@ def _validate_provider_adapter_disabled_fields(packet: dict[str, Any], errors: l
             errors.append("INVALID_EVIDENCE: non-requested provider response safe summary must be empty")
 
 
+def _validate_prompt_redaction_metadata_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "prompt_build_requested",
+        "prompt_secret_detected",
+        "prompt_raw_stored",
+    )
+    string_fields = (
+        "prompt_build_status",
+        "prompt_source",
+        "prompt_input_summary",
+        "prompt_redaction_status",
+        "prompt_hash_candidate",
+        "prompt_storage_policy",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("prompt_build_status") not in PROMPT_BUILD_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid prompt_build_status: {packet.get('prompt_build_status')}")
+    if packet.get("prompt_source") not in PROMPT_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid prompt_source: {packet.get('prompt_source')}")
+    if packet.get("prompt_redaction_status") not in PROMPT_REDACTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid prompt_redaction_status: "
+            f"{packet.get('prompt_redaction_status')}"
+        )
+    if packet.get("prompt_storage_policy") not in PROMPT_STORAGE_POLICIES:
+        errors.append(f"INVALID_EVIDENCE: invalid prompt_storage_policy: {packet.get('prompt_storage_policy')}")
+
+    if packet.get("prompt_build_requested") is not False:
+        errors.append("INVALID_EVIDENCE: prompt_build_requested must be false while provider adapter is disabled")
+    if packet.get("prompt_input_summary") != "":
+        errors.append("INVALID_EVIDENCE: prompt_input_summary must be empty redaction metadata only")
+    if packet.get("prompt_redaction_status") != PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED:
+        errors.append("INVALID_EVIDENCE: prompt_redaction_status must declare no raw prompt storage")
+    if packet.get("prompt_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: prompt_hash_candidate must be empty")
+    if packet.get("prompt_storage_policy") != PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE:
+        errors.append("INVALID_EVIDENCE: prompt_storage_policy must be no_raw_prompt_storage")
+    if packet.get("prompt_secret_detected") is not False:
+        errors.append("INVALID_EVIDENCE: prompt_secret_detected must be false")
+    if packet.get("prompt_raw_stored") is not False:
+        errors.append("INVALID_EVIDENCE: prompt_raw_stored must be false")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("prompt_build_status") != PROMPT_BUILD_STATUS_PROVIDER_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested prompt_build_status must be not_built_provider_disabled")
+        if packet.get("prompt_source") != PROMPT_SOURCE_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested prompt_source must be disabled")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("prompt_build_status") != PROMPT_BUILD_STATUS_NOT_BUILT:
+            errors.append("INVALID_EVIDENCE: non-requested prompt_build_status must be not_built")
+        if packet.get("prompt_source") != PROMPT_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested prompt_source must be none")
+
+
+def _validate_response_redaction_metadata_fields(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "response_present",
+        "response_reported_only",
+        "response_raw_stored",
+    )
+    string_fields = (
+        "response_status",
+        "response_source",
+        "response_trust_boundary",
+        "response_redaction_status",
+        "response_hash_candidate",
+        "response_error_class",
+        "response_error_safe_summary",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+
+    if packet.get("response_status") not in RESPONSE_STATUSES:
+        errors.append(f"INVALID_EVIDENCE: invalid response_status: {packet.get('response_status')}")
+    if packet.get("response_source") not in RESPONSE_SOURCES:
+        errors.append(f"INVALID_EVIDENCE: invalid response_source: {packet.get('response_source')}")
+    if packet.get("response_redaction_status") not in RESPONSE_REDACTION_STATUSES:
+        errors.append(
+            "INVALID_EVIDENCE: invalid response_redaction_status: "
+            f"{packet.get('response_redaction_status')}"
+        )
+    if packet.get("response_error_class") not in RESPONSE_ERROR_CLASSES:
+        errors.append(f"INVALID_EVIDENCE: invalid response_error_class: {packet.get('response_error_class')}")
+
+    if packet.get("response_present") is not False:
+        errors.append("INVALID_EVIDENCE: response_present must be false while provider adapter is disabled")
+    if packet.get("response_reported_only") is not True:
+        errors.append("INVALID_EVIDENCE: response metadata must be marked reported_only")
+    if packet.get("response_trust_boundary") != REPORTED_ONLY:
+        errors.append("INVALID_EVIDENCE: response trust boundary must be reported_only")
+    if packet.get("response_redaction_status") != RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED:
+        errors.append("INVALID_EVIDENCE: response_redaction_status must declare no raw response storage")
+    if packet.get("response_hash_candidate") != "":
+        errors.append("INVALID_EVIDENCE: response_hash_candidate must be empty")
+    if packet.get("response_raw_stored") is not False:
+        errors.append("INVALID_EVIDENCE: response_raw_stored must be false")
+
+    if packet.get("citizen_one_requested") is True:
+        if packet.get("response_status") != RESPONSE_STATUS_PROVIDER_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested response_status must be provider_disabled")
+        if packet.get("response_source") != RESPONSE_SOURCE_DISABLED_ADAPTER:
+            errors.append("INVALID_EVIDENCE: requested response_source must be disabled_adapter")
+        if packet.get("response_error_class") != RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED:
+            errors.append("INVALID_EVIDENCE: requested response_error_class must be provider_not_configured")
+        if packet.get("response_error_safe_summary") != RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED:
+            errors.append("INVALID_EVIDENCE: requested response_error_safe_summary mismatch")
+    elif packet.get("citizen_one_requested") is False:
+        if packet.get("response_status") != RESPONSE_STATUS_NOT_REQUESTED:
+            errors.append("INVALID_EVIDENCE: non-requested response_status must be not_requested")
+        if packet.get("response_source") != RESPONSE_SOURCE_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested response_source must be none")
+        if packet.get("response_error_class") != RESPONSE_ERROR_CLASS_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested response_error_class must be empty")
+        if packet.get("response_error_safe_summary") != RESPONSE_ERROR_SAFE_SUMMARY_NONE:
+            errors.append("INVALID_EVIDENCE: non-requested response_error_safe_summary must be empty")
+
+
 def _validate_proposal_contract_fields(packet: dict[str, Any], errors: list[str]) -> None:
     for field in PROPOSAL_CONTRACT_FIELDS:
         if field not in packet:
@@ -589,21 +742,30 @@ def _expected_deterministic_stub_output_hash(packet: dict[str, Any]) -> str:
 
 
 def _validate_forbidden_raw_prompt_response_fields(packet: dict[str, Any], errors: list[str]) -> None:
-    forbidden = {
-        "raw_prompt",
-        "raw_response",
-        "provider_prompt",
-        "provider_response",
-        "provider_raw_prompt",
-        "provider_raw_response",
-        "provider_request_body",
-        "provider_response_body",
-        "model_request_body",
-        "model_response_body",
-    }
-    for field in forbidden:
-        if field in packet:
-            errors.append(f"INVALID_EVIDENCE: raw prompt/response storage field is forbidden: {field}")
+    errors.extend(validate_no_forbidden_raw_prompt_response_keys(packet, label="evidence"))
+
+
+def validate_no_forbidden_raw_prompt_response_keys(payload: Any, label: str) -> list[str]:
+    errors: list[str] = []
+    forbidden = set(FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS)
+    for path in _forbidden_key_paths(payload, forbidden):
+        errors.append(f"INVALID_EVIDENCE: forbidden raw prompt/response storage key in {label}: {path}")
+    return errors
+
+
+def _forbidden_key_paths(value: Any, forbidden: set[str], prefix: str = "") -> list[str]:
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_path = f"{prefix}.{key}" if prefix else str(key)
+            if key in forbidden:
+                paths.append(key_path)
+            paths.extend(_forbidden_key_paths(child, forbidden, key_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            child_path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            paths.extend(_forbidden_key_paths(child, forbidden, child_path))
+    return paths
 
 
 def validate_evidence_binding_v0(packet: dict[str, Any]) -> list[str]:

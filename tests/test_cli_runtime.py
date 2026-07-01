@@ -33,6 +33,7 @@ from src.contracts import (
     DETERMINISTIC_STUB_PROPOSAL_STEPS,
     DETERMINISTIC_STUB_PROPOSAL_SUMMARY,
     EVIDENCE_BINDING_V1,
+    FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS,
     GIT_STAGED,
     GIT_WORKING_TREE,
     HIGH,
@@ -67,6 +68,13 @@ from src.contracts import (
     PROVIDER_RESPONSE_STATUS_PROVIDER_NOT_CONFIGURED,
     PROVIDER_SECRET_SOURCE_NONE,
     PROVIDER_SECRET_SOURCE_NOT_REQUESTED,
+    PROMPT_BUILD_STATUS_NOT_BUILT,
+    PROMPT_BUILD_STATUS_PROVIDER_DISABLED,
+    PROMPT_REDACTION_METADATA_FIELDS,
+    PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED,
+    PROMPT_SOURCE_DISABLED,
+    PROMPT_SOURCE_NONE,
+    PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE,
     PROPOSAL_HOLD_REASON_NONE,
     PROPOSAL_HOLD_REASON_PROVIDER_NOT_CONFIGURED,
     PROPOSAL_KIND_DETERMINISTIC_STUB,
@@ -76,6 +84,16 @@ from src.contracts import (
     PROPOSAL_SOURCE_NONE,
     PROPOSAL_STATUS_DETERMINISTIC_STUB_RECORDED,
     PROPOSAL_STATUS_PROVIDER_NOT_CONFIGURED,
+    RESPONSE_ERROR_CLASS_NONE,
+    RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
+    RESPONSE_ERROR_SAFE_SUMMARY_NONE,
+    RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED,
+    RESPONSE_REDACTION_METADATA_FIELDS,
+    RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED,
+    RESPONSE_SOURCE_DISABLED_ADAPTER,
+    RESPONSE_SOURCE_NONE,
+    RESPONSE_STATUS_NOT_REQUESTED,
+    RESPONSE_STATUS_PROVIDER_DISABLED,
     RUN_MANIFEST_V1,
     SAFE_DEFAULT,
 )
@@ -316,6 +334,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(manifest["model_output_hash_candidate"], evidence["model_output_hash_candidate"])
         for field in self._provider_adapter_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._prompt_redaction_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._response_redaction_fields():
+            self.assertEqual(manifest[field], evidence[field])
         self.assertEqual(
             manifest["citizen_one_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._citizen_one_fields()}),
@@ -323,6 +345,14 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             manifest["provider_adapter_evidence_hash"],
             sha256_json({field: evidence[field] for field in self._provider_adapter_fields()}),
+        )
+        self.assertEqual(
+            manifest["prompt_redaction_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._prompt_redaction_fields()}),
+        )
+        self.assertEqual(
+            manifest["response_redaction_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._response_redaction_fields()}),
         )
         self.assertNotIn("proposal_evidence_hash", manifest)
         self.assertEqual(evidence["bound_manifest_path"], f".aeg/runs/{evidence['run_id']}/manifest.json")
@@ -416,6 +446,21 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("provider_secret_observed: false", run.stdout)
         self.assertIn("provider_mode: disabled", run.stdout)
         self.assertIn("provider_prompt_source: disabled", run.stdout)
+        self.assertIn("prompt_build_requested: false", run.stdout)
+        self.assertIn("prompt_build_status: not_built_provider_disabled", run.stdout)
+        self.assertIn("prompt_source: disabled", run.stdout)
+        self.assertIn("prompt_redaction_status: no_raw_prompt_stored", run.stdout)
+        self.assertIn("prompt_storage_policy: no_raw_prompt_storage", run.stdout)
+        self.assertIn("prompt_secret_detected: false", run.stdout)
+        self.assertIn("prompt_raw_stored: false", run.stdout)
+        self.assertIn("response_present: false", run.stdout)
+        self.assertIn("response_status: provider_disabled", run.stdout)
+        self.assertIn("response_source: disabled_adapter", run.stdout)
+        self.assertIn("response_reported_only: true", run.stdout)
+        self.assertIn("response_trust_boundary: reported_only", run.stdout)
+        self.assertIn("response_redaction_status: no_raw_response_stored", run.stdout)
+        self.assertIn("response_raw_stored: false", run.stdout)
+        self.assertIn("response_error_class: provider_not_configured", run.stdout)
         self.assertIn("provider_network_opt_in: false", run.stdout)
         self.assertIn("provider_response_present: false", run.stdout)
         self.assertIn("provider_response_status: provider_not_configured", run.stdout)
@@ -481,8 +526,11 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
         self.assertIn("citizen_one_status: CITIZEN_ONE_HELD_PROVIDER_NOT_CONFIGURED", verify.stdout)
         self.assertIn("provider_response_status: provider_not_configured", verify.stdout)
+        self.assertIn("prompt redaction metadata fields matched manifest", verify.stdout)
+        self.assertIn("response redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
         self.assertIn("provider adapter output is reported_only and not an external oracle", verify.stdout)
+        self.assertIn("provider/model response remains reported_only and not an external oracle", verify.stdout)
         self.assertIn("proposal_present: false", verify.stdout)
         self.assertIn("proposal_status: provider_not_configured", verify.stdout)
         self.assertIn("citizen one evidence fields matched manifest", verify.stdout)
@@ -512,6 +560,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("provider_secret_observed: false", run.stdout)
         self.assertIn("provider_mode: disabled", run.stdout)
         self.assertIn("provider_prompt_source: disabled", run.stdout)
+        self.assertIn("prompt_raw_stored: false", run.stdout)
+        self.assertIn("response_raw_stored: false", run.stdout)
+        self.assertIn("response_reported_only: true", run.stdout)
         self.assertIn("provider_response_present: false", run.stdout)
         self.assertIn("provider_response_status: provider_not_configured", run.stdout)
         self.assertIn("provider_response_reported_only: true", run.stdout)
@@ -579,6 +630,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence_status_value: CLEAN_CORE", verify.stdout)
         self.assertIn("citizen_one_status: CITIZEN_ONE_PROPOSAL_RECORDED", verify.stdout)
         self.assertIn("provider_response_status: provider_not_configured", verify.stdout)
+        self.assertIn("prompt redaction metadata fields matched manifest", verify.stdout)
+        self.assertIn("response redaction metadata fields matched manifest", verify.stdout)
         self.assertIn("provider adapter disabled fields matched manifest", verify.stdout)
         self.assertIn("proposal_present: true", verify.stdout)
         self.assertIn("proposal_status: deterministic_stub_recorded", verify.stdout)
@@ -791,6 +844,102 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("INVALID_EVIDENCE: manifest provider_network_opt_in mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: manifest provider_response_status mismatch", verify.stdout)
         self.assertIn("INVALID_EVIDENCE: provider adapter disabled fields mismatch", verify.stdout)
+
+    def test_prompt_response_redaction_metadata_is_bound_without_raw_storage(self):
+        self._aeg("init")
+        dummy_provider_value = "DUMMY_PROVIDER_SECRET_SHOULD_NOT_APPEAR"
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": dummy_provider_value}, clear=False):
+            run = self._aeg("run", "--citizen-one", "fix typo in README")
+
+        self.assertIn("prompt_raw_stored: false", run.stdout)
+        self.assertIn("response_raw_stored: false", run.stdout)
+        self.assertNotIn(dummy_provider_value, run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_prompt_redaction_disabled_contract(evidence)
+        self._assert_response_redaction_disabled_contract(evidence)
+        for field in self._prompt_redaction_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        for field in self._response_redaction_fields():
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["prompt_redaction_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._prompt_redaction_fields()}),
+        )
+        self.assertEqual(
+            manifest["response_redaction_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._response_redaction_fields()}),
+        )
+        self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._prompt_redaction_fields()}))
+        self.assertNotIn("fix typo in README", json.dumps({field: evidence[field] for field in self._response_redaction_fields()}))
+        self._assert_no_forbidden_raw_storage_keys(evidence)
+        self._assert_no_forbidden_raw_storage_keys(manifest)
+        self._assert_artifacts_do_not_store_forbidden_raw_keys_or_secret(dummy_provider_value)
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("prompt redaction metadata fields matched manifest", verify.stdout)
+        self.assertIn("response redaction metadata fields matched manifest", verify.stdout)
+        self.assertIn("provider/model response remains reported_only and not an external oracle", verify.stdout)
+        self.assertNotIn(dummy_provider_value, verify.stdout)
+
+    def test_verify_rejects_tampered_prompt_response_redaction_metadata(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        evidence, path = self._latest_evidence_with_path()
+        evidence["prompt_raw_stored"] = True
+        evidence["response_raw_stored"] = True
+        evidence["response_status"] = "completed"
+        self._write_json(path, evidence)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: prompt_raw_stored must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: response_raw_stored must be false", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: invalid response_status: completed", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: requested response_status must be provider_disabled", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest prompt_raw_stored mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: manifest response_status mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: prompt redaction metadata fields mismatch", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: response redaction metadata fields mismatch", verify.stdout)
+
+    def test_verify_rejects_forbidden_raw_keys_in_evidence(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        original, path = self._latest_evidence_with_path()
+        forbidden_value = "RAW_PROMPT_RESPONSE_VALUE_SHOULD_NOT_APPEAR_IN_VERIFY_OUTPUT"
+
+        for key in FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS:
+            with self.subTest(key=key):
+                tampered = dict(original)
+                tampered[key] = forbidden_value
+                self._write_json(path, tampered)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn(f"forbidden raw prompt/response storage key in evidence: {key}", verify.stdout)
+                self.assertNotIn(forbidden_value, verify.stdout)
+
+    def test_verify_rejects_forbidden_raw_key_in_manifest_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "--citizen-one", "fix typo in README")
+        manifest, manifest_path = self._latest_manifest_with_path()
+        forbidden_value = "RAW_RESPONSE_VALUE_SHOULD_NOT_APPEAR_IN_VERIFY_OUTPUT"
+        manifest["metadata"] = {"response_text": forbidden_value}
+        self._write_manifest_and_rebind_hash(manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("forbidden raw prompt/response storage key in manifest: metadata.response_text", verify.stdout)
+        self.assertNotIn(forbidden_value, verify.stdout)
 
     def test_verify_rejects_tampered_proposal_fields(self):
         self._aeg("init")
@@ -1304,6 +1453,12 @@ class CliRuntimeTests(unittest.TestCase):
     def _provider_adapter_fields(self):
         return PROVIDER_ADAPTER_DISABLED_FIELDS
 
+    def _prompt_redaction_fields(self):
+        return PROMPT_REDACTION_METADATA_FIELDS
+
+    def _response_redaction_fields(self):
+        return RESPONSE_REDACTION_METADATA_FIELDS
+
     def _proposal_fields(self):
         return (
             "proposal_id",
@@ -1323,7 +1478,55 @@ class CliRuntimeTests(unittest.TestCase):
             "proposal_hold_reason",
         )
 
+    def _assert_prompt_redaction_not_requested_contract(self, evidence):
+        self.assertFalse(evidence["prompt_build_requested"])
+        self.assertEqual(evidence["prompt_build_status"], PROMPT_BUILD_STATUS_NOT_BUILT)
+        self.assertEqual(evidence["prompt_source"], PROMPT_SOURCE_NONE)
+        self.assertEqual(evidence["prompt_input_summary"], "")
+        self.assertEqual(evidence["prompt_redaction_status"], PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED)
+        self.assertEqual(evidence["prompt_hash_candidate"], "")
+        self.assertEqual(evidence["prompt_storage_policy"], PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE)
+        self.assertFalse(evidence["prompt_secret_detected"])
+        self.assertFalse(evidence["prompt_raw_stored"])
+
+    def _assert_prompt_redaction_disabled_contract(self, evidence):
+        self.assertFalse(evidence["prompt_build_requested"])
+        self.assertEqual(evidence["prompt_build_status"], PROMPT_BUILD_STATUS_PROVIDER_DISABLED)
+        self.assertEqual(evidence["prompt_source"], PROMPT_SOURCE_DISABLED)
+        self.assertEqual(evidence["prompt_input_summary"], "")
+        self.assertEqual(evidence["prompt_redaction_status"], PROMPT_REDACTION_STATUS_NO_RAW_PROMPT_STORED)
+        self.assertEqual(evidence["prompt_hash_candidate"], "")
+        self.assertEqual(evidence["prompt_storage_policy"], PROMPT_STORAGE_POLICY_NO_RAW_PROMPT_STORAGE)
+        self.assertFalse(evidence["prompt_secret_detected"])
+        self.assertFalse(evidence["prompt_raw_stored"])
+
+    def _assert_response_redaction_not_requested_contract(self, evidence):
+        self.assertFalse(evidence["response_present"])
+        self.assertEqual(evidence["response_status"], RESPONSE_STATUS_NOT_REQUESTED)
+        self.assertEqual(evidence["response_source"], RESPONSE_SOURCE_NONE)
+        self.assertTrue(evidence["response_reported_only"])
+        self.assertEqual(evidence["response_trust_boundary"], REPORTED_ONLY)
+        self.assertEqual(evidence["response_redaction_status"], RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED)
+        self.assertEqual(evidence["response_hash_candidate"], "")
+        self.assertFalse(evidence["response_raw_stored"])
+        self.assertEqual(evidence["response_error_class"], RESPONSE_ERROR_CLASS_NONE)
+        self.assertEqual(evidence["response_error_safe_summary"], RESPONSE_ERROR_SAFE_SUMMARY_NONE)
+
+    def _assert_response_redaction_disabled_contract(self, evidence):
+        self.assertFalse(evidence["response_present"])
+        self.assertEqual(evidence["response_status"], RESPONSE_STATUS_PROVIDER_DISABLED)
+        self.assertEqual(evidence["response_source"], RESPONSE_SOURCE_DISABLED_ADAPTER)
+        self.assertTrue(evidence["response_reported_only"])
+        self.assertEqual(evidence["response_trust_boundary"], REPORTED_ONLY)
+        self.assertEqual(evidence["response_redaction_status"], RESPONSE_REDACTION_STATUS_NO_RAW_RESPONSE_STORED)
+        self.assertEqual(evidence["response_hash_candidate"], "")
+        self.assertFalse(evidence["response_raw_stored"])
+        self.assertEqual(evidence["response_error_class"], RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED)
+        self.assertEqual(evidence["response_error_safe_summary"], RESPONSE_ERROR_SAFE_SUMMARY_PROVIDER_DISABLED)
+
     def _assert_provider_not_requested_contract(self, evidence):
+        self._assert_prompt_redaction_not_requested_contract(evidence)
+        self._assert_response_redaction_not_requested_contract(evidence)
         self.assertEqual(evidence["provider_request_id"], "")
         self.assertEqual(evidence["provider_mode"], PROVIDER_MODE_NOT_REQUESTED)
         self.assertEqual(evidence["provider_name"], PROVIDER_NAME_NONE)
@@ -1351,6 +1554,8 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["provider_response_error_safe_summary"], PROVIDER_RESPONSE_ERROR_SAFE_SUMMARY_NONE)
 
     def _assert_provider_disabled_contract(self, evidence):
+        self._assert_prompt_redaction_disabled_contract(evidence)
+        self._assert_response_redaction_disabled_contract(evidence)
         self.assertEqual(evidence["provider_request_id"], PROVIDER_ADAPTER_DISABLED_REQUEST_ID)
         self.assertEqual(evidence["provider_mode"], PROVIDER_MODE_DISABLED)
         self.assertEqual(evidence["provider_name"], PROVIDER_NAME_NONE)
@@ -1433,19 +1638,21 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_provider_disabled_contract(evidence)
 
     def _assert_no_forbidden_raw_storage_keys(self, payload):
-        forbidden = {
-            "raw_prompt",
-            "raw_response",
-            "provider_prompt",
-            "provider_response",
-            "provider_raw_prompt",
-            "provider_raw_response",
-            "provider_request_body",
-            "provider_response_body",
-            "model_request_body",
-            "model_response_body",
-        }
+        forbidden = set(FORBIDDEN_RAW_PROMPT_RESPONSE_KEYS)
         self.assertFalse(forbidden.intersection(self._all_keys(payload)))
+
+    def _assert_artifacts_do_not_store_forbidden_raw_keys_or_secret(self, secret_value):
+        for artifact in (self.repo / ".aeg").rglob("*"):
+            if not artifact.is_file():
+                continue
+            text = artifact.read_text(encoding="utf-8")
+            self.assertNotIn(secret_value, text)
+            if artifact.name == "ledger.jsonl":
+                payloads = [json.loads(line) for line in text.splitlines() if line.strip()]
+            else:
+                payloads = [json.loads(text)]
+            for payload in payloads:
+                self._assert_no_forbidden_raw_storage_keys(payload)
 
     def _all_keys(self, value):
         keys = set()
