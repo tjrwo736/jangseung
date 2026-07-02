@@ -14,6 +14,7 @@ from src.contracts import (
     ACTION_BOUNDARY_FIELDS,
     ACTION_BOUNDARY_NOT_CHECKED,
     BOUND,
+    BYPASS_RESULT_MISMATCH_REJECTED,
     AEG_STATE_WRITE_DENIAL_BYPASS_FIELDS,
     AEG_STATE_WRITE_DENIAL_ENFORCEMENT_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
     AEG_STATE_WRITE_DENIAL_FIELDS,
@@ -47,6 +48,7 @@ from src.contracts import (
     LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
     LEDGER_PREVIOUS_HASH_GENESIS,
     LEDGER_PREVIOUS_HASH_NOT_AVAILABLE,
+    LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     LOW,
     MEDIATED_WRITE_BOUNDARY_ENFORCEMENT_STATUS_NOT_IMPLEMENTED,
     MEDIATED_WRITE_BOUNDARY_FIELDS,
@@ -56,6 +58,7 @@ from src.contracts import (
     MEDIATED_WRITE_DECISION_SOURCE_EXECUTOR_SELF_REPORT,
     MEDIATED_WRITE_DECISION_SOURCE_EXTERNAL_ENFORCEMENT,
     MEDIATED_WRITE_DIRECT_ALLOW_FIELDS,
+    MEDIATED_WRITE_EVIDENCE_MISMATCH_REJECTED,
     MEDIATED_WRITE_PASSLIKE_STATUSES,
     MUTATION_BOUNDARY_CLEAN,
     MUTATION_BOUNDARY_DELTA_DETECTED,
@@ -66,9 +69,11 @@ from src.contracts import (
     NEEDS_USER_GATE,
     NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
     NOT_CHECKED,
+    NOT_CHECKED_PASS_OVERCLAIM_REJECTED,
     NOT_CHECKED_IMPACT_RISKS,
     PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
     LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
+    PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED,
     PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
     PROVIDER_ADAPTER_DISABLED_FIELDS,
@@ -87,8 +92,11 @@ from src.contracts import (
     PRE_LIVE_EXECUTOR_GATE_STATUS_ON_HOLD,
     RESPONSE_REDACTION_METADATA_FIELDS,
     RISK_LEVELS,
+    REPORTED_ONLY_PROOF_REJECTED,
     RUN_MANIFEST_V1,
+    RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUSES,
+    STATUS_OVERCLAIM_REJECTED,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -98,8 +106,11 @@ from src.contracts import (
     WRITE_BYPASS_HARNESS_FIELDS,
     WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES,
     WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED,
+    WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED,
+    WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
     WRITE_BYPASS_HARNESS_SCAFFOLD_V0,
     WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED,
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
@@ -152,7 +163,10 @@ from src.evidence.ledger_integrity import (
     ledger_integrity_manifest_fields,
 )
 from src.evidence.mediated_write_boundary import (
+    expected_bypass_fixture_result_hash,
+    expected_mediated_write_binding_hash,
     expected_mediated_write_boundary_metadata_hash,
+    expected_mediator_contract_hash,
     expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
@@ -2043,6 +2057,10 @@ def _verify_mediated_write_boundary(
         checks.append("write_mediation_enforced remained false")
     else:
         errors.append("INVALID_EVIDENCE: write_mediation_enforced must remain false in scaffold v0")
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "write_mediation_enforced=true cannot be accepted before runtime wiring"
+        )
 
     declared = evidence.get("write_classes_declared")
     granted = evidence.get("write_classes_granted")
@@ -2098,6 +2116,10 @@ def _verify_mediated_write_boundary(
         errors.append("INVALID_EVIDENCE: write_mediation_evidence_status must remain NOT_CHECKED in scaffold v0")
     if evidence_status in MEDIATED_WRITE_PASSLIKE_STATUSES:
         errors.append("INVALID_EVIDENCE: write_mediation_evidence_status cannot claim PASS/SAFE/ENFORCED")
+        errors.append(
+            f"INVALID_EVIDENCE: {NOT_CHECKED_PASS_OVERCLAIM_REJECTED}: "
+            "write_mediation_evidence_status cannot promote NOT_CHECKED to PASS/CLEAN/ENFORCED"
+        )
 
     direct_grants_valid = True
     for field in MEDIATED_WRITE_DIRECT_ALLOW_FIELDS:
@@ -2112,6 +2134,62 @@ def _verify_mediated_write_boundary(
         checks.append("dangerous direct write grants default false")
     else:
         errors.append("INVALID_EVIDENCE: dangerous direct write grants must default false")
+
+    if (
+        evidence.get("phase10e_write_mediation_component_status")
+        == PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED
+    ):
+        checks.append(
+            "phase10e write mediation component label remained "
+            "PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED"
+        )
+    else:
+        errors.append(
+            f"INVALID_EVIDENCE: {WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED}: "
+            "phase10e_write_mediation_component_status must remain "
+            "PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED"
+        )
+
+    if evidence.get("runtime_wiring_status") == RUNTIME_WIRING_NOT_IMPLEMENTED:
+        checks.append("runtime wiring status remained RUNTIME_WIRING_NOT_IMPLEMENTED")
+    else:
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "runtime_wiring_status must remain RUNTIME_WIRING_NOT_IMPLEMENTED"
+        )
+    if evidence.get("live_executor_authority_status") == LIVE_EXECUTOR_AUTHORITY_ON_HOLD:
+        checks.append("live executor authority status remained LIVE_EXECUTOR_AUTHORITY_ON_HOLD")
+    else:
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "live_executor_authority_status must remain LIVE_EXECUTOR_AUTHORITY_ON_HOLD"
+        )
+
+    _verify_phase10e_mismatch_rejection_claims(evidence, checks, errors)
+    _verify_phase10e_component_hash(
+        evidence,
+        checks,
+        errors,
+        "mediator_contract_hash",
+        expected_mediator_contract_hash(),
+        WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED,
+    )
+    _verify_phase10e_component_hash(
+        evidence,
+        checks,
+        errors,
+        "mediated_write_binding_hash",
+        expected_mediated_write_binding_hash(),
+        MEDIATED_WRITE_EVIDENCE_MISMATCH_REJECTED,
+    )
+    _verify_phase10e_component_hash(
+        evidence,
+        checks,
+        errors,
+        "bypass_fixture_result_hash",
+        expected_bypass_fixture_result_hash(),
+        BYPASS_RESULT_MISMATCH_REJECTED,
+    )
 
     if evidence.get("write_mediation_decision_hash") == expected_write_mediation_decision_hash(evidence):
         checks.append("write_mediation_decision_hash replay matched")
@@ -2132,6 +2210,116 @@ def _verify_mediated_write_boundary(
             errors.append("INVALID_EVIDENCE: manifest mediated_write_boundary_metadata_hash mismatch with evidence")
 
     return checks, errors
+
+
+def _verify_phase10e_component_hash(
+    evidence: dict[str, Any],
+    checks: list[str],
+    errors: list[str],
+    field: str,
+    expected_hash: str,
+    rejection_code: str,
+) -> None:
+    actual = evidence.get(field)
+    if not isinstance(actual, str) or not is_sha256_hex(actual):
+        errors.append(f"INVALID_EVIDENCE: {rejection_code}: {field} must be sha256 hex")
+    elif actual == expected_hash:
+        checks.append(f"{field} replay matched")
+    else:
+        errors.append(f"INVALID_EVIDENCE: {rejection_code}: {field} mismatch")
+
+
+def _verify_phase10e_mismatch_rejection_claims(
+    evidence: dict[str, Any],
+    checks: list[str],
+    errors: list[str],
+) -> None:
+    mismatch_found = False
+    if evidence.get("mediation_enforced") is True:
+        mismatch_found = True
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "mediation_enforced=true cannot be accepted without runtime wiring proof"
+        )
+
+    for field, rejected_values in (
+        ("mediator_status", {"ENFORCED"}),
+        ("write_denial_status", {"ACTIVE", "ENFORCED"}),
+        ("bypass_harness_status", {"COVERAGE_COMPLETE", "ENFORCED"}),
+    ):
+        value = evidence.get(field)
+        if value in rejected_values:
+            mismatch_found = True
+            errors.append(f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: {field}={value}")
+
+    for field, rejected_values in (
+        ("write_mediation_status", {"PASS", "CLEAN", "ENFORCED"}),
+        ("mediation_scaffold_status", {"PASS", "CLEAN", "ENFORCED"}),
+    ):
+        value = evidence.get(field)
+        if value in rejected_values:
+            mismatch_found = True
+            errors.append(f"INVALID_EVIDENCE: {NOT_CHECKED_PASS_OVERCLAIM_REJECTED}: {field}={value}")
+
+    reported_write_denied = evidence.get("executor_reported_write_denied")
+    reported_basis = False
+    if isinstance(reported_write_denied, dict):
+        reported_basis = reported_write_denied.get("judgment_basis") is True
+    elif reported_write_denied is True:
+        reported_basis = evidence.get("judgment_basis") in (True, "executor_reported_write_denied")
+    if reported_basis:
+        mismatch_found = True
+        errors.append(
+            f"INVALID_EVIDENCE: {REPORTED_ONLY_PROOF_REJECTED}: "
+            "executor_reported_write_denied cannot become judgment basis"
+        )
+
+    if evidence.get("known_gap_promoted_to_enforced_denial") is True:
+        mismatch_found = True
+        errors.append(
+            f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+            "known gap baseline cannot be promoted to enforced denial"
+        )
+    mismatch_found = _verify_bypass_test_result_claims(evidence.get("bypass_test_results"), errors) or mismatch_found
+
+    if not mismatch_found:
+        checks.append("Phase 10-E mismatch rejection found no forged overclaim fields")
+
+
+def _verify_bypass_test_result_claims(value: Any, errors: list[str]) -> bool:
+    mismatch_found = False
+    if value is None:
+        return False
+    for result in _bypass_result_records(value):
+        wbyp_id = result.get("wbyp_id") or result.get("id") or "UNKNOWN"
+        observed = result.get("observed_result") or result.get("result") or result.get("status")
+        expected = result.get("expected_result") or result.get("expected_red_marker")
+        known_gap = result.get("known_gap_marker")
+        if wbyp_id == "WBYP-001" and expected == WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED:
+            if observed in {"PASS", "BLOCKED", "ENFORCED"}:
+                mismatch_found = True
+                errors.append(
+                    f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+                    f"WBYP-001 expected-red result cannot be {observed}"
+                )
+        if known_gap == WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE:
+            if result.get("enforced_denial") is True or observed in {"BLOCKED", "ENFORCED"}:
+                mismatch_found = True
+                errors.append(
+                    f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+                    "known gap baseline cannot be reported as enforced denial"
+                )
+    return mismatch_found
+
+
+def _bypass_result_records(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        if any(key in value for key in ("wbyp_id", "id", "observed_result", "result", "status")):
+            return [value]
+        return [item for item in value.values() if isinstance(item, dict)]
+    return []
 
 
 def _verify_write_bypass_harness_scaffold(
