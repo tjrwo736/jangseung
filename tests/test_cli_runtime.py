@@ -190,6 +190,12 @@ from src.contracts import (
     TOOL_SURFACE_SCAFFOLD_ONLY,
     TOOL_SURFACE_SOURCE_NONE,
     TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    WBYP_IDS,
+    WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT,
+    WRITE_BYPASS_HARNESS_FIELDS,
+    WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED,
+    WRITE_BYPASS_HARNESS_SCAFFOLD_V0,
+    WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
@@ -220,6 +226,10 @@ from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
+)
+from src.evidence.write_bypass_harness import (
+    expected_write_bypass_harness_metadata_hash,
+    expected_write_bypass_harness_registry_hash,
 )
 from src.evidence import (
     manifest_hash,
@@ -1979,6 +1989,158 @@ class CliRuntimeTests(unittest.TestCase):
                     self._assert_verify_failed(verify)
                 self.assertIn(f"INVALID_EVIDENCE: {message}", verify.stdout)
 
+    def test_write_bypass_harness_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("write_bypass_harness_scaffold_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertIn("write_bypass_harness_execution_status: NOT_CHECKED", run.stdout)
+        self.assertIn("write_bypass_harness_expected_wbyp_count: 25", run.stdout)
+        self.assertIn("write_bypass_harness_registry_id_count: 25", run.stdout)
+        self.assertIn("write_bypass_harness_registry_entry_count: 25", run.stdout)
+        self.assertIn("write_bypass_harness_actual_bypass_tests_present: false", run.stdout)
+        self.assertIn("write_bypass_harness_actual_fixtures_present: false", run.stdout)
+        self.assertIn("write_bypass_harness_actual_write_attempts_present: false", run.stdout)
+        self.assertNotIn("write_bypass_harness_execution_status: PASS", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_write_bypass_harness_scaffold_contract(evidence)
+        for field in self._write_bypass_harness_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["write_bypass_harness_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._write_bypass_harness_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_write_bypass_harness_metadata_hash"],
+            manifest["write_bypass_harness_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("write bypass harness scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("write bypass harness scaffold did not perform filesystem write attempts", verify.stdout)
+        self.assertIn("WBYP registry contained WBYP-001 through WBYP-025", verify.stdout)
+        self.assertIn("WBYP registry entries remained future-only metadata", verify.stdout)
+        self.assertIn("write bypass harness NOT_CHECKED was not promoted to PASS", verify.stdout)
+        self.assertIn("executor self-report was not treated as write bypass proof", verify.stdout)
+        self.assertIn("reported_only was not treated as write bypass judgment basis", verify.stdout)
+        self.assertIn("live executor authority remained ON_HOLD for write bypass harness scaffold", verify.stdout)
+
+    def test_write_bypass_harness_rejects_missing_wbyp_registry_id_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["write_bypass_harness_registry_ids"] = evidence["write_bypass_harness_registry_ids"][:-1]
+        evidence["write_bypass_harness_registry"] = evidence["write_bypass_harness_registry"][:-1]
+        evidence["write_bypass_harness_registry_hash"] = expected_write_bypass_harness_registry_hash(evidence)
+        evidence["write_bypass_harness_metadata_hash"] = expected_write_bypass_harness_metadata_hash(evidence)
+        self._sync_write_bypass_harness_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_registry_ids must be WBYP-001 through WBYP-025",
+            verify.stdout,
+        )
+        self.assertIn("INVALID_EVIDENCE: write_bypass_harness_registry must contain 25 entries", verify.stdout)
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_registry must contain WBYP-001 through WBYP-025",
+            verify.stdout,
+        )
+
+    def test_write_bypass_harness_rejects_pass_safe_enforced_overclaims_even_when_rebound(self):
+        self._aeg("init")
+        for field, value, message in (
+            (
+                "write_bypass_harness_scaffold_status",
+                "SAFE",
+                "write_bypass_harness_scaffold_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+            (
+                "write_bypass_harness_execution_status",
+                "PASS",
+                "write_bypass_harness_execution_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+            (
+                "write_bypass_harness_enforcement_status",
+                "ENFORCED",
+                "write_bypass_harness_enforcement_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+        ):
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = value
+                evidence["write_bypass_harness_metadata_hash"] = expected_write_bypass_harness_metadata_hash(evidence)
+                self._sync_write_bypass_harness_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                if field == "write_bypass_harness_execution_status":
+                    self.assertIn("status: REPLAY_FAILED", verify.stdout)
+                    self.assertNotIn("Traceback", verify.stdout + verify.stderr)
+                else:
+                    self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {message}", verify.stdout)
+
+    def test_write_bypass_harness_rejects_actual_present_and_reported_only_proof_claims(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["write_bypass_harness_actual_bypass_tests_present"] = True
+        evidence["write_bypass_harness_actual_fixtures_present"] = True
+        evidence["write_bypass_harness_actual_write_attempts_present"] = True
+        evidence["write_bypass_harness_mediator_enforcement_present"] = True
+        evidence["write_bypass_harness_external_enforcement_present"] = True
+        evidence["write_bypass_harness_executor_self_report_proof_allowed"] = True
+        evidence["write_bypass_harness_reported_only_judgment_basis_allowed"] = True
+        evidence["judgment_basis"] = "write_bypass_harness_reported_only"
+        evidence["write_bypass_harness_metadata_hash"] = expected_write_bypass_harness_metadata_hash(evidence)
+        self._sync_write_bypass_harness_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_actual_bypass_tests_present must remain false in scaffold v0",
+            verify.stdout,
+        )
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_actual_fixtures_present must remain false in scaffold v0",
+            verify.stdout,
+        )
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_actual_write_attempts_present must remain false in scaffold v0",
+            verify.stdout,
+        )
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_mediator_enforcement_present must remain false in scaffold v0",
+            verify.stdout,
+        )
+        self.assertIn(
+            "INVALID_EVIDENCE: write_bypass_harness_external_enforcement_present must remain false in scaffold v0",
+            verify.stdout,
+        )
+        self.assertIn(
+            "INVALID_EVIDENCE: write bypass reported_only/self-report cannot be judgment basis",
+            verify.stdout,
+        )
+        self.assertIn("INVALID_EVIDENCE: executor self-report cannot prove write bypass harness results", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: reported_only cannot be write bypass judgment basis", verify.stdout)
+
     def test_pre_live_executor_gate_defaults_are_bound_and_replayed(self):
         self._aeg("init")
         run = self._aeg("run", "fix typo in README")
@@ -3443,6 +3605,16 @@ class CliRuntimeTests(unittest.TestCase):
             "mediated_write_boundary_manifest_hash"
         ]
 
+    def _sync_write_bypass_harness_manifest(self, evidence, manifest):
+        for field in self._write_bypass_harness_fields():
+            manifest[field] = evidence[field]
+        manifest["write_bypass_harness_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._write_bypass_harness_fields()}
+        )
+        evidence["bound_write_bypass_harness_metadata_hash"] = manifest[
+            "write_bypass_harness_manifest_hash"
+        ]
+
     def _sync_pre_live_executor_gate_manifest(self, evidence, manifest):
         for field in self._pre_live_executor_gate_fields():
             manifest[field] = evidence[field]
@@ -3535,6 +3707,9 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _mediated_write_boundary_fields(self):
         return MEDIATED_WRITE_BOUNDARY_FIELDS
+
+    def _write_bypass_harness_fields(self):
+        return WRITE_BYPASS_HARNESS_FIELDS
 
     def _pre_live_executor_gate_fields(self):
         return PRE_LIVE_EXECUTOR_GATE_FIELDS
@@ -3839,6 +4014,76 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["executor_self_report_is_not_write_mediation_proof"])
         self.assertTrue(evidence["checks"]["no_live_executor_authority_before_mediated_write_boundary"])
         self.assertTrue(evidence["checks"]["mediated_write_boundary_manifest_binding_required"])
+
+    def _assert_write_bypass_harness_scaffold_contract(self, evidence):
+        self.assertEqual(evidence["write_bypass_harness_scaffold_version"], WRITE_BYPASS_HARNESS_SCAFFOLD_V0)
+        self.assertEqual(
+            evidence["write_bypass_harness_scaffold_status"],
+            WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertEqual(evidence["write_bypass_harness_execution_status"], NOT_CHECKED)
+        self.assertEqual(
+            evidence["write_bypass_harness_enforcement_status"],
+            WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertEqual(
+            evidence["write_bypass_harness_registry_status"],
+            WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertEqual(evidence["write_bypass_harness_expected_wbyp_count"], WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT)
+        self.assertEqual(evidence["write_bypass_harness_registry_ids"], list(WBYP_IDS))
+        self.assertEqual(evidence["write_bypass_harness_fixture_status"], NOT_CHECKED)
+        self.assertEqual(evidence["write_bypass_harness_evidence_status"], NOT_CHECKED)
+        self.assertFalse(evidence["write_bypass_harness_actual_bypass_tests_present"])
+        self.assertFalse(evidence["write_bypass_harness_actual_fixtures_present"])
+        self.assertFalse(evidence["write_bypass_harness_actual_write_attempts_present"])
+        self.assertFalse(evidence["write_bypass_harness_mediator_enforcement_present"])
+        self.assertFalse(evidence["write_bypass_harness_external_enforcement_present"])
+        self.assertFalse(evidence["write_bypass_harness_executor_self_report_proof_allowed"])
+        self.assertFalse(evidence["write_bypass_harness_reported_only_judgment_basis_allowed"])
+        self.assertNotIn(evidence["write_bypass_harness_scaffold_status"], ("PASS", "SAFE", "ENFORCED"))
+        self.assertNotIn(evidence["write_bypass_harness_execution_status"], ("PASS", "SAFE", "ENFORCED"))
+        registry = evidence["write_bypass_harness_registry"]
+        self.assertEqual([entry["id"] for entry in registry], list(WBYP_IDS))
+        self.assertEqual(len(registry), 25)
+        for entry in registry:
+            self.assertTrue(entry["future_only"])
+            self.assertEqual(entry["scaffold_status"], WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED)
+            self.assertEqual(entry["execution_status"], NOT_CHECKED)
+            self.assertEqual(entry["enforcement_status"], WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED)
+            self.assertFalse(entry["actual_test_present"])
+            self.assertFalse(entry["fixture_created"])
+            self.assertFalse(entry["actual_write_attempt_present"])
+            self.assertEqual(entry["proof_source"], WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED)
+            self.assertFalse(entry["executor_self_report_proof_allowed"])
+            self.assertFalse(entry["reported_only_judgment_basis_allowed"])
+            self.assertFalse(entry["judgment_basis"])
+            self.assertNotIn(entry["scaffold_status"], ("PASS", "SAFE", "ENFORCED"))
+            self.assertNotIn(entry["execution_status"], ("PASS", "SAFE", "ENFORCED"))
+            self.assertNotIn(entry["enforcement_status"], ("PASS", "SAFE", "ENFORCED"))
+        self.assertEqual(
+            evidence["write_bypass_harness_registry_hash"],
+            expected_write_bypass_harness_registry_hash(evidence),
+        )
+        self.assertEqual(
+            evidence["write_bypass_harness_metadata_hash"],
+            expected_write_bypass_harness_metadata_hash(evidence),
+        )
+        self.assertTrue(evidence["checks"]["write_bypass_harness_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_registry_metadata_only"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_wbyp_001_through_025_required"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_scaffold_only_not_enforced"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_execution_not_checked"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_not_checked_is_not_pass"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_has_no_actual_bypass_tests"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_has_no_actual_fixtures"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_has_no_actual_write_attempts"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_has_no_mediator_enforcement"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_has_no_external_enforcement"])
+        self.assertTrue(evidence["checks"]["executor_self_report_is_not_write_bypass_proof"])
+        self.assertTrue(evidence["checks"]["reported_only_is_not_write_bypass_judgment_basis"])
+        self.assertTrue(evidence["checks"]["no_live_executor_authority_before_write_bypass_harness"])
+        self.assertTrue(evidence["checks"]["write_bypass_harness_manifest_binding_required"])
 
     def _assert_pre_live_executor_gate_contract(self, evidence):
         self.assertEqual(evidence["pre_live_executor_gate_version"], PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0)

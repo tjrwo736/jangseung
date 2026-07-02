@@ -91,6 +91,7 @@ EVIDENCE_BINDING_V1_FIELDS = (
     "bound_evidence_store_trust_metadata_hash",
     "bound_aeg_state_write_denial_metadata_hash",
     "bound_mediated_write_boundary_metadata_hash",
+    "bound_write_bypass_harness_metadata_hash",
     "bound_pre_live_executor_gate_metadata_hash",
     "bound_ledger_integrity_metadata_hash",
     "bound_manifest_hash",
@@ -526,6 +527,62 @@ MEDIATED_WRITE_BOUNDARY_FIELDS = (
     *MEDIATED_WRITE_DIRECT_ALLOW_FIELDS,
     "write_mediation_decision_hash",
     "mediated_write_boundary_metadata_hash",
+)
+
+WRITE_BYPASS_HARNESS_SCAFFOLD_V0 = "write_bypass_test_harness_scaffold_v0"
+WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED = "SCAFFOLD_ONLY_NOT_ENFORCED"
+WRITE_BYPASS_HARNESS_STATUS_NOT_CHECKED = NOT_CHECKED
+WRITE_BYPASS_HARNESS_STATUSES = (
+    WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    WRITE_BYPASS_HARNESS_STATUS_NOT_CHECKED,
+    INVALID_EVIDENCE,
+)
+WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES = (
+    *MEDIATED_WRITE_PASSLIKE_STATUSES,
+    CLEAN_CORE,
+)
+WBYP_IDS = tuple(f"WBYP-{index:03d}" for index in range(1, 26))
+WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT = len(WBYP_IDS)
+WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED = "future_harness_not_collected"
+WRITE_BYPASS_HARNESS_REGISTRY_ENTRY_FIELDS = (
+    "id",
+    "title",
+    "bypass_target",
+    "write_class_scope",
+    "future_fixture_profile",
+    "future_required_decision",
+    "scaffold_status",
+    "execution_status",
+    "enforcement_status",
+    "future_only",
+    "actual_test_present",
+    "fixture_created",
+    "actual_write_attempt_present",
+    "proof_source",
+    "executor_self_report_proof_allowed",
+    "reported_only_judgment_basis_allowed",
+    "judgment_basis",
+)
+WRITE_BYPASS_HARNESS_FIELDS = (
+    "write_bypass_harness_scaffold_version",
+    "write_bypass_harness_scaffold_status",
+    "write_bypass_harness_execution_status",
+    "write_bypass_harness_enforcement_status",
+    "write_bypass_harness_registry_status",
+    "write_bypass_harness_expected_wbyp_count",
+    "write_bypass_harness_registry_ids",
+    "write_bypass_harness_registry",
+    "write_bypass_harness_fixture_status",
+    "write_bypass_harness_actual_bypass_tests_present",
+    "write_bypass_harness_actual_fixtures_present",
+    "write_bypass_harness_actual_write_attempts_present",
+    "write_bypass_harness_mediator_enforcement_present",
+    "write_bypass_harness_external_enforcement_present",
+    "write_bypass_harness_executor_self_report_proof_allowed",
+    "write_bypass_harness_reported_only_judgment_basis_allowed",
+    "write_bypass_harness_evidence_status",
+    "write_bypass_harness_registry_hash",
+    "write_bypass_harness_metadata_hash",
 )
 ACTION_HIGH_RISK_KINDS = (
     "git_push",

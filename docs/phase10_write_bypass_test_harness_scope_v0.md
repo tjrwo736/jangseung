@@ -253,6 +253,9 @@ This harness scope is downstream of the completed Phase 10 gates:
   sequencing.
 - This Harness Scope defines future test harness input, output, and fixture
   boundaries.
+- Phase 10 Write Bypass Test Harness Scaffold v0 records WBYP registry
+  metadata/schema/verify vocabulary only. It does not implement the future
+  harness, tests, fixtures, write attempts, mediation, or enforcement.
 
 This document does not supersede prior gates. It narrows the next review step
 between the bypass test inventory and any actual harness, mediator, or

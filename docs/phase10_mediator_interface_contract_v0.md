@@ -332,6 +332,9 @@ This mediator interface contract is downstream of the completed Phase 10 gates:
   `BLOCKED`, and mismatch-rejection expectations.
 - Phase 10 Mediated Write Boundary Scaffold v0 records scaffold metadata and
   overclaim rejection, but not enforcement.
+- Phase 10 Write Bypass Test Harness Scaffold v0 records WBYP-001 through
+  WBYP-025 registry metadata/schema/verify vocabulary only, without actual
+  bypass tests, fixtures, write attempts, mediation, or enforcement.
 - This contract defines mediator interface boundaries for future request,
   decision, evidence/provenance, and verify records.
 
