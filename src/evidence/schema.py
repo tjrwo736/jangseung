@@ -31,6 +31,7 @@ from src.contracts import (
     AEG_VERSION,
     BINDING_STATUSES,
     BOUND,
+    BYPASS_RESULT_MISMATCH_REJECTED,
     CAPABILITY_AUTHORITY_FIELDS,
     CAPABILITY_BOUNDARY_CLEAN,
     CAPABILITY_BOUNDARY_NOT_CHECKED,
@@ -95,7 +96,9 @@ from src.contracts import (
     LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
     LEDGER_PREVIOUS_HASH_GENESIS,
     LEDGER_PREVIOUS_HASH_NOT_AVAILABLE,
+    LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     LOW,
+    MEDIATED_WRITE_EVIDENCE_MISMATCH_REJECTED,
     MEDIATED_WRITE_BOUNDARY_ENFORCEMENT_STATUS_NOT_IMPLEMENTED,
     MEDIATED_WRITE_BOUNDARY_FIELDS,
     MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0,
@@ -109,6 +112,7 @@ from src.contracts import (
     MEDIATED_WRITE_STATUSES,
     MEDIUM,
     NEEDS_USER_GATE,
+    NOT_CHECKED_PASS_OVERCLAIM_REJECTED,
     NOT_CHECKED,
     NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
     MUTATION_BOUNDARY_CLEAN,
@@ -182,6 +186,7 @@ from src.contracts import (
     PROVIDER_SELECTION_STATUS_NOT_REQUESTED,
     PROVIDER_SELECTION_STATUSES,
     LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
+    PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED,
     PRE_LIVE_EXECUTOR_GATE_FIELDS,
     PRE_LIVE_EXECUTOR_GATE_MODE_METADATA_SCAFFOLD,
     PRE_LIVE_EXECUTOR_GATE_PASSLIKE_RESULTS,
@@ -220,6 +225,7 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     STATUSES,
     REPORTED_ONLY,
+    REPORTED_ONLY_PROOF_REJECTED,
     RESPONSE_ERROR_CLASS_NONE,
     RESPONSE_ERROR_CLASS_PROVIDER_NOT_CONFIGURED,
     RESPONSE_ERROR_CLASSES,
@@ -234,6 +240,8 @@ from src.contracts import (
     RESPONSE_STATUS_NOT_REQUESTED,
     RESPONSE_STATUS_PROVIDER_DISABLED,
     RESPONSE_STATUSES,
+    RUNTIME_WIRING_NOT_IMPLEMENTED,
+    STATUS_OVERCLAIM_REJECTED,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0,
     TOOL_SURFACE_CLEAN,
@@ -248,9 +256,12 @@ from src.contracts import (
     WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES,
     WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED,
     WRITE_BYPASS_HARNESS_REGISTRY_ENTRY_FIELDS,
+    WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED,
+    WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
     WRITE_BYPASS_HARNESS_SCAFFOLD_V0,
     WRITE_BYPASS_HARNESS_STATUSES,
     WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED,
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
@@ -272,7 +283,10 @@ from src.evidence.ledger_integrity import (
     is_sha256_hex,
 )
 from src.evidence.mediated_write_boundary import (
+    expected_bypass_fixture_result_hash,
+    expected_mediated_write_binding_hash,
     expected_mediated_write_boundary_metadata_hash,
+    expected_mediator_contract_hash,
     expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
@@ -1730,6 +1744,12 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
         "mediated_write_boundary_enforcement_status",
         "write_mediation_decision_source",
         "write_mediation_evidence_status",
+        "phase10e_write_mediation_component_status",
+        "runtime_wiring_status",
+        "live_executor_authority_status",
+        "mediator_contract_hash",
+        "mediated_write_binding_hash",
+        "bypass_fixture_result_hash",
         "write_mediation_decision_hash",
         "mediated_write_boundary_metadata_hash",
     )
@@ -1781,6 +1801,10 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
         errors.append("INVALID_EVIDENCE: write_mediation_enabled must remain false in scaffold v0")
     if packet.get("write_mediation_enforced") is not False:
         errors.append("INVALID_EVIDENCE: write_mediation_enforced must remain false in scaffold v0")
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "write_mediation_enforced=true cannot be accepted before runtime wiring"
+        )
 
     known_write_classes = set(WRITE_CLASSES)
     declared = packet.get("write_classes_declared")
@@ -1846,6 +1870,10 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
     evidence_status = packet.get("write_mediation_evidence_status")
     if evidence_status in MEDIATED_WRITE_PASSLIKE_STATUSES:
         errors.append("INVALID_EVIDENCE: write_mediation_evidence_status cannot claim PASS/SAFE/ENFORCED")
+        errors.append(
+            f"INVALID_EVIDENCE: {NOT_CHECKED_PASS_OVERCLAIM_REJECTED}: "
+            "write_mediation_evidence_status cannot promote NOT_CHECKED to PASS/CLEAN/ENFORCED"
+        )
     if evidence_status not in MEDIATED_WRITE_STATUSES:
         errors.append(f"INVALID_EVIDENCE: invalid write_mediation_evidence_status: {evidence_status}")
     if evidence_status != NOT_CHECKED:
@@ -1873,6 +1901,50 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
     if packet.get("judgment_basis") == "write_mediation_reported_only":
         errors.append("INVALID_EVIDENCE: reported_only write mediation cannot be judgment basis")
 
+    if (
+        packet.get("phase10e_write_mediation_component_status")
+        != PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED
+    ):
+        errors.append(
+            f"INVALID_EVIDENCE: {WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED}: "
+            "phase10e_write_mediation_component_status must remain "
+            "PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED"
+        )
+    if packet.get("runtime_wiring_status") != RUNTIME_WIRING_NOT_IMPLEMENTED:
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "runtime_wiring_status must remain RUNTIME_WIRING_NOT_IMPLEMENTED"
+        )
+    if packet.get("live_executor_authority_status") != LIVE_EXECUTOR_AUTHORITY_ON_HOLD:
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "live_executor_authority_status must remain LIVE_EXECUTOR_AUTHORITY_ON_HOLD"
+        )
+
+    _validate_phase10e_mismatch_rejection_claims(packet, errors)
+
+    _validate_phase10e_component_hash(
+        packet,
+        errors,
+        "mediator_contract_hash",
+        expected_mediator_contract_hash(),
+        WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED,
+    )
+    _validate_phase10e_component_hash(
+        packet,
+        errors,
+        "mediated_write_binding_hash",
+        expected_mediated_write_binding_hash(),
+        MEDIATED_WRITE_EVIDENCE_MISMATCH_REJECTED,
+    )
+    _validate_phase10e_component_hash(
+        packet,
+        errors,
+        "bypass_fixture_result_hash",
+        expected_bypass_fixture_result_hash(),
+        BYPASS_RESULT_MISMATCH_REJECTED,
+    )
+
     decision_hash = packet.get("write_mediation_decision_hash")
     if not isinstance(decision_hash, str) or not _is_sha256_hex(decision_hash):
         errors.append("INVALID_EVIDENCE: write_mediation_decision_hash must be sha256 hex")
@@ -1884,6 +1956,98 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
         errors.append("INVALID_EVIDENCE: mediated_write_boundary_metadata_hash must be sha256 hex")
     elif metadata_hash != expected_mediated_write_boundary_metadata_hash(packet):
         errors.append("INVALID_EVIDENCE: mediated_write_boundary_metadata_hash mismatch")
+
+
+def _validate_phase10e_component_hash(
+    packet: dict[str, Any],
+    errors: list[str],
+    field: str,
+    expected_hash: str,
+    rejection_code: str,
+) -> None:
+    actual = packet.get(field)
+    if not isinstance(actual, str) or not _is_sha256_hex(actual):
+        errors.append(f"INVALID_EVIDENCE: {rejection_code}: {field} must be sha256 hex")
+    elif actual != expected_hash:
+        errors.append(f"INVALID_EVIDENCE: {rejection_code}: {field} mismatch")
+
+
+def _validate_phase10e_mismatch_rejection_claims(packet: dict[str, Any], errors: list[str]) -> None:
+    if packet.get("mediation_enforced") is True:
+        errors.append(
+            f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: "
+            "mediation_enforced=true cannot be accepted without runtime wiring proof"
+        )
+
+    overclaim_fields = (
+        ("mediator_status", {"ENFORCED"}),
+        ("write_denial_status", {"ACTIVE", "ENFORCED"}),
+        ("bypass_harness_status", {"COVERAGE_COMPLETE", "ENFORCED"}),
+    )
+    for field, rejected_values in overclaim_fields:
+        value = packet.get(field)
+        if value in rejected_values:
+            errors.append(f"INVALID_EVIDENCE: {STATUS_OVERCLAIM_REJECTED}: {field}={value}")
+
+    not_checked_pass_fields = (
+        ("write_mediation_status", {"PASS", "CLEAN", "ENFORCED"}),
+        ("mediation_scaffold_status", {"PASS", "CLEAN", "ENFORCED"}),
+    )
+    for field, rejected_values in not_checked_pass_fields:
+        value = packet.get(field)
+        if value in rejected_values:
+            errors.append(f"INVALID_EVIDENCE: {NOT_CHECKED_PASS_OVERCLAIM_REJECTED}: {field}={value}")
+
+    reported_write_denied = packet.get("executor_reported_write_denied")
+    reported_basis = False
+    if isinstance(reported_write_denied, dict):
+        reported_basis = reported_write_denied.get("judgment_basis") is True
+    elif reported_write_denied is True:
+        reported_basis = packet.get("judgment_basis") in (True, "executor_reported_write_denied")
+    if reported_basis:
+        errors.append(
+            f"INVALID_EVIDENCE: {REPORTED_ONLY_PROOF_REJECTED}: "
+            "executor_reported_write_denied cannot become judgment basis"
+        )
+
+    if packet.get("known_gap_promoted_to_enforced_denial") is True:
+        errors.append(
+            f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+            "known gap baseline cannot be promoted to enforced denial"
+        )
+    _validate_bypass_test_result_claims(packet.get("bypass_test_results"), errors)
+
+
+def _validate_bypass_test_result_claims(value: Any, errors: list[str]) -> None:
+    if value is None:
+        return
+    for result in _bypass_result_records(value):
+        wbyp_id = result.get("wbyp_id") or result.get("id") or "UNKNOWN"
+        observed = result.get("observed_result") or result.get("result") or result.get("status")
+        expected = result.get("expected_result") or result.get("expected_red_marker")
+        known_gap = result.get("known_gap_marker")
+        if wbyp_id == "WBYP-001" and expected == WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED:
+            if observed in {"PASS", "BLOCKED", "ENFORCED"}:
+                errors.append(
+                    f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+                    f"WBYP-001 expected-red result cannot be {observed}"
+                )
+        if known_gap == WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE:
+            if result.get("enforced_denial") is True or observed in {"BLOCKED", "ENFORCED"}:
+                errors.append(
+                    f"INVALID_EVIDENCE: {BYPASS_RESULT_MISMATCH_REJECTED}: "
+                    "known gap baseline cannot be reported as enforced denial"
+                )
+
+
+def _bypass_result_records(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        if any(key in value for key in ("wbyp_id", "id", "observed_result", "result", "status")):
+            return [value]
+        return [item for item in value.values() if isinstance(item, dict)]
+    return []
 
 
 def _validate_write_bypass_harness_metadata(packet: dict[str, Any], errors: list[str]) -> None:
