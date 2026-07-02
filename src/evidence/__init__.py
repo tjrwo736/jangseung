@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.evidence.binding import changed_files_hash, manifest_hash
+from src.evidence.mediated_write_evidence_binding import (
+    build_denied_write_no_mutation_observation,
+    build_mediated_write_evidence_record,
+    mediated_write_evidence_binding_digest,
+)
 from src.evidence.mutation_boundary import (
     build_mutation_boundary,
     capture_mutation_snapshot,
@@ -42,7 +47,10 @@ __all__ = [
     "capture_mutation_snapshot",
     "changed_files_hash",
     "compute_mutation_delta",
+    "build_denied_write_no_mutation_observation",
+    "build_mediated_write_evidence_record",
     "manifest_hash",
+    "mediated_write_evidence_binding_digest",
     "mutation_delta_paths",
     "new_run_id",
     "validate_completion_contract_v0",
