@@ -83,6 +83,11 @@ from src.contracts import (
     LEDGER_INTEGRITY_STATUS_TAMPER_EVIDENT_SCAFFOLD_ONLY,
     LEDGER_PREVIOUS_HASH_GENESIS,
     LOW,
+    MEDIATED_WRITE_BOUNDARY_FIELDS,
+    MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0,
+    MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    MEDIATED_WRITE_DECISION_SOURCE_AEGIS_RUNTIME_METADATA,
+    MEDIATED_WRITE_DIRECT_ALLOW_FIELDS,
     MEDIUM,
     MUTATION_BOUNDARY_CLEAN,
     MUTATION_BOUNDARY_DELTA_DETECTED,
@@ -185,6 +190,8 @@ from src.contracts import (
     TOOL_SURFACE_SCAFFOLD_ONLY,
     TOOL_SURFACE_SOURCE_NONE,
     TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    WRITE_CLASSES,
+    WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
@@ -204,6 +211,10 @@ from src.evidence.ledger_integrity import (
     expected_ledger_chain_hash,
     expected_ledger_entry_hash,
     expected_ledger_integrity_metadata_hash,
+)
+from src.evidence.mediated_write_boundary import (
+    expected_mediated_write_boundary_metadata_hash,
+    expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
 from src.evidence.tool_surface import (
@@ -411,6 +422,13 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertNotIn("pre_live_executor_gate_result: PASS", run.stdout)
         self.assertNotIn("pre_live_executor_gate_result: CLEAN", run.stdout)
         self.assertNotIn("pre_live_executor_gate_result: ALLOW", run.stdout)
+        self.assertIn("mediated_write_boundary_scaffold_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertIn("mediated_write_boundary_enforcement_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertIn("write_mediation_enabled: false", run.stdout)
+        self.assertIn("write_mediation_enforced: false", run.stdout)
+        self.assertIn("write_classes_granted_count: 0", run.stdout)
+        self.assertIn("executor_direct_aeg_write_allowed: false", run.stdout)
+        self.assertIn("executor_direct_outside_repo_write_allowed: false", run.stdout)
         evidence = self._latest_evidence()
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], NO_CHANGED_FILES)
@@ -434,6 +452,7 @@ class CliRuntimeTests(unittest.TestCase):
         self._assert_executor_capability_exposure_contract(evidence)
         self._assert_evidence_store_trust_contract(evidence)
         self._assert_aeg_state_write_denial_scaffold_contract(evidence)
+        self._assert_mediated_write_boundary_scaffold_contract(evidence)
         self._assert_pre_live_executor_gate_contract(evidence)
         self._assert_ledger_integrity_scaffold_contract(evidence)
         self.assertEqual(evidence["binding_version"], EVIDENCE_BINDING_V1)
@@ -479,6 +498,13 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("evidence store trust boundary remained folder_local_not_executor_isolated", verify.stdout)
         self.assertIn("evidence_store_is_executor_isolated remained false", verify.stdout)
         self.assertIn("evidence store integrity status remained NOT_CHECKED", verify.stdout)
+        self.assertIn("mediated write boundary scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("mediated_write_boundary_scaffold_status remained SCAFFOLD_ONLY_NOT_ENFORCED", verify.stdout)
+        self.assertIn("write_mediation_enabled remained false", verify.stdout)
+        self.assertIn("write_mediation_enforced remained false", verify.stdout)
+        self.assertIn("dangerous direct write grants default false", verify.stdout)
+        self.assertIn("metadata denial was not treated as external enforcement", verify.stdout)
+        self.assertIn("write mediation NOT_CHECKED was not promoted to PASS", verify.stdout)
         self.assertIn("pre-live executor gate metadata fields matched manifest", verify.stdout)
         self.assertIn("live_executor_authority_granted remained false", verify.stdout)
         self.assertIn("live executor authority remained ON_HOLD", verify.stdout)
@@ -556,6 +582,8 @@ class CliRuntimeTests(unittest.TestCase):
             self.assertEqual(manifest[field], evidence[field])
         for field in self._evidence_store_trust_fields():
             self.assertEqual(manifest[field], evidence[field])
+        for field in self._mediated_write_boundary_fields():
+            self.assertEqual(manifest[field], evidence[field])
         for field in self._pre_live_executor_gate_fields():
             self.assertEqual(manifest[field], evidence[field])
         for field in self._ledger_integrity_fields():
@@ -621,6 +649,10 @@ class CliRuntimeTests(unittest.TestCase):
             sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
         )
         self.assertEqual(
+            manifest["mediated_write_boundary_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._mediated_write_boundary_fields()}),
+        )
+        self.assertEqual(
             manifest["pre_live_executor_gate_manifest_hash"],
             sha256_json({field: evidence[field] for field in self._pre_live_executor_gate_fields()}),
         )
@@ -647,6 +679,10 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(
             evidence["bound_evidence_store_trust_metadata_hash"],
             sha256_json({field: evidence[field] for field in self._evidence_store_trust_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_mediated_write_boundary_metadata_hash"],
+            sha256_json({field: evidence[field] for field in self._mediated_write_boundary_fields()}),
         )
         self.assertEqual(
             evidence["bound_pre_live_executor_gate_metadata_hash"],
@@ -1799,6 +1835,149 @@ class CliRuntimeTests(unittest.TestCase):
             "INVALID_EVIDENCE: missing evidence binding v1 field: bound_aeg_state_write_denial_metadata_hash",
             verify.stdout,
         )
+
+    def test_mediated_write_boundary_scaffold_defaults_are_bound_and_replayed(self):
+        self._aeg("init")
+        run = self._aeg("run", "fix typo in README")
+
+        self.assertIn("mediated_write_boundary_scaffold_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertIn("mediated_write_boundary_enforcement_status: SCAFFOLD_ONLY_NOT_ENFORCED", run.stdout)
+        self.assertIn("write_mediation_enabled: false", run.stdout)
+        self.assertIn("write_mediation_enforced: false", run.stdout)
+        self.assertIn("write_classes_declared_count: 13", run.stdout)
+        self.assertIn("write_classes_granted_count: 0", run.stdout)
+        self.assertIn("write_classes_denied_count: 13", run.stdout)
+        self.assertIn("write_mediation_evidence_status: NOT_CHECKED", run.stdout)
+        self.assertNotIn("mediated_write_boundary_scaffold_status: SAFE_TO_RUN", run.stdout)
+        self.assertNotIn("mediated_write_boundary_enforcement_status: ENFORCED", run.stdout)
+        evidence = self._latest_evidence()
+        manifest, _ = self._latest_manifest_with_path()
+
+        self._assert_mediated_write_boundary_scaffold_contract(evidence)
+        self._assert_pre_live_executor_gate_contract(evidence)
+        for field in self._mediated_write_boundary_fields():
+            self.assertIn(field, evidence)
+            self.assertEqual(manifest[field], evidence[field])
+        self.assertEqual(
+            manifest["mediated_write_boundary_manifest_hash"],
+            sha256_json({field: evidence[field] for field in self._mediated_write_boundary_fields()}),
+        )
+        self.assertEqual(
+            evidence["bound_mediated_write_boundary_metadata_hash"],
+            manifest["mediated_write_boundary_manifest_hash"],
+        )
+
+        verify = self._aeg("verify")
+        self._assert_verify_consistent(verify)
+        self.assertIn("mediated write boundary scaffold metadata fields matched manifest", verify.stdout)
+        self.assertIn("mediated write scaffold did not perform OS/filesystem write mediation", verify.stdout)
+        self.assertIn("mediated_write_boundary_scaffold_status remained SCAFFOLD_ONLY_NOT_ENFORCED", verify.stdout)
+        self.assertIn("write_mediation_enabled remained false", verify.stdout)
+        self.assertIn("write_mediation_enforced remained false", verify.stdout)
+        self.assertIn("write_classes_granted remained empty", verify.stdout)
+        self.assertIn("dangerous direct write grants default false", verify.stdout)
+        self.assertIn("write mediation NOT_CHECKED was not promoted to PASS", verify.stdout)
+        self.assertIn("metadata denial was not treated as external enforcement", verify.stdout)
+        self.assertIn("live executor authority remained ON_HOLD", verify.stdout)
+
+    def test_mediated_write_boundary_rejects_dangerous_direct_write_grants_even_when_rebound(self):
+        self._aeg("init")
+        for field in MEDIATED_WRITE_DIRECT_ALLOW_FIELDS:
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = True
+                evidence["mediated_write_boundary_metadata_hash"] = (
+                    expected_mediated_write_boundary_metadata_hash(evidence)
+                )
+                self._sync_mediated_write_boundary_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {field} must remain false in scaffold v0", verify.stdout)
+                self.assertIn("INVALID_EVIDENCE: dangerous direct write grants must default false", verify.stdout)
+
+    def test_mediated_write_boundary_rejects_unknown_write_class_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["write_classes_declared"] = [*evidence["write_classes_declared"], "unknown_write_class"]
+        evidence["write_mediation_decision_hash"] = expected_write_mediation_decision_hash(evidence)
+        evidence["mediated_write_boundary_metadata_hash"] = expected_mediated_write_boundary_metadata_hash(evidence)
+        self._sync_mediated_write_boundary_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn("INVALID_EVIDENCE: unknown write class in write_classes_declared: unknown_write_class", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: write_classes_declared must match Phase 10 scaffold vocabulary", verify.stdout)
+
+    def test_mediated_write_boundary_rejects_unknown_mediation_status_even_when_rebound(self):
+        self._aeg("init")
+        self._aeg("run", "fix typo in README")
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        write_class = WRITE_CLASSES[0]
+        evidence["write_class_mediation_statuses"] = dict(evidence["write_class_mediation_statuses"])
+        evidence["write_class_mediation_statuses"][write_class] = "MAGIC_ALLOW"
+        evidence["write_mediation_decision_hash"] = expected_write_mediation_decision_hash(evidence)
+        evidence["mediated_write_boundary_metadata_hash"] = expected_mediated_write_boundary_metadata_hash(evidence)
+        self._sync_mediated_write_boundary_manifest(evidence, manifest)
+        self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+        verify = self._aeg("verify", check=False)
+
+        self.assertNotEqual(verify.returncode, 0)
+        self._assert_verify_failed(verify)
+        self.assertIn(f"INVALID_EVIDENCE: unknown mediation status for {write_class}: MAGIC_ALLOW", verify.stdout)
+        self.assertIn("INVALID_EVIDENCE: write_class_mediation_statuses must match scaffold default decisions", verify.stdout)
+
+    def test_mediated_write_boundary_rejects_scaffold_overclaim_even_when_rebound(self):
+        self._aeg("init")
+        for field, value, message in (
+            (
+                "mediated_write_boundary_scaffold_status",
+                "SAFE_TO_RUN",
+                "mediated_write_boundary_scaffold_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+            (
+                "mediated_write_boundary_enforcement_status",
+                "ENFORCED",
+                "mediated_write_boundary_enforcement_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+            (
+                "write_mediation_evidence_status",
+                "PASS",
+                "write_mediation_evidence_status cannot claim PASS/SAFE/ENFORCED",
+            ),
+        ):
+            with self.subTest(field=field):
+                self._aeg("run", "fix typo in README")
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = value
+                evidence["mediated_write_boundary_metadata_hash"] = (
+                    expected_mediated_write_boundary_metadata_hash(evidence)
+                )
+                self._sync_mediated_write_boundary_manifest(evidence, manifest)
+                self._write_evidence_and_manifest_with_bound_hash(evidence_path, evidence, manifest_path, manifest)
+
+                verify = self._aeg("verify", check=False)
+
+                self.assertNotEqual(verify.returncode, 0)
+                if field == "write_mediation_evidence_status":
+                    self.assertIn("status: REPLAY_FAILED", verify.stdout)
+                    self.assertNotIn("Traceback", verify.stdout + verify.stderr)
+                else:
+                    self._assert_verify_failed(verify)
+                self.assertIn(f"INVALID_EVIDENCE: {message}", verify.stdout)
 
     def test_pre_live_executor_gate_defaults_are_bound_and_replayed(self):
         self._aeg("init")
@@ -3254,6 +3433,16 @@ class CliRuntimeTests(unittest.TestCase):
         )
         evidence["bound_aeg_state_write_denial_metadata_hash"] = manifest["aeg_state_write_denial_manifest_hash"]
 
+    def _sync_mediated_write_boundary_manifest(self, evidence, manifest):
+        for field in self._mediated_write_boundary_fields():
+            manifest[field] = evidence[field]
+        manifest["mediated_write_boundary_manifest_hash"] = sha256_json(
+            {field: manifest[field] for field in self._mediated_write_boundary_fields()}
+        )
+        evidence["bound_mediated_write_boundary_metadata_hash"] = manifest[
+            "mediated_write_boundary_manifest_hash"
+        ]
+
     def _sync_pre_live_executor_gate_manifest(self, evidence, manifest):
         for field in self._pre_live_executor_gate_fields():
             manifest[field] = evidence[field]
@@ -3343,6 +3532,9 @@ class CliRuntimeTests(unittest.TestCase):
 
     def _aeg_state_write_denial_fields(self):
         return AEG_STATE_WRITE_DENIAL_FIELDS
+
+    def _mediated_write_boundary_fields(self):
+        return MEDIATED_WRITE_BOUNDARY_FIELDS
 
     def _pre_live_executor_gate_fields(self):
         return PRE_LIVE_EXECUTOR_GATE_FIELDS
@@ -3597,6 +3789,56 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertTrue(evidence["checks"]["executor_controlled_recorder_write_aeg_state_bypass_forbidden"])
         self.assertTrue(evidence["checks"]["no_live_executor_authority_before_aeg_state_write_denial_enforcement"])
         self.assertTrue(evidence["checks"]["aeg_state_write_denial_manifest_binding_required"])
+
+    def _assert_mediated_write_boundary_scaffold_contract(self, evidence):
+        self.assertEqual(
+            evidence["mediated_write_boundary_scaffold_version"],
+            MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0,
+        )
+        self.assertEqual(
+            evidence["mediated_write_boundary_scaffold_status"],
+            MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertEqual(
+            evidence["mediated_write_boundary_enforcement_status"],
+            MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        )
+        self.assertNotIn(evidence["mediated_write_boundary_scaffold_status"], ("PASS", "SAFE_TO_RUN", "ENFORCED"))
+        self.assertNotIn(evidence["mediated_write_boundary_enforcement_status"], ("PASS", "SAFE_TO_RUN", "ENFORCED"))
+        self.assertFalse(evidence["write_mediation_enabled"])
+        self.assertFalse(evidence["write_mediation_enforced"])
+        self.assertEqual(evidence["write_classes_declared"], list(WRITE_CLASSES))
+        self.assertEqual(evidence["write_classes_granted"], [])
+        self.assertEqual(evidence["write_classes_denied"], list(WRITE_CLASSES))
+        self.assertEqual(evidence["write_class_mediation_statuses"], dict(WRITE_CLASS_DEFAULT_MEDIATION_STATUSES))
+        self.assertEqual(
+            evidence["write_mediation_decision_source"],
+            MEDIATED_WRITE_DECISION_SOURCE_AEGIS_RUNTIME_METADATA,
+        )
+        self.assertEqual(evidence["write_mediation_evidence_status"], NOT_CHECKED)
+        for field in MEDIATED_WRITE_DIRECT_ALLOW_FIELDS:
+            self.assertFalse(evidence[field])
+        self.assertEqual(evidence["write_mediation_decision_hash"], expected_write_mediation_decision_hash(evidence))
+        self.assertEqual(
+            evidence["mediated_write_boundary_metadata_hash"],
+            expected_mediated_write_boundary_metadata_hash(evidence),
+        )
+        self.assertTrue(evidence["checks"]["mediated_write_boundary_scaffold_v0_required"])
+        self.assertTrue(evidence["checks"]["mediated_write_boundary_scaffold_only_not_enforced"])
+        self.assertTrue(evidence["checks"]["mediation_design_is_not_implementation"])
+        self.assertTrue(evidence["checks"]["mediation_scaffold_is_not_enforcement"])
+        self.assertTrue(evidence["checks"]["no_actual_mediated_write_enforcement"])
+        self.assertTrue(evidence["checks"]["write_mediation_enabled_default_false"])
+        self.assertTrue(evidence["checks"]["write_mediation_enforced_default_false"])
+        self.assertTrue(evidence["checks"]["write_classes_declared_vocabulary_required"])
+        self.assertTrue(evidence["checks"]["write_classes_granted_default_empty"])
+        self.assertTrue(evidence["checks"]["dangerous_direct_write_grants_default_false"])
+        self.assertTrue(evidence["checks"]["scaffold_only_not_safe_to_run"])
+        self.assertTrue(evidence["checks"]["write_mediation_not_checked_is_not_pass"])
+        self.assertTrue(evidence["checks"]["denied_by_metadata_is_not_external_enforcement"])
+        self.assertTrue(evidence["checks"]["executor_self_report_is_not_write_mediation_proof"])
+        self.assertTrue(evidence["checks"]["no_live_executor_authority_before_mediated_write_boundary"])
+        self.assertTrue(evidence["checks"]["mediated_write_boundary_manifest_binding_required"])
 
     def _assert_pre_live_executor_gate_contract(self, evidence):
         self.assertEqual(evidence["pre_live_executor_gate_version"], PRE_LIVE_EXECUTOR_GATE_SCAFFOLD_V0)
