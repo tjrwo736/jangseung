@@ -242,6 +242,15 @@ from src.contracts import (
     TOOL_SURFACE_SOURCE_NONE,
     TOOL_SURFACE_STATUSES,
     TOOL_SURFACE_TRUST_BOUNDARY_NOT_IMPLEMENTED,
+    WBYP_IDS,
+    WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT,
+    WRITE_BYPASS_HARNESS_FIELDS,
+    WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES,
+    WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED,
+    WRITE_BYPASS_HARNESS_REGISTRY_ENTRY_FIELDS,
+    WRITE_BYPASS_HARNESS_SCAFFOLD_V0,
+    WRITE_BYPASS_HARNESS_STATUSES,
+    WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
@@ -270,6 +279,10 @@ from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
+)
+from src.evidence.write_bypass_harness import (
+    expected_write_bypass_harness_metadata_hash,
+    expected_write_bypass_harness_registry_hash,
 )
 
 
@@ -328,6 +341,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *EVIDENCE_STORE_TRUST_FIELDS,
     *AEG_STATE_WRITE_DENIAL_FIELDS,
     *MEDIATED_WRITE_BOUNDARY_FIELDS,
+    *WRITE_BYPASS_HARNESS_FIELDS,
     *PRE_LIVE_EXECUTOR_GATE_FIELDS,
     *LEDGER_INTEGRITY_FIELDS,
 )
@@ -417,6 +431,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_evidence_store_trust_metadata(packet, errors)
     _validate_aeg_state_write_denial_metadata(packet, errors)
     _validate_mediated_write_boundary_metadata(packet, errors)
+    _validate_write_bypass_harness_metadata(packet, errors)
     _validate_pre_live_executor_gate_metadata(packet, errors)
     _validate_ledger_integrity_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
@@ -1869,6 +1884,212 @@ def _validate_mediated_write_boundary_metadata(packet: dict[str, Any], errors: l
         errors.append("INVALID_EVIDENCE: mediated_write_boundary_metadata_hash must be sha256 hex")
     elif metadata_hash != expected_mediated_write_boundary_metadata_hash(packet):
         errors.append("INVALID_EVIDENCE: mediated_write_boundary_metadata_hash mismatch")
+
+
+def _validate_write_bypass_harness_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    bool_fields = (
+        "write_bypass_harness_actual_bypass_tests_present",
+        "write_bypass_harness_actual_fixtures_present",
+        "write_bypass_harness_actual_write_attempts_present",
+        "write_bypass_harness_mediator_enforcement_present",
+        "write_bypass_harness_external_enforcement_present",
+        "write_bypass_harness_executor_self_report_proof_allowed",
+        "write_bypass_harness_reported_only_judgment_basis_allowed",
+    )
+    string_fields = (
+        "write_bypass_harness_scaffold_version",
+        "write_bypass_harness_scaffold_status",
+        "write_bypass_harness_execution_status",
+        "write_bypass_harness_enforcement_status",
+        "write_bypass_harness_registry_status",
+        "write_bypass_harness_fixture_status",
+        "write_bypass_harness_evidence_status",
+        "write_bypass_harness_registry_hash",
+        "write_bypass_harness_metadata_hash",
+    )
+    for field in bool_fields:
+        _expect(packet, field, bool, errors)
+    for field in string_fields:
+        _expect(packet, field, str, errors)
+    _expect(packet, "write_bypass_harness_registry_ids", list, errors)
+    _expect(packet, "write_bypass_harness_registry", list, errors)
+
+    expected_count = packet.get("write_bypass_harness_expected_wbyp_count")
+    if not isinstance(expected_count, int) or isinstance(expected_count, bool):
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_expected_wbyp_count must be integer")
+    elif expected_count != WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_expected_wbyp_count must be 25")
+
+    if packet.get("write_bypass_harness_scaffold_version") != WRITE_BYPASS_HARNESS_SCAFFOLD_V0:
+        errors.append(
+            "INVALID_EVIDENCE: write_bypass_harness_scaffold_version must be "
+            f"{WRITE_BYPASS_HARNESS_SCAFFOLD_V0}"
+        )
+
+    for field in (
+        "write_bypass_harness_scaffold_status",
+        "write_bypass_harness_execution_status",
+        "write_bypass_harness_enforcement_status",
+        "write_bypass_harness_registry_status",
+        "write_bypass_harness_fixture_status",
+        "write_bypass_harness_evidence_status",
+    ):
+        status = packet.get(field)
+        if status in WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES:
+            errors.append(f"INVALID_EVIDENCE: {field} cannot claim PASS/SAFE/ENFORCED")
+        if status not in WRITE_BYPASS_HARNESS_STATUSES:
+            errors.append(f"INVALID_EVIDENCE: invalid {field}: {status}")
+
+    for field in (
+        "write_bypass_harness_scaffold_status",
+        "write_bypass_harness_enforcement_status",
+        "write_bypass_harness_registry_status",
+    ):
+        if packet.get(field) != WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+    for field in (
+        "write_bypass_harness_execution_status",
+        "write_bypass_harness_fixture_status",
+        "write_bypass_harness_evidence_status",
+    ):
+        if packet.get(field) != NOT_CHECKED:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain NOT_CHECKED")
+
+    for field in (
+        "write_bypass_harness_actual_bypass_tests_present",
+        "write_bypass_harness_actual_fixtures_present",
+        "write_bypass_harness_actual_write_attempts_present",
+        "write_bypass_harness_mediator_enforcement_present",
+        "write_bypass_harness_external_enforcement_present",
+        "write_bypass_harness_executor_self_report_proof_allowed",
+        "write_bypass_harness_reported_only_judgment_basis_allowed",
+    ):
+        if packet.get(field) is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false in scaffold v0")
+
+    if packet.get("judgment_basis") in (
+        "write_bypass_harness_reported_only",
+        "executor_self_report_write_bypass",
+    ):
+        errors.append("INVALID_EVIDENCE: write bypass reported_only/self-report cannot be judgment basis")
+
+    registry_ids = packet.get("write_bypass_harness_registry_ids")
+    if isinstance(registry_ids, list):
+        if not all(isinstance(item, str) for item in registry_ids):
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_ids must contain only strings")
+        elif tuple(registry_ids) != WBYP_IDS:
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_ids must be WBYP-001 through WBYP-025")
+
+    registry = packet.get("write_bypass_harness_registry")
+    if isinstance(registry, list):
+        _validate_wbyp_registry_entries(registry, errors)
+
+    registry_hash = packet.get("write_bypass_harness_registry_hash")
+    if not isinstance(registry_hash, str) or not _is_sha256_hex(registry_hash):
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_hash must be sha256 hex")
+    elif registry_hash != expected_write_bypass_harness_registry_hash(packet):
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_hash mismatch")
+
+    metadata_hash = packet.get("write_bypass_harness_metadata_hash")
+    if not isinstance(metadata_hash, str) or not _is_sha256_hex(metadata_hash):
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_metadata_hash must be sha256 hex")
+    elif metadata_hash != expected_write_bypass_harness_metadata_hash(packet):
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_metadata_hash mismatch")
+
+
+def _validate_wbyp_registry_entries(registry: list[Any], errors: list[str]) -> None:
+    if len(registry) != WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry must contain 25 entries")
+    entry_ids: list[str] = []
+    allowed_fields = set(WRITE_BYPASS_HARNESS_REGISTRY_ENTRY_FIELDS)
+    forbidden_fields = {
+        "command",
+        "execution_function",
+        "filesystem_write",
+        "fixture_content",
+        "fixture_path",
+        "http_request",
+        "mediator_call",
+        "run_command",
+        "shell",
+        "tool_execution",
+        "write_file",
+    }
+    for entry in registry:
+        if not isinstance(entry, dict):
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry entries must be objects")
+            continue
+        unknown_fields = sorted(set(entry) - allowed_fields)
+        if unknown_fields:
+            errors.append(
+                "INVALID_EVIDENCE: write_bypass_harness_registry entry has non-metadata fields: "
+                f"{', '.join(unknown_fields)}"
+            )
+        blocked_fields = sorted(set(entry) & forbidden_fields)
+        if blocked_fields:
+            errors.append(
+                "INVALID_EVIDENCE: write_bypass_harness_registry entry cannot include execution fields: "
+                f"{', '.join(blocked_fields)}"
+            )
+        for field in WRITE_BYPASS_HARNESS_REGISTRY_ENTRY_FIELDS:
+            if field not in entry:
+                errors.append(f"INVALID_EVIDENCE: write_bypass_harness_registry entry missing field: {field}")
+        entry_id = entry.get("id")
+        if isinstance(entry_id, str):
+            entry_ids.append(entry_id)
+        else:
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry entry id must be string")
+        for field in (
+            "title",
+            "bypass_target",
+            "write_class_scope",
+            "future_fixture_profile",
+            "future_required_decision",
+            "proof_source",
+        ):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"INVALID_EVIDENCE: write_bypass_harness_registry entry {field} must be non-empty string")
+        for field in ("scaffold_status", "execution_status", "enforcement_status"):
+            status = entry.get(field)
+            if status in WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES:
+                errors.append(f"INVALID_EVIDENCE: WBYP registry {field} cannot claim PASS/SAFE/ENFORCED")
+            if status not in WRITE_BYPASS_HARNESS_STATUSES:
+                errors.append(f"INVALID_EVIDENCE: invalid WBYP registry {field}: {status}")
+        if entry.get("scaffold_status") != WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            errors.append("INVALID_EVIDENCE: WBYP registry scaffold_status must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+        if entry.get("execution_status") != NOT_CHECKED:
+            errors.append("INVALID_EVIDENCE: WBYP registry execution_status must remain NOT_CHECKED")
+        if entry.get("enforcement_status") != WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            errors.append("INVALID_EVIDENCE: WBYP registry enforcement_status must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+        if entry.get("proof_source") != WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED:
+            errors.append("INVALID_EVIDENCE: WBYP registry proof_source must remain future_harness_not_collected")
+        for field in (
+            "future_only",
+            "actual_test_present",
+            "fixture_created",
+            "actual_write_attempt_present",
+            "executor_self_report_proof_allowed",
+            "reported_only_judgment_basis_allowed",
+            "judgment_basis",
+        ):
+            if not isinstance(entry.get(field), bool):
+                errors.append(f"INVALID_EVIDENCE: WBYP registry {field} must be boolean")
+        if entry.get("future_only") is not True:
+            errors.append("INVALID_EVIDENCE: WBYP registry entries must remain future-only metadata")
+        for field in (
+            "actual_test_present",
+            "fixture_created",
+            "actual_write_attempt_present",
+            "executor_self_report_proof_allowed",
+            "reported_only_judgment_basis_allowed",
+            "judgment_basis",
+        ):
+            if entry.get(field) is not False:
+                errors.append(f"INVALID_EVIDENCE: WBYP registry {field} must remain false")
+
+    if tuple(entry_ids) != WBYP_IDS:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry must contain WBYP-001 through WBYP-025")
 
 
 def _validate_pre_live_executor_gate_metadata(packet: dict[str, Any], errors: list[str]) -> None:

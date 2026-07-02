@@ -93,6 +93,13 @@ from src.contracts import (
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
     TOOL_SURFACE_SCAFFOLD_ONLY,
+    WBYP_IDS,
+    WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT,
+    WRITE_BYPASS_HARNESS_FIELDS,
+    WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES,
+    WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED,
+    WRITE_BYPASS_HARNESS_SCAFFOLD_V0,
+    WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
@@ -123,6 +130,7 @@ from src.evidence.binding import (
     proposal_manifest_fields,
     response_redaction_manifest_fields,
     tool_surface_manifest_fields,
+    write_bypass_harness_manifest_fields,
 )
 from src.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
 from src.evidence.capability_exposure import (
@@ -151,6 +159,10 @@ from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
+)
+from src.evidence.write_bypass_harness import (
+    expected_write_bypass_harness_metadata_hash,
+    expected_write_bypass_harness_registry_hash,
 )
 from src.evidence.mutation_boundary import compute_mutation_delta
 from src.evidence.schema import (
@@ -315,6 +327,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     mediated_write_checks, mediated_write_errors = _verify_mediated_write_boundary(evidence, manifest)
     checks.extend(mediated_write_checks)
     errors.extend(mediated_write_errors)
+
+    write_bypass_checks, write_bypass_errors = _verify_write_bypass_harness_scaffold(evidence, manifest)
+    checks.extend(write_bypass_checks)
+    errors.extend(write_bypass_errors)
 
     gate_checks, gate_errors = _verify_pre_live_executor_gate(evidence, manifest)
     checks.extend(gate_checks)
@@ -1085,6 +1101,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "write bypass harness scaffold metadata",
+        WRITE_BYPASS_HARNESS_FIELDS,
+        "write_bypass_harness_manifest_hash",
+        evidence,
+        manifest,
+        write_bypass_harness_manifest_fields(evidence),
+        write_bypass_harness_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "pre-live executor gate metadata",
         PRE_LIVE_EXECUTOR_GATE_FIELDS,
         "pre_live_executor_gate_manifest_hash",
@@ -1304,6 +1331,13 @@ def _verify_manifest_binding(
         "bound_mediated_write_boundary_metadata_hash",
         evidence.get("bound_mediated_write_boundary_metadata_hash"),
         sha256_json(mediated_write_boundary_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_write_bypass_harness_metadata_hash",
+        evidence.get("bound_write_bypass_harness_metadata_hash"),
+        sha256_json(write_bypass_harness_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -2098,6 +2132,177 @@ def _verify_mediated_write_boundary(
             errors.append("INVALID_EVIDENCE: manifest mediated_write_boundary_metadata_hash mismatch with evidence")
 
     return checks, errors
+
+
+def _verify_write_bypass_harness_scaffold(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("write bypass harness replay used recorded scaffold metadata only")
+    checks.append("write bypass harness scaffold did not perform filesystem write attempts")
+
+    if evidence.get("write_bypass_harness_scaffold_version") == WRITE_BYPASS_HARNESS_SCAFFOLD_V0:
+        checks.append(f"write_bypass_harness_scaffold_version matched: {WRITE_BYPASS_HARNESS_SCAFFOLD_V0}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: write_bypass_harness_scaffold_version must be "
+            f"{WRITE_BYPASS_HARNESS_SCAFFOLD_V0}"
+        )
+
+    for field in (
+        "write_bypass_harness_scaffold_status",
+        "write_bypass_harness_execution_status",
+        "write_bypass_harness_enforcement_status",
+        "write_bypass_harness_registry_status",
+        "write_bypass_harness_fixture_status",
+        "write_bypass_harness_evidence_status",
+    ):
+        status = evidence.get(field)
+        if status in WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES:
+            errors.append(f"INVALID_EVIDENCE: {field} cannot claim PASS/SAFE/ENFORCED")
+        else:
+            checks.append(f"{field} did not claim PASS/SAFE/ENFORCED")
+
+    for field in (
+        "write_bypass_harness_scaffold_status",
+        "write_bypass_harness_enforcement_status",
+        "write_bypass_harness_registry_status",
+    ):
+        if evidence.get(field) == WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            checks.append(f"{field} remained SCAFFOLD_ONLY_NOT_ENFORCED")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+
+    for field in (
+        "write_bypass_harness_execution_status",
+        "write_bypass_harness_fixture_status",
+        "write_bypass_harness_evidence_status",
+    ):
+        if evidence.get(field) == NOT_CHECKED:
+            checks.append(f"{field} remained NOT_CHECKED")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain NOT_CHECKED")
+    checks.append("write bypass harness NOT_CHECKED was not promoted to PASS")
+
+    if evidence.get("write_bypass_harness_expected_wbyp_count") == WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT:
+        checks.append("write bypass harness expected WBYP count remained 25")
+    else:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_expected_wbyp_count must be 25")
+
+    registry_ids = evidence.get("write_bypass_harness_registry_ids")
+    registry = evidence.get("write_bypass_harness_registry")
+    if registry_ids == list(WBYP_IDS):
+        checks.append("write_bypass_harness_registry_ids contained WBYP-001 through WBYP-025")
+    else:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_ids must be WBYP-001 through WBYP-025")
+    if isinstance(registry, list):
+        entry_ids = [entry.get("id") for entry in registry if isinstance(entry, dict)]
+        if entry_ids == list(WBYP_IDS):
+            checks.append("WBYP registry contained WBYP-001 through WBYP-025")
+        else:
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry must contain WBYP-001 through WBYP-025")
+        if len(registry) == WRITE_BYPASS_HARNESS_EXPECTED_WBYP_COUNT:
+            checks.append("WBYP registry entry count matched 25")
+        else:
+            errors.append("INVALID_EVIDENCE: write_bypass_harness_registry must contain 25 entries")
+        _verify_wbyp_registry_entry_scaffold_only(registry, checks, errors)
+    else:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry must be list")
+
+    for field in (
+        "write_bypass_harness_actual_bypass_tests_present",
+        "write_bypass_harness_actual_fixtures_present",
+        "write_bypass_harness_actual_write_attempts_present",
+        "write_bypass_harness_mediator_enforcement_present",
+        "write_bypass_harness_external_enforcement_present",
+        "write_bypass_harness_executor_self_report_proof_allowed",
+        "write_bypass_harness_reported_only_judgment_basis_allowed",
+    ):
+        if evidence.get(field) is False:
+            checks.append(f"{field} remained false")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false in scaffold v0")
+
+    if evidence.get("write_bypass_harness_executor_self_report_proof_allowed") is False:
+        checks.append("executor self-report was not treated as write bypass proof")
+    else:
+        errors.append("INVALID_EVIDENCE: executor self-report cannot prove write bypass harness results")
+    if evidence.get("write_bypass_harness_reported_only_judgment_basis_allowed") is False:
+        checks.append("reported_only was not treated as write bypass judgment basis")
+    else:
+        errors.append("INVALID_EVIDENCE: reported_only cannot be write bypass judgment basis")
+
+    if evidence.get("live_executor_authority_granted") is False:
+        checks.append("live executor authority remained ON_HOLD for write bypass harness scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: live executor authority cannot be granted by write bypass harness scaffold")
+
+    if evidence.get("write_bypass_harness_registry_hash") == expected_write_bypass_harness_registry_hash(evidence):
+        checks.append("write_bypass_harness_registry_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_registry_hash mismatch")
+
+    if evidence.get("write_bypass_harness_metadata_hash") == expected_write_bypass_harness_metadata_hash(evidence):
+        checks.append("write_bypass_harness_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: write_bypass_harness_metadata_hash mismatch")
+
+    if manifest is not None:
+        if manifest.get("write_bypass_harness_metadata_hash") == evidence.get("write_bypass_harness_metadata_hash"):
+            checks.append("manifest write_bypass_harness_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest write_bypass_harness_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_wbyp_registry_entry_scaffold_only(
+    registry: list[Any],
+    checks: list[str],
+    errors: list[str],
+) -> None:
+    entries_valid = True
+    for entry in registry:
+        if not isinstance(entry, dict):
+            entries_valid = False
+            continue
+        entry_id = entry.get("id", "UNKNOWN")
+        if entry.get("scaffold_status") != WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            errors.append(f"INVALID_EVIDENCE: {entry_id} scaffold_status must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+            entries_valid = False
+        if entry.get("execution_status") != NOT_CHECKED:
+            errors.append(f"INVALID_EVIDENCE: {entry_id} execution_status must remain NOT_CHECKED")
+            entries_valid = False
+        if entry.get("enforcement_status") != WRITE_BYPASS_HARNESS_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+            errors.append(f"INVALID_EVIDENCE: {entry_id} enforcement_status must remain SCAFFOLD_ONLY_NOT_ENFORCED")
+            entries_valid = False
+        for field in ("scaffold_status", "execution_status", "enforcement_status"):
+            if entry.get(field) in WRITE_BYPASS_HARNESS_PASSLIKE_STATUSES:
+                errors.append(f"INVALID_EVIDENCE: WBYP registry {field} cannot claim PASS/SAFE/ENFORCED")
+                entries_valid = False
+        if entry.get("future_only") is not True:
+            errors.append(f"INVALID_EVIDENCE: {entry_id} must remain future-only metadata")
+            entries_valid = False
+        if entry.get("proof_source") != WRITE_BYPASS_HARNESS_PROOF_SOURCE_FUTURE_NOT_COLLECTED:
+            errors.append(f"INVALID_EVIDENCE: {entry_id} proof_source must remain future_harness_not_collected")
+            entries_valid = False
+        for field in (
+            "actual_test_present",
+            "fixture_created",
+            "actual_write_attempt_present",
+            "executor_self_report_proof_allowed",
+            "reported_only_judgment_basis_allowed",
+            "judgment_basis",
+        ):
+            if entry.get(field) is not False:
+                errors.append(f"INVALID_EVIDENCE: WBYP registry {field} must remain false")
+                entries_valid = False
+    if entries_valid:
+        checks.append("WBYP registry entries remained future-only metadata")
+        checks.append("WBYP registry entries did not claim actual tests, fixtures, write attempts, or proof")
 
 
 def _verify_pre_live_executor_gate(

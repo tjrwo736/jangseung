@@ -182,6 +182,7 @@ def _cmd_run(
     rows.extend(_evidence_store_trust_rows(evidence))
     rows.extend(_aeg_state_write_denial_rows(evidence))
     rows.extend(_mediated_write_boundary_rows(evidence))
+    rows.extend(_write_bypass_harness_rows(evidence))
     rows.extend(_pre_live_executor_gate_rows(evidence))
     rows.extend(_ledger_integrity_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
@@ -260,6 +261,7 @@ def _cmd_verify(cwd: Path) -> int:
         rows.extend(_evidence_store_trust_rows(result.evidence))
         rows.extend(_aeg_state_write_denial_rows(result.evidence))
         rows.extend(_mediated_write_boundary_rows(result.evidence))
+        rows.extend(_write_bypass_harness_rows(result.evidence))
         rows.extend(_pre_live_executor_gate_rows(result.evidence))
         rows.extend(_ledger_integrity_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
@@ -559,6 +561,54 @@ def _mediated_write_boundary_rows(evidence: dict[str, Any]) -> list[tuple[str, s
             "mediated_write_boundary_metadata_hash",
             _short_hash(evidence.get("mediated_write_boundary_metadata_hash", "")),
         ),
+    ]
+
+
+def _write_bypass_harness_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("write_bypass_harness_scaffold_version", str(evidence.get("write_bypass_harness_scaffold_version", ""))),
+        ("write_bypass_harness_scaffold_status", str(evidence.get("write_bypass_harness_scaffold_status", ""))),
+        ("write_bypass_harness_execution_status", str(evidence.get("write_bypass_harness_execution_status", ""))),
+        ("write_bypass_harness_enforcement_status", str(evidence.get("write_bypass_harness_enforcement_status", ""))),
+        ("write_bypass_harness_registry_status", str(evidence.get("write_bypass_harness_registry_status", ""))),
+        (
+            "write_bypass_harness_expected_wbyp_count",
+            str(evidence.get("write_bypass_harness_expected_wbyp_count", "")),
+        ),
+        ("write_bypass_harness_registry_id_count", str(_list_count(evidence.get("write_bypass_harness_registry_ids")))),
+        ("write_bypass_harness_registry_entry_count", str(_list_count(evidence.get("write_bypass_harness_registry")))),
+        ("write_bypass_harness_fixture_status", str(evidence.get("write_bypass_harness_fixture_status", ""))),
+        (
+            "write_bypass_harness_actual_bypass_tests_present",
+            str(evidence.get("write_bypass_harness_actual_bypass_tests_present", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_actual_fixtures_present",
+            str(evidence.get("write_bypass_harness_actual_fixtures_present", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_actual_write_attempts_present",
+            str(evidence.get("write_bypass_harness_actual_write_attempts_present", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_mediator_enforcement_present",
+            str(evidence.get("write_bypass_harness_mediator_enforcement_present", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_external_enforcement_present",
+            str(evidence.get("write_bypass_harness_external_enforcement_present", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_executor_self_report_proof_allowed",
+            str(evidence.get("write_bypass_harness_executor_self_report_proof_allowed", "")).lower(),
+        ),
+        (
+            "write_bypass_harness_reported_only_judgment_basis_allowed",
+            str(evidence.get("write_bypass_harness_reported_only_judgment_basis_allowed", "")).lower(),
+        ),
+        ("write_bypass_harness_evidence_status", str(evidence.get("write_bypass_harness_evidence_status", ""))),
+        ("write_bypass_harness_registry_hash", _short_hash(evidence.get("write_bypass_harness_registry_hash", ""))),
+        ("write_bypass_harness_metadata_hash", _short_hash(evidence.get("write_bypass_harness_metadata_hash", ""))),
     ]
 
 
