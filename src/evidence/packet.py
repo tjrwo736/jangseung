@@ -18,6 +18,7 @@ from src.evidence.evidence_store import build_evidence_store_trust_metadata
 from src.evidence.mediated_write_boundary import build_mediated_write_boundary_metadata
 from src.evidence.pre_live_executor_gate import build_pre_live_executor_gate_metadata
 from src.evidence.tool_surface import build_tool_surface_metadata
+from src.evidence.write_bypass_harness import build_write_bypass_harness_metadata
 from src.law import LawResult
 from src.state import git
 
@@ -52,6 +53,7 @@ def build_evidence_packet(
     evidence_store_trust = build_evidence_store_trust_metadata()
     aeg_state_write_denial = build_aeg_state_write_denial_metadata()
     mediated_write_boundary = build_mediated_write_boundary_metadata()
+    write_bypass_harness = build_write_bypass_harness_metadata()
     pre_live_executor_gate = build_pre_live_executor_gate_metadata()
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
@@ -164,6 +166,20 @@ def build_evidence_packet(
             "denied_by_metadata_is_not_external_enforcement": True,
             "executor_self_report_is_not_write_mediation_proof": True,
             "no_live_executor_authority_before_mediated_write_boundary": True,
+            "write_bypass_harness_scaffold_v0_required": True,
+            "write_bypass_harness_registry_metadata_only": True,
+            "write_bypass_harness_wbyp_001_through_025_required": True,
+            "write_bypass_harness_scaffold_only_not_enforced": True,
+            "write_bypass_harness_execution_not_checked": True,
+            "write_bypass_harness_not_checked_is_not_pass": True,
+            "write_bypass_harness_has_no_actual_bypass_tests": True,
+            "write_bypass_harness_has_no_actual_fixtures": True,
+            "write_bypass_harness_has_no_actual_write_attempts": True,
+            "write_bypass_harness_has_no_mediator_enforcement": True,
+            "write_bypass_harness_has_no_external_enforcement": True,
+            "executor_self_report_is_not_write_bypass_proof": True,
+            "reported_only_is_not_write_bypass_judgment_basis": True,
+            "no_live_executor_authority_before_write_bypass_harness": True,
             "ledger_integrity_scaffold_v0_required": True,
             "ledger_tamper_evident_is_not_tamper_proof": True,
             "ledger_tamper_proof_claim_forbidden": True,
@@ -189,6 +205,7 @@ def build_evidence_packet(
     packet.update(evidence_store_trust)
     packet.update(aeg_state_write_denial)
     packet.update(mediated_write_boundary)
+    packet.update(write_bypass_harness)
     packet.update(pre_live_executor_gate)
     packet.update(
         {
