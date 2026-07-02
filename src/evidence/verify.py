@@ -48,6 +48,15 @@ from src.contracts import (
     LEDGER_PREVIOUS_HASH_GENESIS,
     LEDGER_PREVIOUS_HASH_NOT_AVAILABLE,
     LOW,
+    MEDIATED_WRITE_BOUNDARY_ENFORCEMENT_STATUS_NOT_IMPLEMENTED,
+    MEDIATED_WRITE_BOUNDARY_FIELDS,
+    MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0,
+    MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+    MEDIATED_WRITE_DECISION_SOURCE_AEGIS_RUNTIME_METADATA,
+    MEDIATED_WRITE_DECISION_SOURCE_EXECUTOR_SELF_REPORT,
+    MEDIATED_WRITE_DECISION_SOURCE_EXTERNAL_ENFORCEMENT,
+    MEDIATED_WRITE_DIRECT_ALLOW_FIELDS,
+    MEDIATED_WRITE_PASSLIKE_STATUSES,
     MUTATION_BOUNDARY_CLEAN,
     MUTATION_BOUNDARY_DELTA_DETECTED,
     MUTATION_BOUNDARY_DIRTY_PREEXISTING,
@@ -56,6 +65,7 @@ from src.contracts import (
     SNAPSHOT_COLLECTOR_GIT_STATUS_V1,
     NEEDS_USER_GATE,
     NO_SHELL_NO_NETWORK_NO_PROVIDER_NO_ACTION,
+    NOT_CHECKED,
     NOT_CHECKED_IMPACT_RISKS,
     PROVIDER_NETWORK_GUARD_METADATA_FIELDS,
     LIVE_EXECUTOR_AUTHORITY_HOLD_REASON_PRE_LIVE_GATE,
@@ -83,6 +93,8 @@ from src.contracts import (
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
     TOOL_SURFACE_SCAFFOLD_ONLY,
+    WRITE_CLASSES,
+    WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
 from src.evidence.action_boundary import expected_action_log_hash
 from src.evidence.binding import (
@@ -94,6 +106,7 @@ from src.evidence.binding import (
     evidence_store_trust_manifest_fields,
     expected_artifact_path,
     manifest_hash,
+    mediated_write_boundary_manifest_fields,
     pre_live_executor_gate_manifest_fields,
     repo_relative_path,
     sha256_json,
@@ -129,6 +142,10 @@ from src.evidence.ledger_integrity import (
     expected_ledger_integrity_metadata_hash,
     is_sha256_hex,
     ledger_integrity_manifest_fields,
+)
+from src.evidence.mediated_write_boundary import (
+    expected_mediated_write_boundary_metadata_hash,
+    expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
 from src.evidence.tool_surface import (
@@ -294,6 +311,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     aeg_state_checks, aeg_state_errors = _verify_aeg_state_write_denial(evidence, manifest)
     checks.extend(aeg_state_checks)
     errors.extend(aeg_state_errors)
+
+    mediated_write_checks, mediated_write_errors = _verify_mediated_write_boundary(evidence, manifest)
+    checks.extend(mediated_write_checks)
+    errors.extend(mediated_write_errors)
 
     gate_checks, gate_errors = _verify_pre_live_executor_gate(evidence, manifest)
     checks.extend(gate_checks)
@@ -1053,6 +1074,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "mediated write boundary scaffold metadata",
+        MEDIATED_WRITE_BOUNDARY_FIELDS,
+        "mediated_write_boundary_manifest_hash",
+        evidence,
+        manifest,
+        mediated_write_boundary_manifest_fields(evidence),
+        mediated_write_boundary_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "pre-live executor gate metadata",
         PRE_LIVE_EXECUTOR_GATE_FIELDS,
         "pre_live_executor_gate_manifest_hash",
@@ -1265,6 +1297,13 @@ def _verify_manifest_binding(
         "bound_aeg_state_write_denial_metadata_hash",
         evidence.get("bound_aeg_state_write_denial_metadata_hash"),
         sha256_json(aeg_state_write_denial_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_mediated_write_boundary_metadata_hash",
+        evidence.get("bound_mediated_write_boundary_metadata_hash"),
+        sha256_json(mediated_write_boundary_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -1910,6 +1949,153 @@ def _verify_aeg_state_write_denial(
             checks.append("manifest aeg_state_write_denial_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest aeg_state_write_denial_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_mediated_write_boundary(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    checks.append("mediated write boundary replay used recorded scaffold metadata only")
+    checks.append("mediated write scaffold did not perform OS/filesystem write mediation")
+
+    if evidence.get("mediated_write_boundary_scaffold_version") == MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0:
+        checks.append(f"mediated_write_boundary_scaffold_version matched: {MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: mediated_write_boundary_scaffold_version must be "
+            f"{MEDIATED_WRITE_BOUNDARY_SCAFFOLD_V0}"
+        )
+
+    scaffold_status = evidence.get("mediated_write_boundary_scaffold_status")
+    if scaffold_status == MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED:
+        checks.append("mediated_write_boundary_scaffold_status remained SCAFFOLD_ONLY_NOT_ENFORCED")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: mediated_write_boundary_scaffold_status must remain "
+            "SCAFFOLD_ONLY_NOT_ENFORCED"
+        )
+    if scaffold_status in MEDIATED_WRITE_PASSLIKE_STATUSES:
+        errors.append("INVALID_EVIDENCE: mediated_write_boundary_scaffold_status cannot claim PASS/SAFE/ENFORCED")
+    else:
+        checks.append("SCAFFOLD_ONLY_NOT_ENFORCED was not promoted to PASS/SAFE/ENFORCED")
+
+    enforcement_status = evidence.get("mediated_write_boundary_enforcement_status")
+    if enforcement_status in (
+        MEDIATED_WRITE_BOUNDARY_STATUS_SCAFFOLD_ONLY_NOT_ENFORCED,
+        MEDIATED_WRITE_BOUNDARY_ENFORCEMENT_STATUS_NOT_IMPLEMENTED,
+    ):
+        checks.append(f"mediated_write_boundary_enforcement_status remained non-enforced: {enforcement_status}")
+    else:
+        errors.append(
+            "INVALID_EVIDENCE: mediated_write_boundary_enforcement_status must remain "
+            "SCAFFOLD_ONLY_NOT_ENFORCED or NOT_IMPLEMENTED"
+        )
+    if enforcement_status in MEDIATED_WRITE_PASSLIKE_STATUSES:
+        errors.append("INVALID_EVIDENCE: mediated_write_boundary_enforcement_status cannot claim PASS/SAFE/ENFORCED")
+    else:
+        checks.append("mediated write enforcement did not claim PASS/SAFE/ENFORCED")
+
+    if evidence.get("write_mediation_enabled") is False:
+        checks.append("write_mediation_enabled remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: write_mediation_enabled must remain false in scaffold v0")
+
+    if evidence.get("write_mediation_enforced") is False:
+        checks.append("write_mediation_enforced remained false")
+    else:
+        errors.append("INVALID_EVIDENCE: write_mediation_enforced must remain false in scaffold v0")
+
+    declared = evidence.get("write_classes_declared")
+    granted = evidence.get("write_classes_granted")
+    denied = evidence.get("write_classes_denied")
+    if declared == list(WRITE_CLASSES):
+        checks.append("write classes vocabulary matched Phase 10 scaffold")
+    else:
+        errors.append("INVALID_EVIDENCE: write_classes_declared must match Phase 10 scaffold vocabulary")
+    if granted == []:
+        checks.append("write_classes_granted remained empty")
+    else:
+        errors.append("INVALID_EVIDENCE: write_classes_granted must be empty in scaffold v0")
+    if isinstance(denied, list) and set(denied) == set(WRITE_CLASSES):
+        checks.append("write_classes_denied included every scaffold write class")
+    else:
+        errors.append("INVALID_EVIDENCE: write_classes_denied must include every declared write class in scaffold v0")
+
+    decisions = evidence.get("write_class_mediation_statuses")
+    if decisions == dict(WRITE_CLASS_DEFAULT_MEDIATION_STATUSES):
+        checks.append("write class mediation statuses matched scaffold defaults")
+    else:
+        errors.append("INVALID_EVIDENCE: write_class_mediation_statuses must match scaffold default decisions")
+    if isinstance(decisions, dict):
+        passlike = [write_class for write_class, status in decisions.items() if status in MEDIATED_WRITE_PASSLIKE_STATUSES]
+        if passlike:
+            errors.append(
+                "INVALID_EVIDENCE: write mediation status cannot claim PASS/SAFE/ENFORCED: "
+                f"{', '.join(sorted(passlike))}"
+            )
+        else:
+            checks.append("write mediation decisions did not claim PASS/SAFE/ENFORCED")
+    else:
+        errors.append("INVALID_EVIDENCE: write_class_mediation_statuses must be object")
+
+    if evidence.get("write_mediation_decision_source") == MEDIATED_WRITE_DECISION_SOURCE_AEGIS_RUNTIME_METADATA:
+        checks.append("write_mediation_decision_source remained aegis runtime scaffold metadata")
+    else:
+        errors.append("INVALID_EVIDENCE: write_mediation_decision_source must be aegis runtime scaffold metadata")
+    if evidence.get("write_mediation_decision_source") == MEDIATED_WRITE_DECISION_SOURCE_EXECUTOR_SELF_REPORT:
+        errors.append("INVALID_EVIDENCE: executor self-report cannot prove write mediation")
+    else:
+        checks.append("executor self-report was not treated as write mediation proof")
+    if evidence.get("write_mediation_decision_source") == MEDIATED_WRITE_DECISION_SOURCE_EXTERNAL_ENFORCEMENT:
+        errors.append("INVALID_EVIDENCE: metadata denial is not externally enforced denial")
+    else:
+        checks.append("metadata denial was not treated as external enforcement")
+
+    evidence_status = evidence.get("write_mediation_evidence_status")
+    if evidence_status == NOT_CHECKED:
+        checks.append("write_mediation_evidence_status remained NOT_CHECKED")
+        checks.append("write mediation NOT_CHECKED was not promoted to PASS")
+    else:
+        errors.append("INVALID_EVIDENCE: write_mediation_evidence_status must remain NOT_CHECKED in scaffold v0")
+    if evidence_status in MEDIATED_WRITE_PASSLIKE_STATUSES:
+        errors.append("INVALID_EVIDENCE: write_mediation_evidence_status cannot claim PASS/SAFE/ENFORCED")
+
+    direct_grants_valid = True
+    for field in MEDIATED_WRITE_DIRECT_ALLOW_FIELDS:
+        value = evidence.get(field)
+        if not isinstance(value, bool):
+            errors.append(f"INVALID_EVIDENCE: {field} must be bool")
+            direct_grants_valid = False
+        elif value is not False:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false in scaffold v0")
+            direct_grants_valid = False
+    if direct_grants_valid:
+        checks.append("dangerous direct write grants default false")
+    else:
+        errors.append("INVALID_EVIDENCE: dangerous direct write grants must default false")
+
+    if evidence.get("write_mediation_decision_hash") == expected_write_mediation_decision_hash(evidence):
+        checks.append("write_mediation_decision_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: write_mediation_decision_hash mismatch")
+
+    if evidence.get("mediated_write_boundary_metadata_hash") == expected_mediated_write_boundary_metadata_hash(evidence):
+        checks.append("mediated_write_boundary_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: mediated_write_boundary_metadata_hash mismatch")
+
+    if manifest is not None:
+        if manifest.get("mediated_write_boundary_metadata_hash") == evidence.get(
+            "mediated_write_boundary_metadata_hash"
+        ):
+            checks.append("manifest mediated_write_boundary_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest mediated_write_boundary_metadata_hash mismatch with evidence")
 
     return checks, errors
 

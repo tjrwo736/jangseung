@@ -359,6 +359,17 @@ This document implements neither gate. The next gate should either scaffold the
 write boundary metadata without granting write authority or define verification
 criteria for future mediated write evidence.
 
+### Scaffold v0 Cross-Reference
+
+`Phase 10 Mediated Write Boundary Scaffold v0` adds evidence and manifest
+metadata for the mediated write vocabulary and default non-grant decisions.
+That scaffold is `SCAFFOLD_ONLY_NOT_ENFORCED`: it does not implement write
+mediation, external enforcement, shell/tool/file wrappers, file brokers,
+`.aeg/` permission hardening, or live executor authority.
+
+Scaffold metadata denial remains metadata denial only. It is not an externally
+enforced denial, and `NOT_CHECKED` remains not pass.
+
 ## 14. Canonical Distinctions To Preserve
 
 The following distinctions are mandatory:
