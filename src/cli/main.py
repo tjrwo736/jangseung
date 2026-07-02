@@ -181,6 +181,7 @@ def _cmd_run(
     rows.extend(_executor_capability_exposure_rows(evidence))
     rows.extend(_evidence_store_trust_rows(evidence))
     rows.extend(_aeg_state_write_denial_rows(evidence))
+    rows.extend(_mediated_write_boundary_rows(evidence))
     rows.extend(_pre_live_executor_gate_rows(evidence))
     rows.extend(_ledger_integrity_rows(evidence))
     rows.extend(_provider_adapter_rows(evidence))
@@ -258,6 +259,7 @@ def _cmd_verify(cwd: Path) -> int:
         rows.extend(_executor_capability_exposure_rows(result.evidence))
         rows.extend(_evidence_store_trust_rows(result.evidence))
         rows.extend(_aeg_state_write_denial_rows(result.evidence))
+        rows.extend(_mediated_write_boundary_rows(result.evidence))
         rows.extend(_pre_live_executor_gate_rows(result.evidence))
         rows.extend(_ledger_integrity_rows(result.evidence))
         rows.extend(_provider_adapter_rows(result.evidence))
@@ -503,6 +505,59 @@ def _aeg_state_write_denial_rows(evidence: dict[str, Any]) -> list[tuple[str, st
         (
             "aeg_state_write_denial_metadata_hash",
             _short_hash(evidence.get("aeg_state_write_denial_metadata_hash", "")),
+        ),
+    ]
+
+
+def _mediated_write_boundary_rows(evidence: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        (
+            "mediated_write_boundary_scaffold_version",
+            str(evidence.get("mediated_write_boundary_scaffold_version", "")),
+        ),
+        (
+            "mediated_write_boundary_scaffold_status",
+            str(evidence.get("mediated_write_boundary_scaffold_status", "")),
+        ),
+        (
+            "mediated_write_boundary_enforcement_status",
+            str(evidence.get("mediated_write_boundary_enforcement_status", "")),
+        ),
+        ("write_mediation_enabled", str(evidence.get("write_mediation_enabled", "")).lower()),
+        ("write_mediation_enforced", str(evidence.get("write_mediation_enforced", "")).lower()),
+        ("write_classes_declared_count", str(_list_count(evidence.get("write_classes_declared")))),
+        ("write_classes_granted_count", str(_list_count(evidence.get("write_classes_granted")))),
+        ("write_classes_denied_count", str(_list_count(evidence.get("write_classes_denied")))),
+        ("write_mediation_decision_source", str(evidence.get("write_mediation_decision_source", ""))),
+        ("write_mediation_evidence_status", str(evidence.get("write_mediation_evidence_status", ""))),
+        (
+            "executor_direct_aeg_write_allowed",
+            str(evidence.get("executor_direct_aeg_write_allowed", "")).lower(),
+        ),
+        (
+            "executor_direct_outside_repo_write_allowed",
+            str(evidence.get("executor_direct_outside_repo_write_allowed", "")).lower(),
+        ),
+        (
+            "executor_direct_delete_allowed",
+            str(evidence.get("executor_direct_delete_allowed", "")).lower(),
+        ),
+        (
+            "executor_direct_chmod_allowed",
+            str(evidence.get("executor_direct_chmod_allowed", "")).lower(),
+        ),
+        (
+            "executor_direct_git_ref_write_allowed",
+            str(evidence.get("executor_direct_git_ref_write_allowed", "")).lower(),
+        ),
+        (
+            "executor_direct_remote_write_allowed",
+            str(evidence.get("executor_direct_remote_write_allowed", "")).lower(),
+        ),
+        ("write_mediation_decision_hash", _short_hash(evidence.get("write_mediation_decision_hash", ""))),
+        (
+            "mediated_write_boundary_metadata_hash",
+            _short_hash(evidence.get("mediated_write_boundary_metadata_hash", "")),
         ),
     ]
 

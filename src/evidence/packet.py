@@ -15,6 +15,7 @@ from src.evidence.action_boundary import build_action_boundary_metadata
 from src.evidence.capability_exposure import build_capability_exposure_metadata
 from src.evidence.capability_isolation import build_capability_isolation_metadata
 from src.evidence.evidence_store import build_evidence_store_trust_metadata
+from src.evidence.mediated_write_boundary import build_mediated_write_boundary_metadata
 from src.evidence.pre_live_executor_gate import build_pre_live_executor_gate_metadata
 from src.evidence.tool_surface import build_tool_surface_metadata
 from src.law import LawResult
@@ -50,6 +51,7 @@ def build_evidence_packet(
     capability_exposure = build_capability_exposure_metadata(executor_result)
     evidence_store_trust = build_evidence_store_trust_metadata()
     aeg_state_write_denial = build_aeg_state_write_denial_metadata()
+    mediated_write_boundary = build_mediated_write_boundary_metadata()
     pre_live_executor_gate = build_pre_live_executor_gate_metadata()
     packet: dict[str, Any] = {
         "aeg_version": AEG_VERSION,
@@ -147,6 +149,21 @@ def build_evidence_packet(
             "repo_outside_write_aeg_state_bypass_forbidden": True,
             "executor_controlled_recorder_write_aeg_state_bypass_forbidden": True,
             "no_live_executor_authority_before_aeg_state_write_denial_enforcement": True,
+            "mediated_write_boundary_scaffold_v0_required": True,
+            "mediated_write_boundary_scaffold_only_not_enforced": True,
+            "mediation_design_is_not_implementation": True,
+            "mediation_scaffold_is_not_enforcement": True,
+            "no_actual_mediated_write_enforcement": True,
+            "write_mediation_enabled_default_false": True,
+            "write_mediation_enforced_default_false": True,
+            "write_classes_declared_vocabulary_required": True,
+            "write_classes_granted_default_empty": True,
+            "dangerous_direct_write_grants_default_false": True,
+            "scaffold_only_not_safe_to_run": True,
+            "write_mediation_not_checked_is_not_pass": True,
+            "denied_by_metadata_is_not_external_enforcement": True,
+            "executor_self_report_is_not_write_mediation_proof": True,
+            "no_live_executor_authority_before_mediated_write_boundary": True,
             "ledger_integrity_scaffold_v0_required": True,
             "ledger_tamper_evident_is_not_tamper_proof": True,
             "ledger_tamper_proof_claim_forbidden": True,
@@ -171,6 +188,7 @@ def build_evidence_packet(
     packet.update(capability_exposure)
     packet.update(evidence_store_trust)
     packet.update(aeg_state_write_denial)
+    packet.update(mediated_write_boundary)
     packet.update(pre_live_executor_gate)
     packet.update(
         {

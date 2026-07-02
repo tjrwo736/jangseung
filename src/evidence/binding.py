@@ -16,6 +16,7 @@ from src.contracts import (
     EXECUTOR_CAPABILITY_EXPOSURE_FIELDS,
     CAPABILITY_ISOLATION_FIELDS,
     CITIZEN_ONE_EVIDENCE_FIELDS,
+    MEDIATED_WRITE_BOUNDARY_FIELDS,
     EVIDENCE_BINDING_V1,
     PROMPT_REDACTION_METADATA_FIELDS,
     PROPOSAL_CONTRACT_FIELDS,
@@ -101,6 +102,7 @@ def build_run_manifest(
     capability_exposure_fields = capability_exposure_manifest_fields(evidence)
     evidence_store_trust_fields = evidence_store_trust_manifest_fields(evidence)
     aeg_state_write_denial_fields = aeg_state_write_denial_manifest_fields(evidence)
+    mediated_write_boundary_fields = mediated_write_boundary_manifest_fields(evidence)
     pre_live_executor_gate_fields = pre_live_executor_gate_manifest_fields(evidence)
     ledger_integrity_fields = ledger_integrity_manifest_fields(evidence)
     manifest: dict[str, Any] = {
@@ -169,6 +171,8 @@ def build_run_manifest(
         "evidence_store_trust_manifest_hash": sha256_json(evidence_store_trust_fields),
         **aeg_state_write_denial_fields,
         "aeg_state_write_denial_manifest_hash": sha256_json(aeg_state_write_denial_fields),
+        **mediated_write_boundary_fields,
+        "mediated_write_boundary_manifest_hash": sha256_json(mediated_write_boundary_fields),
         **pre_live_executor_gate_fields,
         "pre_live_executor_gate_manifest_hash": sha256_json(pre_live_executor_gate_fields),
         **ledger_integrity_fields,
@@ -211,6 +215,10 @@ def bind_evidence_to_manifest(
         "aeg_state_write_denial_manifest_hash",
         "",
     )
+    evidence["bound_mediated_write_boundary_metadata_hash"] = manifest.get(
+        "mediated_write_boundary_manifest_hash",
+        "",
+    )
     evidence["bound_pre_live_executor_gate_metadata_hash"] = manifest.get(
         "pre_live_executor_gate_manifest_hash",
         "",
@@ -232,6 +240,7 @@ def bind_evidence_to_manifest(
         checks["executor_capability_exposure_manifest_binding_required"] = True
         checks["evidence_store_trust_manifest_binding_required"] = True
         checks["aeg_state_write_denial_manifest_binding_required"] = True
+        checks["mediated_write_boundary_manifest_binding_required"] = True
         checks["pre_live_executor_gate_manifest_binding_required"] = True
         checks["ledger_integrity_manifest_binding_required"] = True
 
@@ -311,6 +320,10 @@ def evidence_store_trust_manifest_fields(evidence: dict[str, Any]) -> dict[str, 
 
 def aeg_state_write_denial_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in AEG_STATE_WRITE_DENIAL_FIELDS}
+
+
+def mediated_write_boundary_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in MEDIATED_WRITE_BOUNDARY_FIELDS}
 
 
 def pre_live_executor_gate_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
