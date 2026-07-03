@@ -97,11 +97,15 @@ from src.contracts import (
     RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUSES,
     STATUS_OVERCLAIM_REJECTED,
+    STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
     STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+    STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
     STORE_WRITE_MEDIATION_FIELDS,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
+    STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -2697,6 +2701,54 @@ def _verify_store_write_mediation(
         checks.append("store write boundary is sink-level guarded")
     else:
         errors.append("INVALID_EVIDENCE: store_write_boundary must be SINK_LEVEL_GUARDED")
+
+    if evidence.get("store_write_boundary_strength") == STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY:
+        checks.append("store write boundary strength is IN_PROCESS_TAMPER_EVIDENT_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_boundary_strength must be IN_PROCESS_TAMPER_EVIDENT_ONLY")
+
+    if evidence.get("trusted_context_security_boundary") is False:
+        checks.append("trusted context is not claimed as an arbitrary-code security boundary")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted_context_security_boundary must remain false")
+
+    if evidence.get("requires_structured_executor") is True:
+        checks.append("store write boundary requires structured executor capability restriction")
+    else:
+        errors.append("INVALID_EVIDENCE: requires_structured_executor must remain true")
+
+    if evidence.get("arbitrary_in_process_code_breaks_boundary") is True:
+        checks.append("arbitrary in-process Python code breaks trusted-context secrecy")
+    else:
+        errors.append("INVALID_EVIDENCE: arbitrary_in_process_code_breaks_boundary must remain true")
+
+    if evidence.get("process_isolation_status") == STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED:
+        checks.append("process isolation status remained NOT_IMPLEMENTED")
+    else:
+        errors.append("INVALID_EVIDENCE: process_isolation_status must remain NOT_IMPLEMENTED")
+
+    if evidence.get("os_sandbox_status") == STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED:
+        checks.append("OS sandbox status remained NOT_IMPLEMENTED")
+    else:
+        errors.append("INVALID_EVIDENCE: os_sandbox_status must remain NOT_IMPLEMENTED")
+
+    if evidence.get("executor_code_execution_model") == STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED:
+        checks.append("executor code execution model requires structured actions")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_code_execution_model must be STRUCTURED_ACTIONS_REQUIRED")
+
+    for field in (
+        "tamper_proof_claimed",
+        "physical_prevention_claimed",
+        "raw_bypass_impossible",
+        "arbitrary_in_process_code_safe",
+        "live_executor_ready",
+        "write_authority_safe",
+    ):
+        if evidence.get(field) is False:
+            checks.append(f"{field} remained false")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false")
 
     guarded_sinks = evidence.get("guarded_sinks")
     if guarded_sinks == [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON]:

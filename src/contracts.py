@@ -532,11 +532,28 @@ STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED = "REJECTED"
 STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED = "BLOCKED"
 STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_NO_ATTEMPT = "NO_EXECUTOR_ATTEMPT"
 STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED = "UNCHANGED_OUT_OF_SCOPE"
+STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY = "IN_PROCESS_TAMPER_EVIDENT_ONLY"
+STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED = "STRUCTURED_ACTIONS_REQUIRED"
 STORE_WRITE_MEDIATION_FIELDS = (
     "store_write_mediation_version",
     "store_write_mediation_enabled",
     "store_write_mediation_scope",
     "store_write_boundary",
+    "store_write_boundary_strength",
+    "trusted_context_security_boundary",
+    "requires_structured_executor",
+    "arbitrary_in_process_code_breaks_boundary",
+    "process_isolation_status",
+    "os_sandbox_status",
+    "executor_code_execution_model",
+    "tamper_proof_claimed",
+    "physical_prevention_claimed",
+    "raw_bypass_impossible",
+    "arbitrary_in_process_code_safe",
+    "live_executor_ready",
+    "write_authority_safe",
     "guarded_sinks",
     "write_json_sink_guarded",
     "ledger_append_sink_guarded",

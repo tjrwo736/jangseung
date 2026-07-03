@@ -18,7 +18,9 @@ from src.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     SAFE_DEFAULT,
+    STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
     STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+    STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_NO_ATTEMPT,
     STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
@@ -38,14 +40,22 @@ from src.contracts import (
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
     STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+    STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
     STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
     STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
 )
 
 STORE_WRITE_MEDIATION_VERIFICATION_ACCEPTED = "VERIFY_REPLAY_ACCEPTED"
 STORE_WRITE_MEDIATION_VERIFICATION_REJECTED = "VERIFY_REPLAY_REJECTED"
+FORBIDDEN_STORE_WRITE_OVERCLAIM_LABELS = (
+    "TRUSTED_CONTEXT_SECURITY_BOUNDARY",
+    "EXECUTOR_AEG_WRITE_FULLY_BLOCKED",
+    "RAW_BYPASS_IMPOSSIBLE",
+    "AEG_TAMPER_PROOF",
+)
 
 
 def build_store_write_mediation_metadata(
@@ -109,6 +119,19 @@ def build_store_write_mediation_metadata(
         "store_write_mediation_enabled": True,
         "store_write_mediation_scope": STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY,
         "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+        "store_write_boundary_strength": STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
+        "trusted_context_security_boundary": False,
+        "requires_structured_executor": True,
+        "arbitrary_in_process_code_breaks_boundary": True,
+        "process_isolation_status": STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED,
+        "os_sandbox_status": STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
+        "executor_code_execution_model": STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
+        "tamper_proof_claimed": False,
+        "physical_prevention_claimed": False,
+        "raw_bypass_impossible": False,
+        "arbitrary_in_process_code_safe": False,
+        "live_executor_ready": False,
+        "write_authority_safe": False,
         "guarded_sinks": guarded_sinks,
         "write_json_sink_guarded": STORE_WRITE_SINK_WRITE_JSON in guarded_sinks,
         "ledger_append_sink_guarded": STORE_WRITE_SINK_APPEND_LEDGER in guarded_sinks,
@@ -189,6 +212,29 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY,
     )
     _expect(reasons, payload, "store_write_boundary", STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
+    _expect(
+        reasons,
+        payload,
+        "store_write_boundary_strength",
+        STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
+    )
+    _expect(reasons, payload, "trusted_context_security_boundary", False)
+    _expect(reasons, payload, "requires_structured_executor", True)
+    _expect(reasons, payload, "arbitrary_in_process_code_breaks_boundary", True)
+    _expect(reasons, payload, "process_isolation_status", STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED)
+    _expect(reasons, payload, "os_sandbox_status", STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED)
+    _expect(
+        reasons,
+        payload,
+        "executor_code_execution_model",
+        STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
+    )
+    _expect(reasons, payload, "tamper_proof_claimed", False)
+    _expect(reasons, payload, "physical_prevention_claimed", False)
+    _expect(reasons, payload, "raw_bypass_impossible", False)
+    _expect(reasons, payload, "arbitrary_in_process_code_safe", False)
+    _expect(reasons, payload, "live_executor_ready", False)
+    _expect(reasons, payload, "write_authority_safe", False)
     _expect(reasons, payload, "write_json_sink_guarded", True)
     _expect(reasons, payload, "ledger_append_sink_guarded", True)
     _expect(reasons, payload, "trusted_context_required", STORE_WRITE_TRUSTED_CONTEXT_REQUIRED)
@@ -238,6 +284,15 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         "write_json_sink_guarded",
         "ledger_append_sink_guarded",
         "trusted_context_required",
+        "trusted_context_security_boundary",
+        "requires_structured_executor",
+        "arbitrary_in_process_code_breaks_boundary",
+        "tamper_proof_claimed",
+        "physical_prevention_claimed",
+        "raw_bypass_impossible",
+        "arbitrary_in_process_code_safe",
+        "live_executor_ready",
+        "write_authority_safe",
         "call_stack_inference_used_as_judgment_basis",
         "executor_attributed_write_blocked",
         "trusted_runtime_write_allowed",
@@ -250,6 +305,28 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     ):
         if not isinstance(payload.get(field), bool):
             reasons.append(f"{field} must be boolean")
+
+    if (
+        payload.get("trusted_context_security_boundary") is True
+        and payload.get("process_isolation_status") == STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED
+    ):
+        reasons.append(
+            "trusted_context_security_boundary=true rejected while process_isolation_status is NOT_IMPLEMENTED"
+        )
+    if payload.get("tamper_proof_claimed") is True:
+        reasons.append("tamper_proof_claimed=true rejected for in-process trusted-context guard")
+    if payload.get("physical_prevention_claimed") is True:
+        reasons.append("physical_prevention_claimed=true rejected for in-process trusted-context guard")
+    if payload.get("raw_bypass_impossible") is True:
+        reasons.append("raw_bypass_impossible=true rejected for in-process trusted-context guard")
+    if payload.get("arbitrary_in_process_code_safe") is True:
+        reasons.append("arbitrary_in_process_code_safe=true rejected for in-process trusted-context guard")
+    if payload.get("live_executor_ready") is True:
+        reasons.append("live_executor_ready=true rejected; live executor authority remains on hold")
+    if payload.get("write_authority_safe") is True:
+        reasons.append("write_authority_safe=true rejected; structured executor gate is not complete")
+    for claim_path, claim_label in _forbidden_store_write_overclaim_paths(payload):
+        reasons.append(f"{claim_label} claim rejected at {claim_path}")
 
     guarded_sinks = payload.get("guarded_sinks")
     if guarded_sinks != [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON]:
@@ -543,6 +620,21 @@ def _unique(values: list[str]) -> list[str]:
         if value not in result:
             result.append(value)
     return result
+
+
+def _forbidden_store_write_overclaim_paths(value: Any, prefix: str = "") -> list[tuple[str, str]]:
+    paths: list[tuple[str, str]] = []
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            child_path = f"{prefix}.{key}" if prefix else str(key)
+            paths.extend(_forbidden_store_write_overclaim_paths(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            child_path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            paths.extend(_forbidden_store_write_overclaim_paths(child, child_path))
+    elif isinstance(value, str) and value in FORBIDDEN_STORE_WRITE_OVERCLAIM_LABELS:
+        paths.append((prefix or "<root>", value))
+    return paths
 
 
 def _sha256_json(payload: Any) -> str:
