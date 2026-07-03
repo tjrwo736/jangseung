@@ -27,7 +27,32 @@ route decision.
 - call the deny-only mediator skeleton or a test double.
 - record allow/deny/failure/fallback route state as evidence.
 - verify replay by checking schema, digest, route target, guard decision,
-  fallback fields, and authority preservation.
+  fallback fields, deterministic write attribution, and authority
+  preservation.
+
+## deterministic write attribution
+
+11-A-1 treats this route as an executor-attributed pre-live write route. The
+accepted attribution basis is deterministic adapter context:
+
+```text
+write_attribution_type = executor_attributed
+write_attribution_basis = deterministic_adapter_context
+write_attribution_source = phase11a_save_run_pre_live_adapter
+deterministic_entrypoint = phase11a_save_run_pre_live_adapter
+write_attribution_is_self_reported = false
+trusted_runtime_claim_allowed = false
+executor_self_claim_used = false
+```
+
+Executor-attributed versus trusted-runtime write status is not accepted from a
+caller, executor, request payload, route result, or metadata self-report.
+`request_source` remains a canonical replay field only; it is not the basis for
+mediator actor selection and must equal the deterministic adapter source.
+
+Trusted-runtime internal writes require a separate future deterministic
+entrypoint and scope. This PR does not add that scope, and an executor request
+payload cannot claim `trusted_runtime_internal`.
 
 ## save_run routing design
 
@@ -58,6 +83,10 @@ The adapter boundary is:
 The guard and mediator records remain compatibility signals. They do not prove
 runtime mediation, runtime enforcement, filesystem hardening, or executor
 isolation.
+
+The mediator actor is derived from the deterministic adapter context, not from a
+caller-controlled request field. Avoiding self-mediation in this pre-live
+adapter does not create a guard bypass.
 
 ## fallback / kill-path integration with 11-A-0
 
@@ -93,6 +122,14 @@ Required evidence fields:
 - `phase11b_status`
 - `safe_default`
 - `known_gap_status`
+- `write_attribution_type`
+- `write_attribution_basis`
+- `write_attribution_source`
+- `write_attribution_is_self_reported`
+- `trusted_runtime_claim_allowed`
+- `executor_self_claim_used`
+- `deterministic_entrypoint`
+- `attribution_spoofing_rejected`
 - `request`
 - `guard_decision`
 - `mediator_request`
@@ -113,6 +150,12 @@ Replay verification rejects:
 - route target mismatch.
 - guard decision mismatch.
 - fallback field mismatch.
+- attribution source, basis, entrypoint, request source, or mediator actor
+  mismatch.
+- request metadata or route result claims to be `trusted_runtime_internal`.
+- self-reported attribution claims.
+- executor self-claim usage.
+- trusted-runtime claim allowance.
 - runtime authority overclaims.
 - live executor authority promotion claims.
 - Phase 11-B start claims.
@@ -141,6 +184,8 @@ Replay rejects claims that imply:
 - raw shell, generic file mutation, or command runner authority has been
   granted.
 - actual enforcement has been activated.
+- trusted-runtime internal write status was accepted from request payload,
+  metadata, route result, caller, or executor self-report.
 
 ## known-gap preservation
 
@@ -162,6 +207,8 @@ handling remains Phase 11-A-2 scope.
 - grant raw shell, write_file, run_command, or process-spawn capability.
 - grant provider, model, or network authority.
 - grant runtime write authority.
+- treat caller or executor self-report as trusted-runtime authority.
+- allow self-mediation avoidance to become a guard bypass.
 - implement Phase 11-B.
 - change `src/cli/main.py`, `src/agents`, or `pyproject.toml`.
 - write `.aeg`, `.env`, ledger, secret, or runtime artifact files.
