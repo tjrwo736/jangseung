@@ -31,12 +31,17 @@ from src.contracts import (
     STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED,
     STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY,
     STORE_WRITE_MEDIATION_V0,
-    STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+    STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+    STORE_WRITE_CONTEXT_RESULT_BLOCKED,
+    STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
+    STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
-    STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
+    STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+    STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
 )
 
 STORE_WRITE_MEDIATION_VERIFICATION_ACCEPTED = "VERIFY_REPLAY_ACCEPTED"
@@ -62,8 +67,7 @@ def build_store_write_mediation_metadata(
         event
         for event in normalized_events
         if event.get("write_provenance_type") == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
-        and event.get("write_mediation_result")
-        in (STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED, STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED)
+        and event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED
     ]
     trusted_write_json_events = [
         event for event in trusted_allowed_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
@@ -108,10 +112,16 @@ def build_store_write_mediation_metadata(
         "guarded_sinks": guarded_sinks,
         "write_json_sink_guarded": STORE_WRITE_SINK_WRITE_JSON in guarded_sinks,
         "ledger_append_sink_guarded": STORE_WRITE_SINK_APPEND_LEDGER in guarded_sinks,
+        "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+        "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+        "call_stack_inference_used_as_judgment_basis": STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+        "missing_context_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED,
+        "omitted_declaration_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED,
+        "executor_self_report_trusted_result": STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
         "store_write_mediation_binding_present": True,
-        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
-        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
-        "write_provenance_type": "mixed_deterministic_call_site",
+        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
+        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
+        "write_provenance_type": "mixed_runtime_owned_capability",
         "executor_attributed_write_blocked": bool(blocked_events),
         "executor_direct_sink_write_result": executor_direct_sink_write_result,
         "executor_direct_sink_write_created_files_count": blocked_created_count,
@@ -181,18 +191,39 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     _expect(reasons, payload, "store_write_boundary", STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
     _expect(reasons, payload, "write_json_sink_guarded", True)
     _expect(reasons, payload, "ledger_append_sink_guarded", True)
+    _expect(reasons, payload, "trusted_context_required", STORE_WRITE_TRUSTED_CONTEXT_REQUIRED)
+    _expect(
+        reasons,
+        payload,
+        "trusted_context_basis",
+        STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+    )
+    _expect(
+        reasons,
+        payload,
+        "call_stack_inference_used_as_judgment_basis",
+        STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+    )
+    _expect(reasons, payload, "missing_context_result", STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+    _expect(reasons, payload, "omitted_declaration_result", STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+    _expect(
+        reasons,
+        payload,
+        "executor_self_report_trusted_result",
+        STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
+    )
     _expect(reasons, payload, "store_write_mediation_binding_present", True)
     _expect(
         reasons,
         payload,
         "write_provenance_source",
-        STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
+        STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     )
     _expect(
         reasons,
         payload,
         "write_provenance_basis",
-        STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+        STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
     )
     _expect(reasons, payload, "trusted_runtime_write_allowed", True)
     _expect(reasons, payload, "trusted_runtime_ledger_append_allowed", True)
@@ -206,6 +237,8 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         "store_write_mediation_binding_present",
         "write_json_sink_guarded",
         "ledger_append_sink_guarded",
+        "trusted_context_required",
+        "call_stack_inference_used_as_judgment_basis",
         "executor_attributed_write_blocked",
         "trusted_runtime_write_allowed",
         "trusted_runtime_ledger_append_allowed",
@@ -259,8 +292,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         event
         for event in normalized_events
         if event.get("write_provenance_type") == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
-        and event.get("write_mediation_result")
-        in (STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED, STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED)
+        and event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED
     ]
     trusted_write_json_events = [
         event for event in trusted_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
@@ -414,18 +446,41 @@ def _event_rejection_reasons(events: Sequence[Mapping[str, Any]]) -> list[str]:
     for index, event in enumerate(events):
         label = f"store_write_mediation_events[{index}]"
         _expect(reasons, event, "store_write_boundary", STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED, label)
-        _expect(reasons, event, "write_provenance_source", STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE, label)
-        _expect(reasons, event, "write_provenance_basis", STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE, label)
+        _expect(reasons, event, "write_provenance_source", STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT, label)
+        _expect(reasons, event, "write_provenance_basis", STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY, label)
         _expect(reasons, event, "live_executor_authority", LIVE_EXECUTOR_AUTHORITY_ON_HOLD, label)
         _expect(reasons, event, "phase11b_live_executor_status", PHASE11B_LIVE_EXECUTOR_NOT_STARTED, label)
+        _expect(reasons, event, "trusted_context_required", STORE_WRITE_TRUSTED_CONTEXT_REQUIRED, label)
+        _expect(
+            reasons,
+            event,
+            "trusted_context_basis",
+            STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+            label,
+        )
+        _expect(
+            reasons,
+            event,
+            "call_stack_inference_used_as_judgment_basis",
+            STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+            label,
+        )
         if event.get("sink_name") not in (STORE_WRITE_SINK_WRITE_JSON, STORE_WRITE_SINK_APPEND_LEDGER):
             reasons.append(f"{label} sink_name must identify a guarded store.py sink")
         if event.get("sink_guarded") is not True:
             reasons.append(f"{label} sink_guarded must be true")
+        if event.get("caller_name_match_used_as_judgment_basis") is True:
+            reasons.append(f"{label} caller-name match trusted provenance rejected")
         if event.get("executor_self_report_used") is True:
             reasons.append(f"{label} executor self-report trusted provenance rejected")
         if event.get("trusted_runtime_claim_allowed") is True:
             reasons.append(f"{label} trusted runtime self-report claim rejected")
+        if event.get("executor_self_report_trusted_result") == "ACCEPTED":
+            reasons.append(f"{label} executor self-report trusted provenance accepted")
+        if event.get("missing_context_result") == "ALLOWED":
+            reasons.append(f"{label} missing context accepted as trusted")
+        if event.get("omitted_declaration_result") in ("ACCEPTED", "TRUSTED", "ALLOWED"):
+            reasons.append(f"{label} omitted declaration accepted as trusted")
         if event.get("executor_claimed_provenance") == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME:
             if event.get("write_provenance_type") != STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED:
                 reasons.append(f"{label} executor self-report trusted provenance accepted")
@@ -449,13 +504,21 @@ def _event_rejection_reasons(events: Sequence[Mapping[str, Any]]) -> list[str]:
             elif event.get("write_mediation_result") != STORE_WRITE_MEDIATION_RESULT_OUT_OF_SCOPE_UNCHANGED:
                 reasons.append(f"{label} executor-attributed write was not blocked or marked out of scope")
         if event.get("write_provenance_type") == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME:
-            if event.get("write_mediation_result") not in (
-                STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED,
-                STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
-            ):
+            if event.get("write_mediation_result") != STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED:
                 reasons.append(f"{label} trusted runtime write was not allowed")
             if event.get("write_performed") is not True:
                 reasons.append(f"{label} trusted runtime write did not record performed write")
+            if event.get("trusted_context_valid") is not True:
+                reasons.append(f"{label} trusted runtime write lacks valid runtime-owned trusted context")
+            if event.get("trusted_capability_runtime_owned") is not True:
+                reasons.append(f"{label} trusted runtime write lacks runtime-owned capability")
+            if event.get("target_exists_after") is not True:
+                reasons.append(f"{label} trusted runtime write preserved claim rejected because target is missing")
+            if (
+                event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+                and _non_negative_int(event.get("ledger_entries_appended_count")) <= 0
+            ):
+                reasons.append(f"{label} trusted runtime ledger append preserved claim rejected because append failed")
     return reasons
 
 

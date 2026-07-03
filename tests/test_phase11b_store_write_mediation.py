@@ -20,12 +20,16 @@ from src.contracts import (
     STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
     STORE_WRITE_MEDIATION_FIELDS,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
-    STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
     STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
+    STORE_WRITE_CONTEXT_RESULT_BLOCKED,
+    STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
+    STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
+    STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
 )
 from src.evidence.binding import (
     manifest_hash,
@@ -75,6 +79,17 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["guarded_sinks"], [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON])
         self.assertTrue(evidence["write_json_sink_guarded"])
         self.assertTrue(evidence["ledger_append_sink_guarded"])
+        self.assertTrue(evidence["trusted_context_required"])
+        self.assertEqual(evidence["trusted_context_basis"], STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY)
+        self.assertFalse(evidence["call_stack_inference_used_as_judgment_basis"])
+        self.assertEqual(evidence["missing_context_result"], STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+        self.assertEqual(evidence["omitted_declaration_result"], STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+        self.assertEqual(
+            evidence["executor_self_report_trusted_result"],
+            STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
+        )
+        self.assertEqual(evidence["write_provenance_source"], STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT)
+        self.assertEqual(evidence["write_provenance_basis"], STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY)
         self.assertTrue(evidence["executor_attributed_write_blocked"])
         self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
         self.assertEqual(evidence["executor_direct_sink_write_created_files_count"], 0)
@@ -111,6 +126,12 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
             self.assertFalse(event["write_performed"])
             self.assertFalse(event["target_file_created"])
             self.assertFalse(event["fallback_to_unwired"])
+            self.assertTrue(event["trusted_context_required"])
+            self.assertEqual(event["trusted_context_basis"], STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY)
+            self.assertFalse(event["trusted_context_valid"])
+            self.assertFalse(event["trusted_capability_runtime_owned"])
+            self.assertFalse(event["call_stack_inference_used_as_judgment_basis"])
+            self.assertFalse(event["caller_name_match_used_as_judgment_basis"])
             self.assertEqual(event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
             self.assertEqual(event["write_provenance_type"], STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED)
             if event["sink_name"] == STORE_WRITE_SINK_WRITE_JSON:
@@ -148,11 +169,36 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertFalse((self.repo / ".aeg" / "traversal_bypass.json").exists())
         self.assertFalse(direct.exception.event["target_file_created"])
         self.assertFalse(traversal.exception.event["target_file_created"])
+        self.assertEqual(len(list((self.repo / ".aeg").glob("*bypass.json"))), 0)
+        self.assertFalse(direct.exception.event["trusted_context_valid"])
+        self.assertFalse(traversal.exception.event["trusted_context_valid"])
+        self.assertEqual(
+            direct.exception.event["executor_self_report_trusted_result"],
+            STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
+        )
 
     def test_direct_ledger_append_sink_bypass_is_blocked_before_append(self):
         self._init()
         ledger_path = self.repo / ".aeg" / "ledger.jsonl"
         before = ledger_path.read_text(encoding="utf-8")
+
+        with self.assertRaises(StoreWriteMediationBlocked) as missing_context_blocked:
+            _append_ledger_unmediated(
+                ledger_path,
+                {
+                    "run_id": "forged-missing-context-ledger-entry",
+                    "task_text": "forged missing context",
+                    "status": "CLEAN_CORE",
+                },
+            )
+
+        self.assertEqual(before, ledger_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            missing_context_blocked.exception.event["write_mediation_result"],
+            STORE_WRITE_MEDIATION_RESULT_BLOCKED,
+        )
+        self.assertEqual(missing_context_blocked.exception.event["missing_context_result"], STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+        self.assertEqual(missing_context_blocked.exception.event["ledger_entries_appended_count"], 0)
 
         with self.assertRaises(StoreWriteMediationBlocked) as blocked:
             with _executor_attributed_store_write_context(
@@ -184,6 +230,9 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
         self.assertEqual(blocked.exception.event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
         self.assertTrue(blocked.exception.event["executor_omitted_declaration"])
+        self.assertEqual(blocked.exception.event["missing_context_result"], STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+        self.assertEqual(blocked.exception.event["omitted_declaration_result"], STORE_WRITE_CONTEXT_RESULT_BLOCKED)
+        self.assertFalse(blocked.exception.event["trusted_context_valid"])
         self.assertFalse(target.exists())
 
     def test_trusted_runtime_save_run_still_writes_ledger_evidence_and_manifest(self):
@@ -193,7 +242,9 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
         ledger_path = self.repo / ".aeg" / "ledger.jsonl"
+        run_path = self.repo / self._ledger_entries()[-1]["run_path"]
 
+        self.assertTrue(run_path.exists())
         self.assertTrue(evidence_path.exists())
         self.assertTrue(manifest_path.exists())
         self.assertTrue(ledger_path.exists())
@@ -205,6 +256,17 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
         self.assertEqual(evidence["executor_direct_ledger_append_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
         self.assertEqual(evidence["blocked_write_created_files_count"], 0)
+        trusted_events = [
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["write_provenance_type"] == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
+        ]
+        self.assertTrue(trusted_events)
+        for event in trusted_events:
+            self.assertTrue(event["trusted_context_valid"])
+            self.assertTrue(event["trusted_capability_runtime_owned"])
+            self.assertEqual(event["trusted_context_basis"], STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY)
+            self.assertFalse(event["call_stack_inference_used_as_judgment_basis"])
         self.assertEqual(
             evidence["bound_store_write_mediation_metadata_hash"],
             manifest["store_write_mediation_manifest_hash"],
@@ -227,6 +289,8 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(spoof_event["write_provenance_type"], STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED)
         self.assertFalse(spoof_event["executor_self_report_used"])
         self.assertFalse(spoof_event["trusted_runtime_claim_allowed"])
+        self.assertEqual(spoof_event["executor_self_report_trusted_result"], STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED)
+        self.assertEqual(evidence["executor_self_report_trusted_result"], STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED)
 
         evidence["store_write_mediation_events"][0]["executor_self_report_used"] = True
         evidence["store_write_mediation_events"][0]["write_provenance_type"] = STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
@@ -240,11 +304,14 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
             verify.errors,
         )
 
-    def test_deterministic_call_site_provenance_is_required(self):
+    def test_runtime_owned_capability_provenance_is_required(self):
         self._init()
         self.assertEqual(self._run("fix typo in README"), 0)
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
+        self.assertEqual(evidence["write_provenance_source"], STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT)
+        self.assertEqual(evidence["write_provenance_basis"], STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY)
+        self.assertEqual(evidence["trusted_context_basis"], STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY)
         evidence["write_provenance_source"] = "executor_self_report"
         self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
 
@@ -253,30 +320,54 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertFalse(verify.ok)
         self.assertTrue(any("write_provenance_source mismatch" in error for error in verify.errors), verify.errors)
 
-    def test_wired_path_failure_falls_back_to_existing_unwired_store_write(self):
+    def test_call_stack_inference_claim_is_rejected(self):
         self._init()
-        with patch("src.state.store._trusted_runtime_store_write_gate", side_effect=RuntimeError("wired route failed")):
-            self.assertEqual(self._run("fix typo in README"), 0)
-
+        self.assertEqual(self._run("fix typo in README"), 0)
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["call_stack_inference_used_as_judgment_basis"] = True
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(
+            any("call_stack_inference_used_as_judgment_basis mismatch" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_missing_or_omitted_context_allowed_claim_is_rejected(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["missing_context_result"] = "ALLOWED"
+        evidence["omitted_declaration_result"] = "TRUSTED"
+        evidence["executor_self_report_trusted_result"] = "ACCEPTED"
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(any("missing_context_result mismatch" in error for error in verify.errors), verify.errors)
+        self.assertTrue(any("omitted_declaration_result mismatch" in error for error in verify.errors), verify.errors)
+        self.assertTrue(
+            any("executor_self_report_trusted_result mismatch" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_trusted_runtime_gate_failure_does_not_fallback_to_unwired_write(self):
+        self._init()
+        with patch("src.state.store._trusted_runtime_store_write_gate", side_effect=RuntimeError("wired route failed")):
+            self.assertEqual(self._run("fix typo in README"), 1)
+
         ledger_path = self.repo / ".aeg" / "ledger.jsonl"
 
-        self.assertTrue(evidence_path.exists())
-        self.assertTrue(manifest_path.exists())
         self.assertTrue(ledger_path.exists())
-        self.assertTrue(evidence["rollback_used"])
-        self.assertTrue(evidence["fallback_to_unwired"])
-        self.assertTrue(evidence["fallback_evidence_recorded"])
-        self.assertEqual(evidence["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED)
-        self.assertTrue(
-            any(event["fallback_to_unwired"] for event in evidence["store_write_mediation_events"])
-        )
-        self.assertEqual(
-            evidence["bound_store_write_mediation_metadata_hash"],
-            manifest["store_write_mediation_manifest_hash"],
-        )
-        self.assertTrue(verify_latest(self.repo).ok)
+        self.assertEqual(ledger_path.read_text(encoding="utf-8"), "")
+        self.assertEqual(list((self.repo / ".aeg" / "runs").glob("*/run.json")), [])
+        self.assertEqual(list((self.repo / ".aeg" / "runs").glob("*/evidence.json")), [])
+        self.assertEqual(list((self.repo / ".aeg" / "runs").glob("*/manifest.json")), [])
 
     def test_blocked_claim_with_created_file_count_is_rejected_even_when_rebound(self):
         self._init()
@@ -340,6 +431,51 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertFalse(verify.ok)
         self.assertTrue(
             any("forged entry appended" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_verify_rejects_trusted_runtime_write_preserved_claim_when_target_missing(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        trusted_write_event = next(
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["sink_name"] == STORE_WRITE_SINK_WRITE_JSON
+            and event["write_provenance_type"] == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
+        )
+        trusted_write_event["target_exists_after"] = False
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(
+            any("trusted runtime write preserved claim rejected because target is missing" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_verify_rejects_trusted_runtime_ledger_preserved_claim_when_append_failed(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        trusted_ledger_event = next(
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["sink_name"] == STORE_WRITE_SINK_APPEND_LEDGER
+            and event["write_provenance_type"] == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
+        )
+        trusted_ledger_event["ledger_entries_after"] = trusted_ledger_event["ledger_entries_before"]
+        trusted_ledger_event["ledger_entries_appended_count"] = 0
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(
+            any("trusted runtime ledger append preserved claim rejected because append failed" in error for error in verify.errors),
             verify.errors,
         )
 

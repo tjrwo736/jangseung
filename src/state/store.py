@@ -25,17 +25,20 @@ from src.contracts import (
     STORE_WRITE_MEDIATION_REASON_EXECUTOR_AEG_BLOCKED,
     STORE_WRITE_MEDIATION_REASON_OUT_OF_SCOPE,
     STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_ALLOWED,
-    STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_FALLBACK,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
-    STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
     STORE_WRITE_MEDIATION_RESULT_OUT_OF_SCOPE_UNCHANGED,
     STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED,
-    STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+    STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+    STORE_WRITE_CONTEXT_RESULT_BLOCKED,
+    STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED,
+    STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
-    STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
+    STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+    STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     WRITE_CLASS_AEG_STATE_WRITE,
@@ -58,16 +61,14 @@ from src.evidence.ledger_integrity import (
 )
 from src.evidence.store_write_mediation import build_store_write_mediation_metadata
 
-_TRUSTED_RUNTIME_STORE_WRITE_CALL_SITES = frozenset(
-    {
-        "store.py:ensure_initialized.config_json",
-        "store.py:append_ledger.ledger_append",
-        "store.py:save_run.run_json",
-        "store.py:save_run.manifest_json",
-        "store.py:save_run.evidence_json",
-        "store.py:save_run.ledger_append",
-    }
-)
+_TRUSTED_STORE_WRITE_CAPABILITY_OWNER = object()
+
+
+@dataclass(frozen=True)
+class _TrustedStoreWriteCapability:
+    owner: object
+    repo_root: Path
+    scope_label: str
 
 
 @dataclass(frozen=True)
@@ -76,11 +77,16 @@ class _StoreWriteSinkContext:
     provenance_type: str
     call_site: str
     executor_claimed_provenance: str = ""
+    trusted_capability: _TrustedStoreWriteCapability | None = None
     mediator_route: Callable[[WriteMediationRequest], WriteMediationDecision | Mapping[str, Any]] | None = None
 
 
 _STORE_WRITE_SINK_CONTEXT: ContextVar[_StoreWriteSinkContext | None] = ContextVar(
     "aeg_store_write_sink_context",
+    default=None,
+)
+_TRUSTED_STORE_WRITE_CAPABILITY_CONTEXT: ContextVar[_TrustedStoreWriteCapability | None] = ContextVar(
+    "aeg_trusted_store_write_capability",
     default=None,
 )
 
@@ -108,16 +114,25 @@ def _assert_under_state(repo_root: str | Path, path: str | Path) -> Path:
 
 @contextmanager
 def _trusted_runtime_store_write_context(repo_root: str | Path, call_site: str) -> Iterator[None]:
+    resolved_repo = Path(repo_root).resolve()
+    capability = _TrustedStoreWriteCapability(
+        owner=_TRUSTED_STORE_WRITE_CAPABILITY_OWNER,
+        repo_root=resolved_repo,
+        scope_label=call_site,
+    )
     context = _StoreWriteSinkContext(
-        repo_root=Path(repo_root).resolve(),
+        repo_root=resolved_repo,
         provenance_type=STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
         call_site=call_site,
+        trusted_capability=capability,
     )
-    token = _STORE_WRITE_SINK_CONTEXT.set(context)
+    capability_token = _TRUSTED_STORE_WRITE_CAPABILITY_CONTEXT.set(capability)
+    context_token = _STORE_WRITE_SINK_CONTEXT.set(context)
     try:
         yield
     finally:
-        _STORE_WRITE_SINK_CONTEXT.reset(token)
+        _STORE_WRITE_SINK_CONTEXT.reset(context_token)
+        _TRUSTED_STORE_WRITE_CAPABILITY_CONTEXT.reset(capability_token)
 
 
 @contextmanager
@@ -178,11 +193,24 @@ def _guard_store_write_sink(
             "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
             "sink_name": sink_name,
             "sink_guarded": True,
+            "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+            "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+            "trusted_context_valid": trusted_runtime_allowed,
+            "trusted_capability_present": context.trusted_capability is not None if context is not None else False,
+            "trusted_capability_runtime_owned": _trusted_capability_is_runtime_owned(context),
+            "call_stack_inference_used_as_judgment_basis": STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+            "caller_name_match_used_as_judgment_basis": False,
+            "missing_context_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED if context is None else "",
+            "omitted_declaration_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED if context is None else "",
+            "executor_self_report_trusted_result": (
+                STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED
+                if executor_claimed_provenance == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
+                else ""
+            ),
             "guard_router_invoked": True,
             "guard_decision": guard_decision.to_record(),
             "store_write_context_present": context is not None,
             "executor_omitted_declaration": context is None,
-            "trusted_runtime_call_site_allowed": trusted_runtime_allowed,
             "ledger_entries_before": ledger_entries_before,
             "ledger_entries_after": ledger_entries_before,
             "ledger_entries_appended_count": 0,
@@ -235,12 +263,13 @@ def _guard_store_write_sink(
         aeg_boundary=guard_decision.protected_target_status,
         action_summary="executor-attributed .aeg write blocked before store.py sink mutation",
         metadata={
-            "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
-            "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+            "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
+            "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
             "write_provenance_type": STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
             "executor_claimed_provenance": executor_claimed_provenance,
             "sink_name": sink_name,
             "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+            "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
         },
     )
     route = context.mediator_route if context is not None and context.mediator_route is not None else decide_write_request
@@ -276,10 +305,20 @@ def _guard_store_write_sink(
 
 
 def _sink_context_is_trusted_runtime(context: _StoreWriteSinkContext | None) -> bool:
+    if context is None or context.provenance_type != STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME:
+        return False
+    return _trusted_capability_is_runtime_owned(context)
+
+
+def _trusted_capability_is_runtime_owned(context: _StoreWriteSinkContext | None) -> bool:
+    if context is None or context.trusted_capability is None:
+        return False
+    active_capability = _TRUSTED_STORE_WRITE_CAPABILITY_CONTEXT.get()
+    capability = context.trusted_capability
     return (
-        context is not None
-        and context.provenance_type == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
-        and context.call_site in _TRUSTED_RUNTIME_STORE_WRITE_CALL_SITES
+        capability is active_capability
+        and capability.owner is _TRUSTED_STORE_WRITE_CAPABILITY_OWNER
+        and capability.repo_root == context.repo_root.resolve()
     )
 
 
@@ -346,6 +385,20 @@ def _unblocked_sink_event(
             "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
             "sink_name": sink_name,
             "sink_guarded": True,
+            "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+            "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+            "trusted_context_valid": False,
+            "trusted_capability_present": False,
+            "trusted_capability_runtime_owned": False,
+            "call_stack_inference_used_as_judgment_basis": STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+            "caller_name_match_used_as_judgment_basis": False,
+            "missing_context_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED if executor_claimed_provenance is None else "",
+            "omitted_declaration_result": STORE_WRITE_CONTEXT_RESULT_BLOCKED if executor_claimed_provenance is None else "",
+            "executor_self_report_trusted_result": (
+                STORE_WRITE_EXECUTOR_SELF_REPORT_TRUSTED_REJECTED
+                if executor_claimed_provenance == STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME
+                else ""
+            ),
             "guard_router_invoked": True,
             "guard_decision": decide_b1_aeg_integrity_guard(
                 repo_root=repo_root,
@@ -353,7 +406,6 @@ def _unblocked_sink_event(
             ).to_record(),
             "store_write_context_present": executor_claimed_provenance is not None,
             "executor_omitted_declaration": executor_claimed_provenance is None,
-            "trusted_runtime_call_site_allowed": False,
             "target_exists_after": resolved.exists(),
             "target_file_created": resolved.exists(),
             "ledger_entries_before": 0,
@@ -376,7 +428,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _append_ledger_unmediated(ledger_path: Path, entry: dict[str, Any]) -> None:
-    """Append via the trusted-runtime internal ledger path, guarded at the sink."""
+    """Append via trusted-runtime internals, not an executor-bypassable unguarded sink."""
 
     body = json.dumps(entry, sort_keys=True) + "\n"
     _guard_store_write_sink(
@@ -729,56 +781,45 @@ def _plan_trusted_runtime_store_write(
             "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
             "sink_name": sink_name,
             "sink_guarded": True,
+            "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+            "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+            "trusted_context_valid": True,
+            "trusted_capability_present": True,
+            "trusted_capability_runtime_owned": True,
+            "call_stack_inference_used_as_judgment_basis": STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
+            "caller_name_match_used_as_judgment_basis": False,
+            "missing_context_result": "",
+            "omitted_declaration_result": "",
+            "executor_self_report_trusted_result": "",
             "store_write_context_present": True,
             "executor_omitted_declaration": False,
-            "trusted_runtime_call_site_allowed": call_site in _TRUSTED_RUNTIME_STORE_WRITE_CALL_SITES,
             "ledger_entries_before": ledger_entries_before,
             "ledger_entries_after": ledger_entries_before + (1 if sink_name == STORE_WRITE_SINK_APPEND_LEDGER else 0),
             "ledger_entries_appended_count": 1 if sink_name == STORE_WRITE_SINK_APPEND_LEDGER else 0,
         }
     )
-    try:
+    with _trusted_runtime_store_write_context(repo_root, call_site):
         gate_record = _trusted_runtime_store_write_gate(
             repo_root=repo_root,
             target=target,
             operation=operation,
             call_site=call_site,
         )
-        return {
-            **base_event,
-            "guard_router_invoked": True,
-            "guard_decision": gate_record.get("guard_decision"),
-            "trusted_runtime_gate": gate_record,
-            "write_mediation_result": STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED,
-            "write_mediation_reason": STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_ALLOWED,
-            "mediator_request": None,
-            "mediator_decision": None,
-            "write_performed": True,
-            "fallback_to_unwired": False,
-            "wired_path_failed": False,
-            "target_exists_after": True,
-            "target_file_created": not existed_before,
-        }
-    except Exception as exc:  # noqa: BLE001 - trusted runtime writes must preserve existing save_run behavior.
-        return {
-            **base_event,
-            "guard_router_invoked": True,
-            "guard_decision": None,
-            "trusted_runtime_gate": {
-                "status": "raised_exception",
-                "exception_type": exc.__class__.__name__,
-                "call_site": call_site,
-            },
-            "write_mediation_result": STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
-            "write_mediation_reason": STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_FALLBACK,
-            "mediator_request": None,
-            "mediator_decision": None,
-            "write_performed": True,
-            "fallback_to_unwired": True,
-            "wired_path_failed": True,
-            "target_exists_after": True,
-            "target_file_created": not existed_before,
-        }
+    return {
+        **base_event,
+        "guard_router_invoked": True,
+        "guard_decision": gate_record.get("guard_decision"),
+        "trusted_runtime_gate": gate_record,
+        "write_mediation_result": STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED,
+        "write_mediation_reason": STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_ALLOWED,
+        "mediator_request": None,
+        "mediator_decision": None,
+        "write_performed": True,
+        "fallback_to_unwired": False,
+        "wired_path_failed": False,
+        "target_exists_after": True,
+        "target_file_created": not existed_before,
+    }
 
 
 def _trusted_runtime_store_write_gate(
@@ -788,6 +829,19 @@ def _trusted_runtime_store_write_gate(
     operation: str,
     call_site: str,
 ) -> dict[str, Any]:
+    context = _STORE_WRITE_SINK_CONTEXT.get()
+    if not _sink_context_is_trusted_runtime(context):
+        raise StoreWriteMediationBlocked(
+            {
+                "write_mediation_result": STORE_WRITE_MEDIATION_RESULT_BLOCKED,
+                "write_mediation_reason": STORE_WRITE_MEDIATION_REASON_EXECUTOR_AEG_BLOCKED,
+                "canonical_target": str(target.resolve(strict=False)),
+                "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+                "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+                "trusted_context_valid": False,
+                "write_performed": False,
+            }
+        )
     guard_decision = decide_b1_aeg_integrity_guard(
         repo_root=repo_root,
         submitted_path=_repo_relative_or_absolute(repo_root, target),
@@ -799,9 +853,14 @@ def _trusted_runtime_store_write_gate(
         "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
         "sink_name": STORE_WRITE_SINK_APPEND_LEDGER if operation == "append" else STORE_WRITE_SINK_WRITE_JSON,
         "guard_decision": guard_decision.to_record(),
-        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
-        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
+        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
         "write_provenance_type": STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+        "trusted_context_required": STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
+        "trusted_context_basis": STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
+        "trusted_context_valid": True,
+        "trusted_capability_runtime_owned": True,
+        "call_stack_inference_used_as_judgment_basis": STORE_WRITE_CALL_STACK_INFERENCE_NOT_USED,
     }
 
 
@@ -829,8 +888,8 @@ def _store_write_event_base(
         "call_site": call_site,
         "submitted_target": str(submitted_target),
         "canonical_target": str(target),
-        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
-        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
+        "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
+        "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
         "write_provenance_type": provenance_type,
         "executor_claimed_provenance": executor_claimed_provenance or "",
         "executor_self_report_used": False,
