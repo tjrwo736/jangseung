@@ -97,6 +97,8 @@ from src.contracts import (
     RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUSES,
     STATUS_OVERCLAIM_REJECTED,
+    STORE_WRITE_MEDIATION_FIELDS,
+    STORE_WRITE_MEDIATION_RESULT_BLOCKED,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -129,6 +131,7 @@ from src.evidence.binding import (
     repo_relative_path,
     sha256_json,
     sha256_text,
+    store_write_mediation_manifest_fields,
     citizen_one_manifest_fields,
     provider_network_guard_manifest_fields,
     provider_request_manifest_fields,
@@ -170,6 +173,10 @@ from src.evidence.mediated_write_boundary import (
     expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
+from src.evidence.store_write_mediation import (
+    expected_store_write_mediation_metadata_hash,
+    verify_store_write_mediation_metadata,
+)
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -349,6 +356,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     gate_checks, gate_errors = _verify_pre_live_executor_gate(evidence, manifest)
     checks.extend(gate_checks)
     errors.extend(gate_errors)
+
+    store_write_mediation_checks, store_write_mediation_errors = _verify_store_write_mediation(evidence, manifest)
+    checks.extend(store_write_mediation_checks)
+    errors.extend(store_write_mediation_errors)
 
     ledger_checks, ledger_errors = _verify_ledger_integrity(evidence, manifest, ledger_entry)
     checks.extend(ledger_checks)
@@ -1137,6 +1148,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "store write mediation metadata",
+        STORE_WRITE_MEDIATION_FIELDS,
+        "store_write_mediation_manifest_hash",
+        evidence,
+        manifest,
+        store_write_mediation_manifest_fields(evidence),
+        store_write_mediation_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "ledger integrity scaffold metadata",
         LEDGER_INTEGRITY_FIELDS,
         "ledger_integrity_manifest_hash",
@@ -1359,6 +1381,13 @@ def _verify_manifest_binding(
         "bound_pre_live_executor_gate_metadata_hash",
         evidence.get("bound_pre_live_executor_gate_metadata_hash"),
         sha256_json(pre_live_executor_gate_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_store_write_mediation_metadata_hash",
+        evidence.get("bound_store_write_mediation_metadata_hash"),
+        sha256_json(store_write_mediation_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -2633,6 +2662,84 @@ def _verify_pre_live_executor_gate(
             checks.append("manifest pre_live_executor_gate_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest pre_live_executor_gate_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_store_write_mediation(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    replay = verify_store_write_mediation_metadata(evidence)
+    if replay.get("accepted") is True:
+        checks.append("store write mediation replay accepted")
+    else:
+        for reason in replay.get("rejection_reasons", []):
+            errors.append(f"INVALID_EVIDENCE: {reason}")
+
+    if evidence.get("store_write_mediation_enabled") is True:
+        checks.append("store_write_mediation_enabled remained true and bound")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_enabled must remain true")
+
+    if evidence.get("store_write_mediation_binding_present") is True:
+        checks.append("store write mediation binding present")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_enabled=true requires binding")
+
+    if evidence.get("trusted_runtime_write_allowed") is True:
+        checks.append("trusted runtime write allowed by deterministic call-site")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted runtime write failed or was not recorded as allowed")
+
+    if evidence.get("executor_attributed_write_blocked") is True:
+        checks.append("executor-attributed .aeg write block evidence replay matched")
+        if evidence.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+            checks.append("write_mediation_result BLOCKED matched executor-attributed block")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor-attributed .aeg write attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: blocked_write_target_count requires executor_attributed_write_blocked=true")
+
+    if evidence.get("blocked_write_created_files_count") == 0:
+        checks.append("blocked_write_created_files_count replay matched zero")
+    else:
+        errors.append("INVALID_EVIDENCE: blocked_write_created_files_count > 0 cannot support BLOCKED claim")
+
+    if evidence.get("rollback_used") == evidence.get("fallback_to_unwired"):
+        checks.append("rollback_used matched fallback_to_unwired")
+    else:
+        errors.append("INVALID_EVIDENCE: rollback/fallback mismatch")
+
+    if evidence.get("fallback_to_unwired") is True:
+        if evidence.get("fallback_evidence_recorded") is True:
+            checks.append("fallback-to-unwired evidence recorded")
+        else:
+            errors.append("INVALID_EVIDENCE: fallback used but evidence was not recorded")
+    elif evidence.get("fallback_evidence_recorded") is False:
+        checks.append("fallback-to-unwired not used")
+    else:
+        errors.append("INVALID_EVIDENCE: fallback evidence recorded mismatch")
+
+    if evidence.get("store_write_mediation_metadata_hash") == expected_store_write_mediation_metadata_hash(evidence):
+        checks.append("store_write_mediation_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_metadata_hash mismatch")
+
+    if manifest is not None:
+        if manifest.get("store_write_mediation_metadata_hash") == evidence.get("store_write_mediation_metadata_hash"):
+            checks.append("manifest store_write_mediation_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest store_write_mediation_metadata_hash mismatch with evidence")
+        if manifest.get("store_write_mediation_manifest_hash") == sha256_json(
+            store_write_mediation_manifest_fields(manifest)
+        ):
+            checks.append("store_write_mediation_manifest_hash replay matched")
+        else:
+            errors.append("INVALID_EVIDENCE: store_write_mediation_manifest_hash mismatch")
 
     return checks, errors
 

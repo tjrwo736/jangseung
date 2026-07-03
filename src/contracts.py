@@ -93,6 +93,7 @@ EVIDENCE_BINDING_V1_FIELDS = (
     "bound_mediated_write_boundary_metadata_hash",
     "bound_write_bypass_harness_metadata_hash",
     "bound_pre_live_executor_gate_metadata_hash",
+    "bound_store_write_mediation_metadata_hash",
     "bound_ledger_integrity_metadata_hash",
     "bound_manifest_hash",
     "bound_manifest_path",
@@ -496,6 +497,57 @@ PHASE10E_WRITE_MEDIATION_COMPONENTS_VERIFIED_UNWIRED = (
 )
 RUNTIME_WIRING_NOT_IMPLEMENTED = "RUNTIME_WIRING_NOT_IMPLEMENTED"
 LIVE_EXECUTOR_AUTHORITY_ON_HOLD = "LIVE_EXECUTOR_AUTHORITY_ON_HOLD"
+PHASE11B_LIVE_EXECUTOR_NOT_STARTED = "NOT_STARTED"
+STORE_WRITE_MEDIATION_V0 = "phase11b0_store_write_mediation_v0"
+STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY = (
+    "executor_attributed_aeg_direct_traversal_writes_only"
+)
+STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE = "deterministic_store_call_site"
+STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE = "deterministic_call_site"
+STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED = "executor_attributed"
+STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME = "trusted_runtime"
+STORE_WRITE_MEDIATION_RESULT_BLOCKED = "BLOCKED"
+STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED = "TRUSTED_RUNTIME_ALLOWED"
+STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED = "FALLBACK_TO_UNWIRED"
+STORE_WRITE_MEDIATION_RESULT_OUT_OF_SCOPE_UNCHANGED = "OUT_OF_SCOPE_UNCHANGED"
+STORE_WRITE_MEDIATION_REASON_EXECUTOR_AEG_BLOCKED = (
+    "executor_attributed_aeg_write_blocked_by_guard_router"
+)
+STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_ALLOWED = (
+    "trusted_runtime_store_write_allowed_by_deterministic_call_site"
+)
+STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_FALLBACK = (
+    "trusted_runtime_wired_path_failed_fallback_to_existing_unwired_path"
+)
+STORE_WRITE_MEDIATION_REASON_OUT_OF_SCOPE = "write_target_out_of_phase11b0_scope"
+STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED = "BLOCKED"
+STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_NO_ATTEMPT = "NO_EXECUTOR_ATTEMPT"
+STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED = "UNCHANGED_OUT_OF_SCOPE"
+STORE_WRITE_MEDIATION_FIELDS = (
+    "store_write_mediation_version",
+    "store_write_mediation_enabled",
+    "store_write_mediation_scope",
+    "store_write_mediation_binding_present",
+    "write_provenance_source",
+    "write_provenance_basis",
+    "write_provenance_type",
+    "executor_attributed_write_blocked",
+    "trusted_runtime_write_allowed",
+    "blocked_write_target_count",
+    "blocked_write_created_files_count",
+    "store_write_attempt_count",
+    "write_mediation_result",
+    "write_mediation_reason",
+    "rollback_used",
+    "fallback_to_unwired",
+    "fallback_evidence_recorded",
+    "known_gap_aeg_direct_traversal_status",
+    "known_gap_non_aeg_status",
+    "live_executor_authority",
+    "phase11b_live_executor_status",
+    "store_write_mediation_events",
+    "store_write_mediation_metadata_hash",
+)
 DENY_ONLY_MEDIATOR_SKELETON_STATUSES = (
     DENY_ONLY_MEDIATOR_SKELETON_PRESENT,
 )
