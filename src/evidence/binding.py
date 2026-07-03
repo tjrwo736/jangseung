@@ -33,6 +33,7 @@ from src.contracts import (
     RUNS_DIR,
     SAFE_DEFAULT,
     STATE_DIR,
+    STORE_WRITE_MEDIATION_FIELDS,
     TOOL_SURFACE_FIELDS,
     WRITE_BYPASS_HARNESS_FIELDS,
 )
@@ -106,6 +107,7 @@ def build_run_manifest(
     mediated_write_boundary_fields = mediated_write_boundary_manifest_fields(evidence)
     write_bypass_harness_fields = write_bypass_harness_manifest_fields(evidence)
     pre_live_executor_gate_fields = pre_live_executor_gate_manifest_fields(evidence)
+    store_write_mediation_fields = store_write_mediation_manifest_fields(evidence)
     ledger_integrity_fields = ledger_integrity_manifest_fields(evidence)
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_V1,
@@ -179,6 +181,8 @@ def build_run_manifest(
         "write_bypass_harness_manifest_hash": sha256_json(write_bypass_harness_fields),
         **pre_live_executor_gate_fields,
         "pre_live_executor_gate_manifest_hash": sha256_json(pre_live_executor_gate_fields),
+        **store_write_mediation_fields,
+        "store_write_mediation_manifest_hash": sha256_json(store_write_mediation_fields),
         **ledger_integrity_fields,
         "ledger_integrity_manifest_hash": sha256_json(ledger_integrity_fields),
     }
@@ -231,6 +235,10 @@ def bind_evidence_to_manifest(
         "pre_live_executor_gate_manifest_hash",
         "",
     )
+    evidence["bound_store_write_mediation_metadata_hash"] = manifest.get(
+        "store_write_mediation_manifest_hash",
+        "",
+    )
     evidence["bound_ledger_integrity_metadata_hash"] = manifest.get("ledger_integrity_manifest_hash", "")
     evidence["bound_manifest_hash"] = bound_manifest_hash
     evidence["bound_manifest_path"] = manifest_path
@@ -251,6 +259,7 @@ def bind_evidence_to_manifest(
         checks["mediated_write_boundary_manifest_binding_required"] = True
         checks["write_bypass_harness_manifest_binding_required"] = True
         checks["pre_live_executor_gate_manifest_binding_required"] = True
+        checks["store_write_mediation_manifest_binding_required"] = True
         checks["ledger_integrity_manifest_binding_required"] = True
 
 
@@ -341,3 +350,7 @@ def write_bypass_harness_manifest_fields(evidence: dict[str, Any]) -> dict[str, 
 
 def pre_live_executor_gate_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
     return {field: evidence.get(field) for field in PRE_LIVE_EXECUTOR_GATE_FIELDS}
+
+
+def store_write_mediation_manifest_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {field: evidence.get(field) for field in STORE_WRITE_MEDIATION_FIELDS}
