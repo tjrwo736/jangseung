@@ -30,6 +30,11 @@ from src.evidence.phase11a_save_run_write_routing import (
     SAVE_RUN_ROUTE_TARGET_GUARD_MEDIATOR_COMPATIBLE,
     VERIFY_REPLAY_ACCEPTED,
     VERIFY_REPLAY_REJECTED,
+    DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+    WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT,
+    WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED,
+    WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+    WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL,
     build_save_run_write_request,
     phase11a_save_run_routing_evidence_digest,
     route_save_run_write_request,
@@ -62,6 +67,30 @@ class Phase11aSaveRunWriteRoutingTests(unittest.TestCase):
         self.assertFalse(record["fallback_triggered"])
         self.assertFalse(record["mediator_decision"]["write_performed"])
 
+    def test_canonical_deterministic_attribution_verifies(self):
+        record = self._route()
+
+        self.assertEqual(record["write_attribution_type"], WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED)
+        self.assertEqual(
+            record["write_attribution_basis"],
+            WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT,
+        )
+        self.assertEqual(
+            record["write_attribution_source"],
+            WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+        )
+        self.assertFalse(record["write_attribution_is_self_reported"])
+        self.assertFalse(record["trusted_runtime_claim_allowed"])
+        self.assertFalse(record["executor_self_claim_used"])
+        self.assertEqual(record["deterministic_entrypoint"], DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER)
+        self.assertTrue(record["attribution_spoofing_rejected"])
+        self.assertEqual(record["request"]["request_source"], WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER)
+        self.assertEqual(record["mediator_request"]["actor"], WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(record)
+
+        self.assertEqual(verify["status"], VERIFY_REPLAY_ACCEPTED)
+
     def test_route_evidence_fields_are_present(self):
         record = self._route()
 
@@ -79,6 +108,14 @@ class Phase11aSaveRunWriteRoutingTests(unittest.TestCase):
             "live_executor_authority",
             "phase11b_status",
             "safe_default",
+            "write_attribution_type",
+            "write_attribution_basis",
+            "write_attribution_source",
+            "write_attribution_is_self_reported",
+            "trusted_runtime_claim_allowed",
+            "executor_self_claim_used",
+            "deterministic_entrypoint",
+            "attribution_spoofing_rejected",
             "deterministic_evidence_digest",
         ):
             with self.subTest(field=field):
@@ -118,6 +155,92 @@ class Phase11aSaveRunWriteRoutingTests(unittest.TestCase):
         verify = verify_phase11a_save_run_write_routing_evidence(tampered)
 
         self.assert_rejected_with(verify, "guard_decision_status mismatch")
+
+    def test_manually_tampered_request_source_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["request"]["request_source"] = "trusted_runtime_internal"
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "request_source mismatch")
+
+    def test_mediator_request_actor_mismatch_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["mediator_request"]["actor"] = "trusted_runtime_internal"
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "mediator_request actor mismatch")
+
+    def test_request_metadata_trusted_runtime_internal_claim_rejects(self):
+        record = self._route(payload_metadata={"trusted_runtime_internal": "true"})
+
+        verify = verify_phase11a_save_run_write_routing_evidence(record)
+
+        self.assert_rejected_with(verify, "request metadata attribution self-claim rejected")
+        self.assert_rejected_with(verify, "trusted runtime self-claim rejected")
+
+    def test_route_result_trusted_runtime_internal_claim_rejects(self):
+        record = self._route(
+            mediator_route=lambda request: {
+                "status": "returned_mapping",
+                "success": True,
+                "write_attribution_type": WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL,
+            }
+        )
+
+        verify = verify_phase11a_save_run_write_routing_evidence(record)
+
+        self.assert_rejected_with(verify, "route_result trusted runtime self-claim rejected")
+
+    def test_executor_self_claim_used_true_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["executor_self_claim_used"] = True
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "executor_self_claim_used mismatch")
+        self.assert_rejected_with(verify, "executor self-claim rejected")
+
+    def test_write_attribution_is_self_reported_true_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["write_attribution_is_self_reported"] = True
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "write_attribution_is_self_reported mismatch")
+        self.assert_rejected_with(verify, "self-reported attribution rejected")
+
+    def test_trusted_runtime_claim_allowed_true_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["trusted_runtime_claim_allowed"] = True
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "trusted_runtime_claim_allowed mismatch")
+        self.assert_rejected_with(verify, "trusted runtime claim allowance rejected")
+
+    def test_attribution_basis_mismatch_rejects(self):
+        record = self._route()
+        tampered = deepcopy(record)
+        tampered["write_attribution_basis"] = "request_payload"
+        tampered["mediator_request"]["metadata"]["write_attribution_basis"] = "request_payload"
+        tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
+
+        verify = verify_phase11a_save_run_write_routing_evidence(tampered)
+
+        self.assert_rejected_with(verify, "write_attribution_basis mismatch")
+        self.assert_rejected_with(verify, "mediator_request write_attribution_basis mismatch")
 
     def test_route_status_overclaim_rejects(self):
         record = self._route()
@@ -304,12 +427,12 @@ class Phase11aSaveRunWriteRoutingTests(unittest.TestCase):
             with self.subTest(forbidden_call=forbidden_call):
                 self.assertNotIn(forbidden_call, source)
 
-    def _route(self, mediator_route=None):
+    def _route(self, mediator_route=None, payload_metadata=None):
         request = build_save_run_write_request(
             run_id="run-11a1",
             target_filename="run.json",
             payload='{"status":"fixture only"}',
-            payload_metadata={"source": "phase11a_test_double"},
+            payload_metadata=payload_metadata or {"source": "phase11a_test_double"},
             request_id="phase11a-save-run-test-request",
         )
         return route_save_run_write_request(

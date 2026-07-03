@@ -50,6 +50,14 @@ PHASE11A_SAVE_RUN_WRITE_ROUTING_KIND = "phase11a_save_run_write_routing_evidence
 PHASE11A_SAVE_RUN_WRITE_ROUTING_VERSION = "phase11a_save_run_write_routing_v0"
 PHASE11A_STEP = "11-A-1"
 PHASE11B_STATUS_NOT_STARTED = "NOT_STARTED"
+DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER = "phase11a_save_run_pre_live_adapter"
+
+WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT = "deterministic_adapter_context"
+WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED = "executor_attributed"
+WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL = "trusted_runtime_internal"
+WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER = (
+    DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER
+)
 
 SAVE_RUN_ROUTE_NOT_ATTEMPTED = "SAVE_RUN_ROUTE_NOT_ATTEMPTED"
 SAVE_RUN_ROUTE_PRELIVE_READY = "SAVE_RUN_ROUTE_PRELIVE_READY"
@@ -137,6 +145,14 @@ _EVIDENCE_FIELDS = frozenset(
         "phase11b_status",
         "safe_default",
         "known_gap_status",
+        "write_attribution_type",
+        "write_attribution_basis",
+        "write_attribution_source",
+        "write_attribution_is_self_reported",
+        "trusted_runtime_claim_allowed",
+        "executor_self_claim_used",
+        "deterministic_entrypoint",
+        "attribution_spoofing_rejected",
         "request",
         "guard_decision",
         "mediator_request",
@@ -162,7 +178,25 @@ _OVERCLAIM_KEYS = {
     "model_authority_granted": "model authority grant claim rejected",
     "raw_shell_authority_granted": "raw shell authority grant claim rejected",
     "command_runner_authority_granted": "command runner authority grant claim rejected",
+    "write_attribution_is_self_reported": "self-reported attribution rejected",
+    "trusted_runtime_claim_allowed": "trusted runtime claim allowance rejected",
+    "executor_self_claim_used": "executor self-claim rejected",
 }
+
+_REQUEST_ATTRIBUTION_CLAIM_KEYS = frozenset(
+    {
+        "actor",
+        "request_source",
+        "trusted_runtime",
+        "trusted_runtime_internal",
+        "trusted_runtime_claim_allowed",
+        "write_attribution_type",
+        "write_attribution_basis",
+        "write_attribution_source",
+        "write_attribution_is_self_reported",
+        "executor_self_claim_used",
+    }
+)
 
 _FORBIDDEN_ROUTE_STATUS_OVERCLAIMS = frozenset(
     {
@@ -187,7 +221,7 @@ class SaveRunWriteRequest:
     intended_operation: str
     payload_digest: str
     payload_metadata: Mapping[str, str] = field(default_factory=dict)
-    request_source: str = "phase11a_save_run_pre_live_adapter"
+    request_source: str = WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER
     live_executor_authority_status: str = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
     runtime_write_path_status: str = RUNTIME_WRITE_PATH_STATUS_PRELIVE_ONLY
     write_performed: bool = False
@@ -389,6 +423,34 @@ def verify_phase11a_save_run_write_routing_evidence(
     _expect_field(reasons, evidence_record, "phase11b_status", PHASE11B_STATUS_NOT_STARTED)
     _expect_field(reasons, evidence_record, "safe_default", SAFE_DEFAULT)
     _expect_field(reasons, evidence_record, "known_gap_status", B1_AEG_INTEGRITY_KNOWN_GAP_BASELINE)
+    _expect_field(
+        reasons,
+        evidence_record,
+        "write_attribution_type",
+        WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED,
+    )
+    _expect_field(
+        reasons,
+        evidence_record,
+        "write_attribution_basis",
+        WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT,
+    )
+    _expect_field(
+        reasons,
+        evidence_record,
+        "write_attribution_source",
+        WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+    )
+    _expect_field(reasons, evidence_record, "write_attribution_is_self_reported", False)
+    _expect_field(reasons, evidence_record, "trusted_runtime_claim_allowed", False)
+    _expect_field(reasons, evidence_record, "executor_self_claim_used", False)
+    _expect_field(
+        reasons,
+        evidence_record,
+        "deterministic_entrypoint",
+        DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+    )
+    _expect_field(reasons, evidence_record, "attribution_spoofing_rejected", True)
     _expect_field(reasons, evidence_record, "authority_snapshot", AUTHORITY_SNAPSHOT)
 
     status = evidence_record.get("save_run_route_status")
@@ -449,7 +511,7 @@ def _build_mediator_request(
 ) -> WriteMediationRequest:
     return WriteMediationRequest(
         request_id=f"phase11a-save-run-mediator:{request.request_id}",
-        actor=request.request_source,
+        actor=WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
         operation=request.intended_operation,
         write_class=WRITE_CLASS_AEG_STATE_WRITE,
         submitted_target=guard_decision.submitted_path,
@@ -465,6 +527,10 @@ def _build_mediator_request(
             "runtime_write_path_status": RUNTIME_WRITE_PATH_STATUS_PRELIVE_ONLY,
             "mediator_write_path_status": NOT_WIRED_TO_WRITE_PATH,
             "expected_mediator_decision": MEDIATOR_DECISION_DENY,
+            "write_attribution_type": WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED,
+            "write_attribution_basis": WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT,
+            "write_attribution_source": WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+            "deterministic_entrypoint": DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
         },
     )
 
@@ -538,6 +604,14 @@ def _build_evidence_record(
         "phase11b_status": PHASE11B_STATUS_NOT_STARTED,
         "safe_default": SAFE_DEFAULT,
         "known_gap_status": B1_AEG_INTEGRITY_KNOWN_GAP_BASELINE,
+        "write_attribution_type": WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED,
+        "write_attribution_basis": WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT,
+        "write_attribution_source": WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+        "write_attribution_is_self_reported": False,
+        "trusted_runtime_claim_allowed": False,
+        "executor_self_claim_used": False,
+        "deterministic_entrypoint": DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER,
+        "attribution_spoofing_rejected": True,
         "request": request.to_record(),
         "guard_decision": guard_decision.to_record() if guard_decision else None,
         "mediator_request": mediator_request.to_record() if mediator_request else None,
@@ -608,12 +682,19 @@ def _validate_request(reasons: list[str], value: Any) -> None:
         reasons.append("request runtime_write_path_status mismatch")
     if value.get("write_performed") is not False:
         reasons.append("request must not record a write")
+    if value.get("request_source") != WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER:
+        reasons.append("request_source mismatch")
     target = value.get("target_relative_path")
     if isinstance(target, str):
         if not target.startswith(f"{STATE_DIR}/{RUNS_DIR}/"):
             reasons.append("request target_relative_path must stay under .aeg/runs")
     else:
         reasons.append("request target_relative_path must be a string")
+    payload_metadata = value.get("payload_metadata")
+    if isinstance(payload_metadata, Mapping):
+        _validate_no_request_metadata_attribution_claims(reasons, payload_metadata)
+    else:
+        reasons.append("request payload_metadata must be a mapping")
 
 
 def _validate_guard_decision(reasons: list[str], evidence_record: Mapping[str, Any]) -> None:
@@ -650,8 +731,23 @@ def _validate_mediator_records(reasons: list[str], evidence_record: Mapping[str,
         return
     if not isinstance(mediator_request, Mapping):
         reasons.append("mediator_request must be a mapping")
-    elif mediator_request.get("metadata", {}).get("runtime_write_path_status") != RUNTIME_WRITE_PATH_STATUS_PRELIVE_ONLY:
-        reasons.append("mediator_request runtime_write_path_status mismatch")
+    else:
+        if mediator_request.get("actor") != WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER:
+            reasons.append("mediator_request actor mismatch")
+        metadata = mediator_request.get("metadata", {})
+        if not isinstance(metadata, Mapping):
+            reasons.append("mediator_request metadata must be a mapping")
+            metadata = {}
+        if metadata.get("runtime_write_path_status") != RUNTIME_WRITE_PATH_STATUS_PRELIVE_ONLY:
+            reasons.append("mediator_request runtime_write_path_status mismatch")
+        if metadata.get("write_attribution_type") != WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED:
+            reasons.append("mediator_request write_attribution_type mismatch")
+        if metadata.get("write_attribution_basis") != WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT:
+            reasons.append("mediator_request write_attribution_basis mismatch")
+        if metadata.get("write_attribution_source") != WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER:
+            reasons.append("mediator_request write_attribution_source mismatch")
+        if metadata.get("deterministic_entrypoint") != DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER:
+            reasons.append("mediator_request deterministic_entrypoint mismatch")
     if mediator_decision is None and status == SAVE_RUN_ROUTE_FAILED_FALLBACK_USED:
         return
     if not isinstance(mediator_decision, Mapping):
@@ -671,6 +767,32 @@ def _validate_route_result(reasons: list[str], value: Any) -> None:
         return
     if value.get("write_performed") is True:
         reasons.append("route_result must not record a write")
+    _validate_no_trusted_runtime_self_claim(reasons, value, "route_result")
+
+
+def _validate_no_request_metadata_attribution_claims(
+    reasons: list[str],
+    payload_metadata: Mapping[str, Any],
+) -> None:
+    for key, child in payload_metadata.items():
+        if key in _REQUEST_ATTRIBUTION_CLAIM_KEYS:
+            reasons.append("request metadata attribution self-claim rejected")
+        if child == WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL or key == WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL:
+            reasons.append("trusted runtime self-claim rejected")
+
+
+def _validate_no_trusted_runtime_self_claim(
+    reasons: list[str],
+    value: Mapping[str, Any],
+    scope: str,
+) -> None:
+    for key, child in value.items():
+        if child == WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL or key == WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL:
+            reasons.append(f"{scope} trusted runtime self-claim rejected")
+        if key == "executor_self_claim_used" and child is True:
+            reasons.append(f"{scope} executor self-claim rejected")
+        if isinstance(child, Mapping):
+            _validate_no_trusted_runtime_self_claim(reasons, child, scope)
 
 
 def _validate_fallback_evidence(reasons: list[str], evidence_record: Mapping[str, Any]) -> None:
@@ -792,6 +914,11 @@ __all__ = [
     "SaveRunWriteRequest",
     "VERIFY_REPLAY_ACCEPTED",
     "VERIFY_REPLAY_REJECTED",
+    "DETERMINISTIC_ENTRYPOINT_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER",
+    "WRITE_ATTRIBUTION_BASIS_DETERMINISTIC_ADAPTER_CONTEXT",
+    "WRITE_ATTRIBUTION_EXECUTOR_ATTRIBUTED",
+    "WRITE_ATTRIBUTION_SOURCE_PHASE11A_SAVE_RUN_PRE_LIVE_ADAPTER",
+    "WRITE_ATTRIBUTION_TRUSTED_RUNTIME_INTERNAL",
     "build_pre_live_ready_evidence",
     "build_save_run_write_request",
     "phase11a_save_run_routing_evidence_digest",
