@@ -47,7 +47,21 @@ FALLBACK_REASON_NOT_NEEDED = "not_needed_no_candidate_wiring_attempted"
 FALLBACK_REASON_MANUAL_KILL_PATH = "manual_kill_path_requested"
 FALLBACK_REASON_CANDIDATE_RETURNED_FAILURE = "candidate_wired_path_returned_failure"
 FALLBACK_REASON_CANDIDATE_RAISED_EXCEPTION = "candidate_wired_path_raised_exception"
-FALLBACK_REASON_CANDIDATE_SUCCESS_NOT_ACTIVATED = "candidate_wired_path_success_not_activated_in_11a0"
+FALLBACK_REASON_CANDIDATE_SUCCESS_OUT_OF_SCOPE = "candidate_wired_path_success_out_of_scope_in_11a0"
+LEGACY_FALLBACK_REASON_CANDIDATE_SUCCESS_NOT_ACTIVATED = (
+    "candidate_wired_path_success_not_activated_in_11a0"
+)
+CANDIDATE_SUCCESS_REJECTED_STATUS = "CANDIDATE_WIRED_PATH_SUCCESS_REJECTED_IN_11A0"
+SUCCESS_LIKE_CANDIDATE_STATUSES = frozenset(
+    {
+        "candidate_returned_success",
+        "completed_success",
+        "ok",
+        "returned_success",
+        "success",
+        "succeeded",
+    }
+)
 
 VERIFY_REPLAY_ACCEPTED = "VERIFY_REPLAY_ACCEPTED"
 VERIFY_REPLAY_REJECTED = "VERIFY_REPLAY_REJECTED"
@@ -180,11 +194,13 @@ def execute_phase11a_rollback_kill_path(
             raw_candidate_result = candidate_wired_path()
             candidate_result = _candidate_result_to_record(raw_candidate_result)
             if candidate_result.get("success") is True:
-                fallback_reason = FALLBACK_REASON_CANDIDATE_SUCCESS_NOT_ACTIVATED
+                fallback_reason = FALLBACK_REASON_CANDIDATE_SUCCESS_OUT_OF_SCOPE
+                fallback_triggered = False
+                wiring_status = CANDIDATE_SUCCESS_REJECTED_STATUS
             else:
                 fallback_reason = FALLBACK_REASON_CANDIDATE_RETURNED_FAILURE
-            fallback_triggered = True
-            wiring_status = WRITE_PATH_STATUS_WIRING_FAILED_FALLBACK_USED
+                fallback_triggered = True
+                wiring_status = WRITE_PATH_STATUS_WIRING_FAILED_FALLBACK_USED
         except Exception as exc:  # noqa: BLE001 - rollback path must catch candidate failures.
             fallback_triggered = True
             fallback_reason = FALLBACK_REASON_CANDIDATE_RAISED_EXCEPTION
@@ -298,6 +314,7 @@ def verify_phase11a_rollback_kill_path_evidence(
     _validate_bool_field(reasons, evidence_record, "write_path_wiring_attempted")
     _validate_bool_field(reasons, evidence_record, "write_path_fallback_triggered")
     _validate_status_consistency(reasons, evidence_record)
+    _validate_candidate_wired_path_result(reasons, evidence_record)
     _validate_fallback_result(reasons, evidence_record.get("fallback_result"))
     _validate_manual_kill_path_candidate(reasons, evidence_record.get("manual_kill_path_candidate"))
     _validate_automatic_failure_fallback(reasons, evidence_record.get("automatic_failure_fallback"))
@@ -380,9 +397,27 @@ def _validate_status_consistency(reasons: list[str], evidence_record: Mapping[st
         if fallback_reason not in (
             FALLBACK_REASON_CANDIDATE_RETURNED_FAILURE,
             FALLBACK_REASON_CANDIDATE_RAISED_EXCEPTION,
-            FALLBACK_REASON_CANDIDATE_SUCCESS_NOT_ACTIVATED,
         ):
             reasons.append("failed wiring fallback status has invalid fallback reason")
+    if fallback_reason == LEGACY_FALLBACK_REASON_CANDIDATE_SUCCESS_NOT_ACTIVATED:
+        reasons.append("candidate wired path success is outside 11-A-0 scope")
+    if fallback_reason == FALLBACK_REASON_CANDIDATE_SUCCESS_OUT_OF_SCOPE:
+        reasons.append("candidate wired path success is outside 11-A-0 scope")
+
+
+def _validate_candidate_wired_path_result(reasons: list[str], evidence_record: Mapping[str, Any]) -> None:
+    value = evidence_record.get("candidate_wired_path_result")
+    if not isinstance(value, Mapping):
+        reasons.append("candidate_wired_path_result must be a mapping")
+        return
+    if value.get("success") is True:
+        reasons.append("candidate wired path success is outside 11-A-0 scope")
+
+    raw_status = value.get("status")
+    if isinstance(raw_status, str):
+        normalized_status = raw_status.strip().lower()
+        if normalized_status in SUCCESS_LIKE_CANDIDATE_STATUSES:
+            reasons.append("candidate wired path returned success in 11-A-0")
 
 
 def _validate_fallback_result(reasons: list[str], value: Any) -> None:

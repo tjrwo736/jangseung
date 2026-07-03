@@ -67,6 +67,63 @@ class Phase11aRollbackKillPathTests(unittest.TestCase):
         self.assertEqual(record["write_path_fallback_reason"], "candidate_wired_path_returned_failure")
         self.assertEqual(record["candidate_wired_path_result"]["status"], "returned_failure")
         self.assertEqual(record["candidate_wired_path_result"]["success"], False)
+        self.assertEqual(verify_phase11a_rollback_kill_path_evidence(record)["status"], VERIFY_REPLAY_ACCEPTED)
+
+    def test_candidate_wired_path_success_evidence_is_rejected(self):
+        record = execute_phase11a_rollback_kill_path(
+            candidate_wired_path=lambda: CandidateWiredPathResult(
+                success=True,
+                reason="candidate returned success outside 11-A-0 scope",
+            )
+        )
+
+        self.assertTrue(record["write_path_wiring_attempted"])
+        self.assertFalse(record["write_path_fallback_triggered"])
+        self.assertEqual(record["candidate_wired_path_result"]["success"], True)
+        self.assertEqual(record["candidate_wired_path_result"]["status"], "returned_success")
+
+        verify = verify_phase11a_rollback_kill_path_evidence(record)
+
+        self.assert_rejected_with(verify, "candidate wired path success is outside 11-A-0 scope")
+        self.assert_rejected_with(verify, "candidate wired path returned success in 11-A-0")
+
+    def test_candidate_success_replay_returns_rejected_for_legacy_fallback_reason(self):
+        record = execute_phase11a_rollback_kill_path(
+            candidate_wired_path=lambda: CandidateWiredPathResult(success=False, reason="simulated")
+        )
+        tampered = deepcopy(record)
+        tampered["candidate_wired_path_result"] = {
+            "attempted": True,
+            "success": True,
+            "status": "returned_success",
+            "reason": "candidate returned success outside 11-A-0 scope",
+            "result": {},
+        }
+        tampered["write_path_fallback_reason"] = "candidate_wired_path_success_not_activated_in_11a0"
+        tampered["deterministic_evidence_digest"] = phase11a_rollback_evidence_digest(tampered)
+
+        verify = verify_phase11a_rollback_kill_path_evidence(tampered)
+
+        self.assert_rejected_with(verify, "candidate wired path success is outside 11-A-0 scope")
+        self.assert_rejected_with(verify, "candidate wired path returned success in 11-A-0")
+
+    def test_candidate_success_like_status_replay_is_rejected_without_success_bool(self):
+        record = execute_phase11a_rollback_kill_path(
+            candidate_wired_path=lambda: CandidateWiredPathResult(success=False, reason="simulated")
+        )
+        tampered = deepcopy(record)
+        tampered["candidate_wired_path_result"] = {
+            "attempted": True,
+            "success": False,
+            "status": "returned_success",
+            "reason": "status claims success outside 11-A-0 scope",
+            "result": {},
+        }
+        tampered["deterministic_evidence_digest"] = phase11a_rollback_evidence_digest(tampered)
+
+        verify = verify_phase11a_rollback_kill_path_evidence(tampered)
+
+        self.assert_rejected_with(verify, "candidate wired path returned success in 11-A-0")
 
     def test_fallback_preserves_existing_unwired_behavior(self):
         record = execute_phase11a_rollback_kill_path(
@@ -212,6 +269,7 @@ class Phase11aRollbackKillPathTests(unittest.TestCase):
         self.assertEqual(record["write_path_fallback_reason"], "manual_kill_path_requested")
         self.assertEqual(record["candidate_wired_path_result"]["status"], "skipped_by_manual_kill_path")
         self.assertEqual(record["fallback_result"]["runtime_write_path"], NOT_WIRED_TO_EXECUTOR_WRITE_PATH)
+        self.assertEqual(verify_phase11a_rollback_kill_path_evidence(record)["status"], VERIFY_REPLAY_ACCEPTED)
 
     def test_authority_snapshot_is_current_11a0_snapshot(self):
         self.assertEqual(
