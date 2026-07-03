@@ -97,8 +97,11 @@ from src.contracts import (
     RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUSES,
     STATUS_OVERCLAIM_REJECTED,
+    STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
     STORE_WRITE_MEDIATION_FIELDS,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
+    STORE_WRITE_SINK_APPEND_LEDGER,
+    STORE_WRITE_SINK_WRITE_JSON,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -2690,10 +2693,48 @@ def _verify_store_write_mediation(
     else:
         errors.append("INVALID_EVIDENCE: store_write_mediation_enabled=true requires binding")
 
+    if evidence.get("store_write_boundary") == STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED:
+        checks.append("store write boundary is sink-level guarded")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_boundary must be SINK_LEVEL_GUARDED")
+
+    guarded_sinks = evidence.get("guarded_sinks")
+    if guarded_sinks == [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON]:
+        checks.append("guarded_sinks covered _write_json and _append_ledger_unmediated")
+    else:
+        errors.append("INVALID_EVIDENCE: guarded_sinks did not cover both store.py sinks")
+
+    if evidence.get("write_json_sink_guarded") is True:
+        checks.append("_write_json sink guard recorded")
+    else:
+        errors.append("INVALID_EVIDENCE: _write_json sink guard missing")
+
+    if evidence.get("ledger_append_sink_guarded") is True:
+        checks.append("_append_ledger_unmediated sink guard recorded")
+    else:
+        errors.append("INVALID_EVIDENCE: _append_ledger_unmediated sink guard missing")
+
     if evidence.get("trusted_runtime_write_allowed") is True:
         checks.append("trusted runtime write allowed by deterministic call-site")
     else:
         errors.append("INVALID_EVIDENCE: trusted runtime write failed or was not recorded as allowed")
+
+    if evidence.get("trusted_runtime_ledger_append_allowed") is True:
+        checks.append("trusted runtime ledger append allowed by deterministic call-site")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted runtime ledger append failed or was not recorded as allowed")
+
+    if evidence.get("executor_self_report_ignored") is True:
+        checks.append("executor self-report was ignored for store write provenance")
+    else:
+        errors.append("INVALID_EVIDENCE: executor self-report trusted provenance was accepted")
+
+    if evidence.get("executor_omitted_declaration_rejected") is True:
+        checks.append("executor omitted declaration was rejected at sink level")
+    elif evidence.get("executor_attributed_write_blocked") is True:
+        errors.append("INVALID_EVIDENCE: executor-attributed sink evidence did not reject omitted declaration")
+    else:
+        checks.append("no executor omitted declaration sink attempt was recorded in this run")
 
     if evidence.get("executor_attributed_write_blocked") is True:
         checks.append("executor-attributed .aeg write block evidence replay matched")
@@ -2704,10 +2745,34 @@ def _verify_store_write_mediation(
     else:
         errors.append("INVALID_EVIDENCE: blocked_write_target_count requires executor_attributed_write_blocked=true")
 
+    if evidence.get("executor_direct_sink_write_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+        checks.append("executor direct _write_json sink write was blocked")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor direct _write_json sink attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct _write_json sink write was not blocked")
+
+    if evidence.get("executor_direct_ledger_append_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+        checks.append("executor direct ledger append was blocked")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor direct ledger append attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct ledger append was not blocked")
+
     if evidence.get("blocked_write_created_files_count") == 0:
         checks.append("blocked_write_created_files_count replay matched zero")
     else:
         errors.append("INVALID_EVIDENCE: blocked_write_created_files_count > 0 cannot support BLOCKED claim")
+
+    if evidence.get("executor_direct_sink_write_created_files_count") == 0:
+        checks.append("executor direct sink write created zero files")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct sink BLOCKED claim created files")
+
+    if evidence.get("executor_direct_ledger_entries_appended_count") == 0:
+        checks.append("executor direct ledger append created zero ledger entries")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct ledger BLOCKED claim appended forged entries")
 
     if evidence.get("rollback_used") == evidence.get("fallback_to_unwired"):
         checks.append("rollback_used matched fallback_to_unwired")
