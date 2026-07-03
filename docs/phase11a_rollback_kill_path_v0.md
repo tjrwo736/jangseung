@@ -8,6 +8,7 @@ write path can fail or raise and still fall back to the existing unwired
 behavior without crashing.
 
 This line is safety preparation only.
+Candidate wired path success handling is outside 11-A-0 scope.
 
 ## 2. Phase 11-A Roadmap Position
 
@@ -31,6 +32,7 @@ The current roadmap state remains:
 - automatic fallback when that candidate returns failure or raises.
 - an in-memory manual kill-path candidate through explicit config/function
   arguments.
+- no-candidate evidence that the runtime write path remains unwired.
 - deterministic fallback evidence.
 - verify replay for schema, digest, mismatch, authority, and overclaim
   rejection.
@@ -38,6 +40,10 @@ The current roadmap state remains:
 11-A-0 does not add runtime write path wiring, runtime mediation wiring, actual
 mediator activation, actual enforcement activation, live executor authority, or
 Phase 11-B behavior.
+
+11-A-0 accepts rollback evidence only for no-candidate, manual kill-path,
+candidate failure, and candidate exception modes. A successful candidate wired
+path return is not accepted as fallback proof and must be rejected by replay.
 
 ## 4. Rollback / Kill-path Behavior
 
@@ -49,6 +55,7 @@ The scaffold records these paths:
 | Candidate returns failure | Record attempted candidate path, record failure reason, fall back to `existing_unwired_path`, and continue. |
 | Candidate raises | Catch the exception, record exception type, fall back to `existing_unwired_path`, and continue. |
 | Manual kill-path config set | Skip the candidate path, fall back to `existing_unwired_path`, and record manual reason. |
+| Candidate returns success | Reject as outside 11-A-0 scope. Do not treat success as fallback proof. |
 
 The fallback result always records:
 
@@ -107,7 +114,10 @@ Verify replay:
 5. checks runtime mode remains `NOT_WIRED_TO_EXECUTOR_WRITE_PATH`.
 6. checks live executor authority remains on hold.
 7. checks Phase 11-A-1 and Phase 11-B remain `NOT_STARTED`.
-8. rejects overclaims for runtime wiring, runtime authority, live executor
+8. rejects candidate wired path success evidence, including `success=true`,
+   `status=returned_success`, and the legacy
+   `candidate_wired_path_success_not_activated_in_11a0` fallback reason.
+9. rejects overclaims for runtime wiring, runtime authority, live executor
    authority, actual enforcement, or Phase 11-B start.
 
 Verify replay is evidence validation only. It is not runtime enforcement.
@@ -128,6 +138,8 @@ Verify replay rejects:
 - fallback target mismatch.
 - fallback field tamper.
 - `write_path_wiring_status` outside the allowed set.
+- candidate wired path success claims.
+- `candidate_wired_path_success_not_activated_in_11a0`.
 - active runtime write path claims.
 - live executor authority grant claims.
 - runtime write authority grant claims.
@@ -141,6 +153,8 @@ The unit tests cover:
 
 - simulated candidate exception fallback.
 - simulated candidate failure fallback reason recording.
+- candidate success rejection.
+- legacy candidate success fallback-proof rejection.
 - preservation of existing unwired behavior.
 - presence of fallback evidence fields.
 - deterministic digest tamper rejection.
@@ -163,6 +177,9 @@ B1 known-gap baseline remains preserved as evidence context for later steps.
 does not authorize that work. It only provides the rollback and kill-path
 precondition so a future candidate path has a safe fallback target before any
 activation is considered.
+
+Successful candidate wired path handling belongs to 11-A-1 or later design. It
+is not evidence of 11-A-0 readiness and is not accepted by 11-A-0 replay.
 
 ## 13. Current Authority
 
