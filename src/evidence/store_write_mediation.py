@@ -18,11 +18,13 @@ from src.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     SAFE_DEFAULT,
+    STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_NO_ATTEMPT,
     STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
     STORE_WRITE_MEDIATION_FIELDS,
     STORE_WRITE_MEDIATION_REASON_EXECUTOR_AEG_BLOCKED,
+    STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
     STORE_WRITE_MEDIATION_REASON_TRUSTED_RUNTIME_ALLOWED,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
     STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
@@ -33,6 +35,8 @@ from src.contracts import (
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
     STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+    STORE_WRITE_SINK_APPEND_LEDGER,
+    STORE_WRITE_SINK_WRITE_JSON,
 )
 
 STORE_WRITE_MEDIATION_VERIFICATION_ACCEPTED = "VERIFY_REPLAY_ACCEPTED"
@@ -48,6 +52,12 @@ def build_store_write_mediation_metadata(
     blocked_events = [
         event for event in normalized_events if event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED
     ]
+    blocked_write_json_events = [
+        event for event in blocked_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
+    ]
+    blocked_ledger_events = [
+        event for event in blocked_events if event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+    ]
     trusted_allowed_events = [
         event
         for event in normalized_events
@@ -55,8 +65,36 @@ def build_store_write_mediation_metadata(
         and event.get("write_mediation_result")
         in (STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED, STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED)
     ]
+    trusted_write_json_events = [
+        event for event in trusted_allowed_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
+    ]
+    trusted_ledger_events = [
+        event for event in trusted_allowed_events if event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+    ]
     fallback_events = [event for event in normalized_events if event.get("fallback_to_unwired") is True]
-    blocked_created_count = sum(1 for event in blocked_events if event.get("target_file_created") is True)
+    blocked_created_count = sum(1 for event in blocked_write_json_events if event.get("target_file_created") is True)
+    blocked_ledger_appended_count = sum(
+        _non_negative_int(event.get("ledger_entries_appended_count")) for event in blocked_ledger_events
+    )
+    guarded_sinks = sorted(
+        {
+            str(event.get("sink_name"))
+            for event in normalized_events
+            if event.get("sink_guarded") is True
+            and event.get("store_write_boundary") == STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED
+            and event.get("sink_name") in (STORE_WRITE_SINK_WRITE_JSON, STORE_WRITE_SINK_APPEND_LEDGER)
+        }
+    )
+    executor_direct_sink_write_result = (
+        STORE_WRITE_MEDIATION_RESULT_BLOCKED
+        if blocked_write_json_events
+        else STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT
+    )
+    executor_direct_ledger_append_result = (
+        STORE_WRITE_MEDIATION_RESULT_BLOCKED
+        if blocked_ledger_events
+        else STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT
+    )
     result, reason = _summary_result_and_reason(
         blocked_events=blocked_events,
         trusted_allowed_events=trusted_allowed_events,
@@ -66,13 +104,28 @@ def build_store_write_mediation_metadata(
         "store_write_mediation_version": STORE_WRITE_MEDIATION_V0,
         "store_write_mediation_enabled": True,
         "store_write_mediation_scope": STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY,
+        "store_write_boundary": STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+        "guarded_sinks": guarded_sinks,
+        "write_json_sink_guarded": STORE_WRITE_SINK_WRITE_JSON in guarded_sinks,
+        "ledger_append_sink_guarded": STORE_WRITE_SINK_APPEND_LEDGER in guarded_sinks,
         "store_write_mediation_binding_present": True,
         "write_provenance_source": STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE,
         "write_provenance_basis": STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
         "write_provenance_type": "mixed_deterministic_call_site",
         "executor_attributed_write_blocked": bool(blocked_events),
-        "trusted_runtime_write_allowed": bool(trusted_allowed_events),
-        "blocked_write_target_count": len(blocked_events),
+        "executor_direct_sink_write_result": executor_direct_sink_write_result,
+        "executor_direct_sink_write_created_files_count": blocked_created_count,
+        "executor_direct_ledger_append_result": executor_direct_ledger_append_result,
+        "executor_direct_ledger_entries_appended_count": blocked_ledger_appended_count,
+        "trusted_runtime_write_allowed": bool(trusted_write_json_events),
+        "trusted_runtime_ledger_append_allowed": bool(trusted_ledger_events),
+        "executor_self_report_ignored": not any(event.get("executor_self_report_used") is True for event in normalized_events),
+        "executor_omitted_declaration_rejected": any(
+            event.get("executor_omitted_declaration") is True
+            and event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED
+            for event in normalized_events
+        ),
+        "blocked_write_target_count": len(blocked_write_json_events),
         "blocked_write_created_files_count": blocked_created_count,
         "store_write_attempt_count": len(normalized_events),
         "write_mediation_result": result,
@@ -125,6 +178,9 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         "store_write_mediation_scope",
         STORE_WRITE_MEDIATION_SCOPE_AEG_EXECUTOR_ATTRIBUTED_ONLY,
     )
+    _expect(reasons, payload, "store_write_boundary", STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
+    _expect(reasons, payload, "write_json_sink_guarded", True)
+    _expect(reasons, payload, "ledger_append_sink_guarded", True)
     _expect(reasons, payload, "store_write_mediation_binding_present", True)
     _expect(
         reasons,
@@ -139,6 +195,8 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE,
     )
     _expect(reasons, payload, "trusted_runtime_write_allowed", True)
+    _expect(reasons, payload, "trusted_runtime_ledger_append_allowed", True)
+    _expect(reasons, payload, "executor_self_report_ignored", True)
     _expect(reasons, payload, "known_gap_non_aeg_status", STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED)
     _expect(reasons, payload, "live_executor_authority", LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
     _expect(reasons, payload, "phase11b_live_executor_status", PHASE11B_LIVE_EXECUTOR_NOT_STARTED)
@@ -146,8 +204,13 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     for field in (
         "store_write_mediation_enabled",
         "store_write_mediation_binding_present",
+        "write_json_sink_guarded",
+        "ledger_append_sink_guarded",
         "executor_attributed_write_blocked",
         "trusted_runtime_write_allowed",
+        "trusted_runtime_ledger_append_allowed",
+        "executor_self_report_ignored",
+        "executor_omitted_declaration_rejected",
         "rollback_used",
         "fallback_to_unwired",
         "fallback_evidence_recorded",
@@ -155,12 +218,20 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         if not isinstance(payload.get(field), bool):
             reasons.append(f"{field} must be boolean")
 
+    guarded_sinks = payload.get("guarded_sinks")
+    if guarded_sinks != [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON]:
+        reasons.append("guarded_sinks must exactly cover _append_ledger_unmediated and _write_json")
+
     blocked_count = payload.get("blocked_write_target_count")
     created_count = payload.get("blocked_write_created_files_count")
+    direct_created_count = payload.get("executor_direct_sink_write_created_files_count")
+    direct_ledger_appended_count = payload.get("executor_direct_ledger_entries_appended_count")
     attempt_count = payload.get("store_write_attempt_count")
     for field, value in (
         ("blocked_write_target_count", blocked_count),
         ("blocked_write_created_files_count", created_count),
+        ("executor_direct_sink_write_created_files_count", direct_created_count),
+        ("executor_direct_ledger_entries_appended_count", direct_ledger_appended_count),
         ("store_write_attempt_count", attempt_count),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -178,6 +249,12 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     blocked_events = [
         event for event in normalized_events if event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED
     ]
+    blocked_write_json_events = [
+        event for event in blocked_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
+    ]
+    blocked_ledger_events = [
+        event for event in blocked_events if event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+    ]
     trusted_events = [
         event
         for event in normalized_events
@@ -185,17 +262,76 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         and event.get("write_mediation_result")
         in (STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED, STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED)
     ]
+    trusted_write_json_events = [
+        event for event in trusted_events if event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON
+    ]
+    trusted_ledger_events = [
+        event for event in trusted_events if event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+    ]
     fallback_events = [event for event in normalized_events if event.get("fallback_to_unwired") is True]
-    created_from_events = sum(1 for event in blocked_events if event.get("target_file_created") is True)
+    created_from_events = sum(1 for event in blocked_write_json_events if event.get("target_file_created") is True)
+    ledger_appended_from_events = sum(
+        _non_negative_int(event.get("ledger_entries_appended_count")) for event in blocked_ledger_events
+    )
+    guarded_sinks_from_events = sorted(
+        {
+            str(event.get("sink_name"))
+            for event in normalized_events
+            if event.get("sink_guarded") is True
+            and event.get("store_write_boundary") == STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED
+            and event.get("sink_name") in (STORE_WRITE_SINK_WRITE_JSON, STORE_WRITE_SINK_APPEND_LEDGER)
+        }
+    )
 
-    if isinstance(blocked_count, int) and not isinstance(blocked_count, bool) and blocked_count != len(blocked_events):
+    if payload.get("guarded_sinks") != guarded_sinks_from_events:
+        reasons.append("guarded_sinks overclaim rejected")
+    if STORE_WRITE_SINK_WRITE_JSON not in guarded_sinks_from_events:
+        reasons.append("SINK_LEVEL_GUARDED claim rejected: _write_json sink event missing")
+    if STORE_WRITE_SINK_APPEND_LEDGER not in guarded_sinks_from_events:
+        reasons.append("SINK_LEVEL_GUARDED claim rejected: _append_ledger_unmediated sink event missing")
+
+    if isinstance(blocked_count, int) and not isinstance(blocked_count, bool) and blocked_count != len(blocked_write_json_events):
         reasons.append("blocked_write_target_count mismatch")
     if isinstance(created_count, int) and not isinstance(created_count, bool) and created_count != created_from_events:
         reasons.append("blocked_write_created_files_count mismatch")
+    if (
+        isinstance(direct_created_count, int)
+        and not isinstance(direct_created_count, bool)
+        and direct_created_count != created_from_events
+    ):
+        reasons.append("executor_direct_sink_write_created_files_count mismatch")
+    if (
+        isinstance(direct_ledger_appended_count, int)
+        and not isinstance(direct_ledger_appended_count, bool)
+        and direct_ledger_appended_count != ledger_appended_from_events
+    ):
+        reasons.append("executor_direct_ledger_entries_appended_count mismatch")
     if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) and attempt_count != len(normalized_events):
         reasons.append("store_write_attempt_count mismatch")
     if payload.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED and created_count != 0:
         reasons.append("blocked_write_created_files_count > 0 cannot support BLOCKED claim")
+    if payload.get("executor_direct_sink_write_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED and direct_created_count != 0:
+        reasons.append("executor direct sink BLOCKED claim rejected because target file exists")
+    if payload.get("executor_direct_ledger_append_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED and direct_ledger_appended_count != 0:
+        reasons.append("executor direct ledger BLOCKED claim rejected because forged entry appended")
+    if blocked_write_json_events:
+        _expect(reasons, payload, "executor_direct_sink_write_result", STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+    else:
+        _expect(
+            reasons,
+            payload,
+            "executor_direct_sink_write_result",
+            STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
+        )
+    if blocked_ledger_events:
+        _expect(reasons, payload, "executor_direct_ledger_append_result", STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+    else:
+        _expect(
+            reasons,
+            payload,
+            "executor_direct_ledger_append_result",
+            STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
+        )
     if blocked_events and payload.get("executor_attributed_write_blocked") is not True:
         reasons.append("executor_attributed_write_blocked mismatch")
     if blocked_events and payload.get("known_gap_aeg_direct_traversal_status") != STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED:
@@ -205,14 +341,23 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED,
     ):
         reasons.append("known-gap .aeg direct/traversal status mismatch")
-    if not trusted_events:
+    if not trusted_write_json_events:
         reasons.append("trusted runtime write was not allowed")
+    if not trusted_ledger_events:
+        reasons.append("trusted runtime ledger append was not allowed")
     if payload.get("rollback_used") is not bool(fallback_events):
         reasons.append("rollback_used mismatch")
     if payload.get("fallback_to_unwired") is not bool(fallback_events):
         reasons.append("fallback_to_unwired mismatch")
     if payload.get("fallback_evidence_recorded") is not bool(fallback_events):
         reasons.append("fallback evidence recorded mismatch")
+    omitted_rejected_from_events = any(
+        event.get("executor_omitted_declaration") is True
+        and event.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED
+        for event in normalized_events
+    )
+    if payload.get("executor_omitted_declaration_rejected") is not omitted_rejected_from_events:
+        reasons.append("executor_omitted_declaration_rejected mismatch")
 
     reasons.extend(_event_rejection_reasons(normalized_events))
 
@@ -258,14 +403,25 @@ def _summary_result_and_reason(
     return "NO_STORE_WRITE_ATTEMPT", "no_store_write_attempt_recorded"
 
 
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
 def _event_rejection_reasons(events: Sequence[Mapping[str, Any]]) -> list[str]:
     reasons: list[str] = []
     for index, event in enumerate(events):
         label = f"store_write_mediation_events[{index}]"
+        _expect(reasons, event, "store_write_boundary", STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED, label)
         _expect(reasons, event, "write_provenance_source", STORE_WRITE_PROVENANCE_SOURCE_DETERMINISTIC_CALL_SITE, label)
         _expect(reasons, event, "write_provenance_basis", STORE_WRITE_PROVENANCE_BASIS_DETERMINISTIC_CALL_SITE, label)
         _expect(reasons, event, "live_executor_authority", LIVE_EXECUTOR_AUTHORITY_ON_HOLD, label)
         _expect(reasons, event, "phase11b_live_executor_status", PHASE11B_LIVE_EXECUTOR_NOT_STARTED, label)
+        if event.get("sink_name") not in (STORE_WRITE_SINK_WRITE_JSON, STORE_WRITE_SINK_APPEND_LEDGER):
+            reasons.append(f"{label} sink_name must identify a guarded store.py sink")
+        if event.get("sink_guarded") is not True:
+            reasons.append(f"{label} sink_guarded must be true")
         if event.get("executor_self_report_used") is True:
             reasons.append(f"{label} executor self-report trusted provenance rejected")
         if event.get("trusted_runtime_claim_allowed") is True:
@@ -279,6 +435,13 @@ def _event_rejection_reasons(events: Sequence[Mapping[str, Any]]) -> list[str]:
                     reasons.append(f"{label} blocked executor write recorded a write")
                 if event.get("target_file_created") is not False:
                     reasons.append(f"{label} blocked executor write created a target file")
+                if event.get("target_exists_after") is True and event.get("sink_name") == STORE_WRITE_SINK_WRITE_JSON:
+                    reasons.append(f"{label} blocked executor write target exists after BLOCKED")
+                if (
+                    event.get("sink_name") == STORE_WRITE_SINK_APPEND_LEDGER
+                    and _non_negative_int(event.get("ledger_entries_appended_count")) != 0
+                ):
+                    reasons.append(f"{label} blocked executor ledger append created a forged entry")
                 if event.get("guard_router_invoked") is not True:
                     reasons.append(f"{label} executor-attributed block lacks guard/router invocation")
                 if event.get("fallback_to_unwired") is True:

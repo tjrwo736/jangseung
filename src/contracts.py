@@ -510,6 +510,10 @@ STORE_WRITE_MEDIATION_RESULT_BLOCKED = "BLOCKED"
 STORE_WRITE_MEDIATION_RESULT_TRUSTED_RUNTIME_ALLOWED = "TRUSTED_RUNTIME_ALLOWED"
 STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED = "FALLBACK_TO_UNWIRED"
 STORE_WRITE_MEDIATION_RESULT_OUT_OF_SCOPE_UNCHANGED = "OUT_OF_SCOPE_UNCHANGED"
+STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT = "NO_EXECUTOR_ATTEMPT"
+STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED = "SINK_LEVEL_GUARDED"
+STORE_WRITE_SINK_WRITE_JSON = "_write_json"
+STORE_WRITE_SINK_APPEND_LEDGER = "_append_ledger_unmediated"
 STORE_WRITE_MEDIATION_REASON_EXECUTOR_AEG_BLOCKED = (
     "executor_attributed_aeg_write_blocked_by_guard_router"
 )
@@ -527,12 +531,23 @@ STORE_WRITE_MEDIATION_FIELDS = (
     "store_write_mediation_version",
     "store_write_mediation_enabled",
     "store_write_mediation_scope",
+    "store_write_boundary",
+    "guarded_sinks",
+    "write_json_sink_guarded",
+    "ledger_append_sink_guarded",
     "store_write_mediation_binding_present",
     "write_provenance_source",
     "write_provenance_basis",
     "write_provenance_type",
     "executor_attributed_write_blocked",
+    "executor_direct_sink_write_result",
+    "executor_direct_sink_write_created_files_count",
+    "executor_direct_ledger_append_result",
+    "executor_direct_ledger_entries_appended_count",
     "trusted_runtime_write_allowed",
+    "trusted_runtime_ledger_append_allowed",
+    "executor_self_report_ignored",
+    "executor_omitted_declaration_rejected",
     "blocked_write_target_count",
     "blocked_write_created_files_count",
     "store_write_attempt_count",

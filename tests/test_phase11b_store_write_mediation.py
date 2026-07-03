@@ -15,13 +15,17 @@ from src.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     SAFE_DEFAULT,
+    STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED,
     STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
     STORE_WRITE_MEDIATION_FIELDS,
     STORE_WRITE_MEDIATION_RESULT_BLOCKED,
     STORE_WRITE_MEDIATION_RESULT_FALLBACK_TO_UNWIRED,
+    STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
     STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+    STORE_WRITE_SINK_APPEND_LEDGER,
+    STORE_WRITE_SINK_WRITE_JSON,
 )
 from src.evidence.binding import (
     manifest_hash,
@@ -29,6 +33,12 @@ from src.evidence.binding import (
     store_write_mediation_manifest_fields,
 )
 from src.evidence.store_write_mediation import expected_store_write_mediation_metadata_hash
+from src.state.store import (
+    StoreWriteMediationBlocked,
+    _append_ledger_unmediated,
+    _executor_attributed_store_write_context,
+    _write_json,
+)
 from src.evidence.verify import verify_latest
 
 
@@ -59,12 +69,22 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
             if event["write_provenance_type"] == STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED
         ]
 
-        self.assertEqual(len(blocked_events), 2)
         self.assertTrue(evidence["store_write_mediation_enabled"])
         self.assertEqual(evidence["store_write_mediation_scope"], "executor_attributed_aeg_direct_traversal_writes_only")
+        self.assertEqual(evidence["store_write_boundary"], STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
+        self.assertEqual(evidence["guarded_sinks"], [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON])
+        self.assertTrue(evidence["write_json_sink_guarded"])
+        self.assertTrue(evidence["ledger_append_sink_guarded"])
         self.assertTrue(evidence["executor_attributed_write_blocked"])
+        self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertEqual(evidence["executor_direct_sink_write_created_files_count"], 0)
+        self.assertEqual(evidence["executor_direct_ledger_append_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertEqual(evidence["executor_direct_ledger_entries_appended_count"], 0)
         self.assertTrue(evidence["trusted_runtime_write_allowed"])
-        self.assertEqual(evidence["blocked_write_target_count"], 2)
+        self.assertTrue(evidence["trusted_runtime_ledger_append_allowed"])
+        self.assertTrue(evidence["executor_self_report_ignored"])
+        self.assertTrue(evidence["executor_omitted_declaration_rejected"])
+        self.assertEqual(evidence["blocked_write_target_count"], 3)
         self.assertEqual(evidence["blocked_write_created_files_count"], 0)
         self.assertEqual(evidence["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
         self.assertEqual(evidence["known_gap_aeg_direct_traversal_status"], STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED)
@@ -73,20 +93,98 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["phase11b_live_executor_status"], PHASE11B_LIVE_EXECUTOR_NOT_STARTED)
         self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
 
-        target_classes = {event["guard_decision"]["target_class"] for event in blocked_events}
+        self.assertEqual(len(blocked_events), 4)
+        write_json_blocked_events = [
+            event for event in blocked_events if event["sink_name"] == STORE_WRITE_SINK_WRITE_JSON
+        ]
+        ledger_blocked_events = [
+            event for event in blocked_events if event["sink_name"] == STORE_WRITE_SINK_APPEND_LEDGER
+        ]
+        self.assertEqual(len(write_json_blocked_events), 3)
+        self.assertEqual(len(ledger_blocked_events), 1)
+        target_classes = {event["guard_decision"]["target_class"] for event in write_json_blocked_events}
         self.assertEqual(target_classes, {B1_AEG_DIRECT_TARGET_DENIED, B1_AEG_TRAVERSAL_TARGET_DENIED})
         for event in blocked_events:
+            self.assertEqual(event["store_write_boundary"], STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
+            self.assertTrue(event["sink_guarded"])
             self.assertTrue(event["guard_router_invoked"])
             self.assertFalse(event["write_performed"])
             self.assertFalse(event["target_file_created"])
             self.assertFalse(event["fallback_to_unwired"])
             self.assertEqual(event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
             self.assertEqual(event["write_provenance_type"], STORE_WRITE_PROVENANCE_EXECUTOR_ATTRIBUTED)
-            self.assertFalse(Path(event["canonical_target"]).exists())
+            if event["sink_name"] == STORE_WRITE_SINK_WRITE_JSON:
+                self.assertFalse(Path(event["canonical_target"]).exists())
+            if event["sink_name"] == STORE_WRITE_SINK_APPEND_LEDGER:
+                self.assertEqual(event["ledger_entries_appended_count"], 0)
 
         self.assertFalse((self.repo / ".aeg" / "executor-direct-blocked.json").exists())
         self.assertFalse((self.repo / ".aeg" / "executor-traversal-blocked.json").exists())
+        self.assertFalse((self.repo / ".aeg" / "executor-omitted-declaration-blocked.json").exists())
         self.assertTrue(verify_latest(self.repo).ok)
+
+    def test_direct_write_json_sink_bypass_is_blocked_before_file_creation(self):
+        self._init()
+        direct_target = self.repo / ".aeg" / "executor_bypass.json"
+        traversal_target = self.repo / ".aeg" / ".." / ".aeg" / "traversal_bypass.json"
+
+        with self.assertRaises(StoreWriteMediationBlocked) as direct:
+            with _executor_attributed_store_write_context(
+                self.repo,
+                "test.executor_direct_write_json",
+                executor_claimed_provenance=STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+            ):
+                _write_json(direct_target, {"attacker": "executor content"})
+
+        with self.assertRaises(StoreWriteMediationBlocked) as traversal:
+            with _executor_attributed_store_write_context(self.repo, "test.executor_direct_write_json_traversal"):
+                _write_json(traversal_target, {"attacker": "executor traversal content"})
+
+        self.assertEqual(direct.exception.event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertEqual(traversal.exception.event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertEqual(direct.exception.event["sink_name"], STORE_WRITE_SINK_WRITE_JSON)
+        self.assertEqual(traversal.exception.event["sink_name"], STORE_WRITE_SINK_WRITE_JSON)
+        self.assertFalse(direct_target.exists())
+        self.assertFalse((self.repo / ".aeg" / "traversal_bypass.json").exists())
+        self.assertFalse(direct.exception.event["target_file_created"])
+        self.assertFalse(traversal.exception.event["target_file_created"])
+
+    def test_direct_ledger_append_sink_bypass_is_blocked_before_append(self):
+        self._init()
+        ledger_path = self.repo / ".aeg" / "ledger.jsonl"
+        before = ledger_path.read_text(encoding="utf-8")
+
+        with self.assertRaises(StoreWriteMediationBlocked) as blocked:
+            with _executor_attributed_store_write_context(
+                self.repo,
+                "test.executor_direct_ledger_append",
+                executor_claimed_provenance=STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+            ):
+                _append_ledger_unmediated(
+                    ledger_path,
+                    {
+                        "run_id": "forged-executor-ledger-entry",
+                        "task_text": "forged",
+                        "status": "CLEAN_CORE",
+                    },
+                )
+
+        after = ledger_path.read_text(encoding="utf-8")
+        self.assertEqual(before, after)
+        self.assertEqual(blocked.exception.event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertEqual(blocked.exception.event["sink_name"], STORE_WRITE_SINK_APPEND_LEDGER)
+        self.assertEqual(blocked.exception.event["ledger_entries_appended_count"], 0)
+
+    def test_omitted_sink_context_is_not_trusted(self):
+        self._init()
+        target = self.repo / ".aeg" / "omitted_declaration_bypass.json"
+
+        with self.assertRaises(StoreWriteMediationBlocked) as blocked:
+            _write_json(target, {"attacker": "omitted declaration"})
+
+        self.assertEqual(blocked.exception.event["write_mediation_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        self.assertTrue(blocked.exception.event["executor_omitted_declaration"])
+        self.assertFalse(target.exists())
 
     def test_trusted_runtime_save_run_still_writes_ledger_evidence_and_manifest(self):
         self._init()
@@ -101,7 +199,11 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertTrue(ledger_path.exists())
         self.assertTrue(ledger_path.read_text(encoding="utf-8").strip())
         self.assertTrue(evidence["trusted_runtime_write_allowed"])
+        self.assertTrue(evidence["trusted_runtime_ledger_append_allowed"])
+        self.assertEqual(evidence["guarded_sinks"], [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON])
         self.assertFalse(evidence["executor_attributed_write_blocked"])
+        self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
+        self.assertEqual(evidence["executor_direct_ledger_append_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
         self.assertEqual(evidence["blocked_write_created_files_count"], 0)
         self.assertEqual(
             evidence["bound_store_write_mediation_metadata_hash"],
@@ -192,6 +294,71 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
             any("blocked_write_created_files_count > 0" in error for error in verify.errors),
             verify.errors,
         )
+
+    def test_verify_rejects_blocked_claim_when_target_file_exists(self):
+        self._init()
+        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+            self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        write_event = next(
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["sink_name"] == STORE_WRITE_SINK_WRITE_JSON
+            and event["write_mediation_result"] == STORE_WRITE_MEDIATION_RESULT_BLOCKED
+        )
+        write_event["target_exists_after"] = True
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(
+            any("blocked executor write target exists after BLOCKED" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_verify_rejects_blocked_ledger_claim_when_forged_entry_appended(self):
+        self._init()
+        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+            self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        ledger_event = next(
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["sink_name"] == STORE_WRITE_SINK_APPEND_LEDGER
+            and event["write_mediation_result"] == STORE_WRITE_MEDIATION_RESULT_BLOCKED
+        )
+        ledger_event["ledger_entries_after"] = ledger_event["ledger_entries_before"] + 1
+        ledger_event["ledger_entries_appended_count"] = 1
+        evidence["executor_direct_ledger_entries_appended_count"] = 1
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(
+            any("forged entry appended" in error for error in verify.errors),
+            verify.errors,
+        )
+
+    def test_verify_rejects_sink_coverage_overclaim_when_one_sink_event_missing(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+        evidence, evidence_path = self._latest_evidence_with_path()
+        manifest, manifest_path = self._latest_manifest_with_path()
+        evidence["store_write_mediation_events"] = [
+            event
+            for event in evidence["store_write_mediation_events"]
+            if event["sink_name"] != STORE_WRITE_SINK_APPEND_LEDGER
+        ]
+        self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+        verify = verify_latest(self.repo)
+
+        self.assertFalse(verify.ok)
+        self.assertTrue(any("guarded_sinks overclaim rejected" in error for error in verify.errors), verify.errors)
 
     def _executor_with_aeg_write_attempts(self, task_text, classification, law_result):
         result = noop_execute_contract(task_text, classification, law_result)
