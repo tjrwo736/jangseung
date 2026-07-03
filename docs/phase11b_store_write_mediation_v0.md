@@ -1,7 +1,7 @@
 # Phase 11-B-0 store write mediation v0
 
-Phase 11-B-0R wires the actual `src/state/store.py` disk-write sinks to record
-and enforce a narrow mediated path for executor-attributed `.aeg` writes.
+Phase 11-B-0-b wires the actual `src/state/store.py` disk-write sinks to record
+and enforce a narrow trusted-context mediated path for protected `.aeg` writes.
 
 ## Scope
 
@@ -21,10 +21,13 @@ Implemented:
 - Guarded executor-attributed `.aeg` attempts create zero target files and
   append zero forged ledger entries.
 - Trusted Aegis runtime writes for `run.json`, `manifest.json`,
-  `evidence.json`, and `ledger.jsonl` remain allowed by deterministic
-  `store.py` call-site provenance.
+  `evidence.json`, and `ledger.jsonl` remain allowed by runtime-owned
+  trusted capability context.
 - Executor self-report, trusted-provenance claims, omitted declarations, and
   direct sink calls are not accepted as trusted provenance.
+- Call-stack inference, caller-name matching, function-name matching, line
+  number matching, and module-path matching are not trusted-provenance
+  judgment bases.
 
 Not implemented:
 
@@ -48,6 +51,12 @@ group, including:
 - `guarded_sinks`
 - `write_json_sink_guarded`
 - `ledger_append_sink_guarded`
+- `trusted_context_required`
+- `trusted_context_basis`
+- `call_stack_inference_used_as_judgment_basis`
+- `missing_context_result`
+- `omitted_declaration_result`
+- `executor_self_report_trusted_result`
 - `write_provenance_source`
 - `executor_attributed_write_blocked`
 - `executor_direct_sink_write_result`
@@ -75,6 +84,10 @@ The legacy Phase 10 broad scaffold fields remain unchanged:
 
 `aeg verify` rejects:
 
+- trusted-context guarded claims without both sink events
+- `trusted_context_required=true` with `missing_context_result` other than
+  `BLOCKED`
+- `call_stack_inference_used_as_judgment_basis=true`
 - `blocked_write_created_files_count > 0` while claiming `BLOCKED`
 - `executor_direct_sink_write_result=BLOCKED` when the target file exists
 - `executor_direct_ledger_append_result=BLOCKED` when a forged entry appended
@@ -82,6 +95,7 @@ The legacy Phase 10 broad scaffold fields remain unchanged:
   `_append_ledger_unmediated` guarded sink events
 - executor self-report trusted provenance
 - omitted declaration treated as trusted provenance
+- missing context treated as trusted provenance
 - missing store write mediation binding
 - trusted runtime write failure recorded as success
 - trusted runtime ledger append failure recorded as success
