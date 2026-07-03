@@ -15,7 +15,9 @@ from src.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     SAFE_DEFAULT,
+    STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
     STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+    STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
     STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_BLOCKED,
     STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
     STORE_WRITE_MEDIATION_FIELDS,
@@ -27,8 +29,10 @@ from src.contracts import (
     STORE_WRITE_PROVENANCE_BASIS_RUNTIME_OWNED_CAPABILITY,
     STORE_WRITE_PROVENANCE_SOURCE_RUNTIME_OWNED_CONTEXT,
     STORE_WRITE_PROVENANCE_TRUSTED_RUNTIME,
+    STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED,
     STORE_WRITE_SINK_APPEND_LEDGER,
     STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
     STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
 )
 from src.evidence.binding import (
@@ -76,6 +80,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertTrue(evidence["store_write_mediation_enabled"])
         self.assertEqual(evidence["store_write_mediation_scope"], "executor_attributed_aeg_direct_traversal_writes_only")
         self.assertEqual(evidence["store_write_boundary"], STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED)
+        self._assert_reclassification_fields(evidence)
         self.assertEqual(evidence["guarded_sinks"], [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON])
         self.assertTrue(evidence["write_json_sink_guarded"])
         self.assertTrue(evidence["ledger_append_sink_guarded"])
@@ -251,6 +256,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertTrue(ledger_path.read_text(encoding="utf-8").strip())
         self.assertTrue(evidence["trusted_runtime_write_allowed"])
         self.assertTrue(evidence["trusted_runtime_ledger_append_allowed"])
+        self._assert_reclassification_fields(evidence)
         self.assertEqual(evidence["guarded_sinks"], [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON])
         self.assertFalse(evidence["executor_attributed_write_blocked"])
         self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
@@ -496,6 +502,57 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertFalse(verify.ok)
         self.assertTrue(any("guarded_sinks overclaim rejected" in error for error in verify.errors), verify.errors)
 
+    def test_verify_rejects_in_process_boundary_overclaim_fields(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+
+        overclaims = (
+            ("trusted_context_security_boundary", "trusted_context_security_boundary=true rejected"),
+            ("tamper_proof_claimed", "tamper_proof_claimed=true rejected"),
+            ("physical_prevention_claimed", "physical_prevention_claimed=true rejected"),
+            ("raw_bypass_impossible", "raw_bypass_impossible=true rejected"),
+            ("arbitrary_in_process_code_safe", "arbitrary_in_process_code_safe=true rejected"),
+            ("live_executor_ready", "live_executor_ready=true rejected"),
+            ("write_authority_safe", "write_authority_safe=true rejected"),
+        )
+        for field, expected_error in overclaims:
+            with self.subTest(field=field):
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence[field] = True
+                self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+                verify = verify_latest(self.repo)
+
+                self.assertFalse(verify.ok)
+                self.assertTrue(any(expected_error in error for error in verify.errors), verify.errors)
+                evidence[field] = False
+                self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+    def test_verify_rejects_forbidden_store_write_overclaim_labels(self):
+        self._init()
+        self.assertEqual(self._run("fix typo in README"), 0)
+        forbidden_labels = (
+            "TRUSTED_CONTEXT_SECURITY_BOUNDARY",
+            "EXECUTOR_AEG_WRITE_FULLY_BLOCKED",
+            "RAW_BYPASS_IMPOSSIBLE",
+            "AEG_TAMPER_PROOF",
+        )
+
+        for label in forbidden_labels:
+            with self.subTest(label=label):
+                evidence, evidence_path = self._latest_evidence_with_path()
+                manifest, manifest_path = self._latest_manifest_with_path()
+                evidence["store_write_mediation_events"][0]["forbidden_overclaim_label"] = label
+                self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+                verify = verify_latest(self.repo)
+
+                self.assertFalse(verify.ok)
+                self.assertTrue(any(f"{label} claim rejected" in error for error in verify.errors), verify.errors)
+                del evidence["store_write_mediation_events"][0]["forbidden_overclaim_label"]
+                self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
     def _executor_with_aeg_write_attempts(self, task_text, classification, law_result):
         result = noop_execute_contract(task_text, classification, law_result)
         result["executor_attributed_aeg_write_attempts"] = [
@@ -542,6 +599,29 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
     def _ledger_entries(self):
         ledger_path = self.repo / ".aeg" / "ledger.jsonl"
         return [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _assert_reclassification_fields(self, evidence):
+        self.assertEqual(
+            evidence["store_write_boundary_strength"],
+            STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
+        )
+        self.assertFalse(evidence["trusted_context_security_boundary"])
+        self.assertTrue(evidence["requires_structured_executor"])
+        self.assertTrue(evidence["arbitrary_in_process_code_breaks_boundary"])
+        self.assertEqual(evidence["process_isolation_status"], STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED)
+        self.assertEqual(evidence["os_sandbox_status"], STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED)
+        self.assertEqual(
+            evidence["executor_code_execution_model"],
+            STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
+        )
+        self.assertFalse(evidence["tamper_proof_claimed"])
+        self.assertFalse(evidence["physical_prevention_claimed"])
+        self.assertFalse(evidence["raw_bypass_impossible"])
+        self.assertFalse(evidence["arbitrary_in_process_code_safe"])
+        self.assertFalse(evidence["live_executor_ready"])
+        self.assertFalse(evidence["write_authority_safe"])
+        self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
+        self.assertEqual(evidence["phase11b_live_executor_status"], PHASE11B_LIVE_EXECUTOR_NOT_STARTED)
 
     def _rebind_store_write_mediation(self, evidence, evidence_path, manifest, manifest_path):
         evidence["store_write_mediation_metadata_hash"] = expected_store_write_mediation_metadata_hash(evidence)
