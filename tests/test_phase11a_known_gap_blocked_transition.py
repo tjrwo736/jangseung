@@ -17,6 +17,7 @@ from src.evidence.phase11a_known_gap_blocked_transition import (
     PHASE11A_KNOWN_GAP_BLOCKED_TRANSITION_VERSION,
     PHASE11A_STEP,
     PHASE11B_STATUS_NOT_STARTED,
+    SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY,
     TRANSITION_BASIS_PRELIVE_SAVE_RUN_ROUTE,
     TRANSITION_SOURCE_PHASE,
     VERIFY_REPLAY_ACCEPTED,
@@ -65,6 +66,13 @@ class Phase11aKnownGapBlockedTransitionTests(unittest.TestCase):
         self.assertEqual(record["transition_source_phase"], TRANSITION_SOURCE_PHASE)
         self.assertTrue(record["save_run_route_evidence_verified"])
         self.assertEqual(record["save_run_route_verify_status"], SAVE_RUN_VERIFY_REPLAY_ACCEPTED)
+        self.assertEqual(
+            record["save_run_route_verify_source"],
+            SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY,
+        )
+        self.assertFalse(record["supplied_route_verify_trusted"])
+        self.assertTrue(record["supplied_route_verify_mismatch_rejected"])
+        self.assertTrue(record["route_verify_recomputed"])
         self.assertTrue(record["deterministic_attribution_verified"])
         self.assertTrue(record["self_reported_attribution_rejected"])
         self.assertTrue(record["trusted_runtime_self_claim_rejected"])
@@ -88,6 +96,142 @@ class Phase11aKnownGapBlockedTransitionTests(unittest.TestCase):
         self.assertFalse(verify["is_runtime_wiring"])
         self.assertFalse(verify["is_runtime_enforcement"])
         self.assertEqual(verify["safe_default"], SAFE_DEFAULT)
+
+    def test_invalid_route_with_fake_supplied_accepted_verify_rejects(self):
+        route = self._route()
+        tampered = deepcopy(route)
+        tampered["deterministic_evidence_digest"] = "bad-digest"
+        fake_accepted = self._fake_route_verify(
+            accepted=True,
+            status=SAVE_RUN_VERIFY_REPLAY_ACCEPTED,
+        )
+        record = self._transition(tampered, save_run_route_verify=fake_accepted)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=tampered,
+            save_run_route_verify=fake_accepted,
+        )
+
+        self.assertFalse(record["save_run_route_evidence_verified"])
+        self.assertEqual(record["save_run_route_verify_status"], VERIFY_REPLAY_REJECTED)
+        self.assert_rejected_with(verify, "save_run route evidence verify rejected")
+        self.assertIn("supplied route verify mismatch rejected", verify["rejection_reasons"])
+
+    def test_invalid_route_without_supplied_verify_rejects(self):
+        route = self._route()
+        tampered = deepcopy(route)
+        tampered["deterministic_evidence_digest"] = "bad-digest"
+        record = self._transition(tampered)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=tampered,
+        )
+
+        self.assert_rejected_with(verify, "save_run route evidence verify rejected")
+
+    def test_valid_route_uses_recomputed_internal_verify(self):
+        route = self._route()
+        record = self._transition(route)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assertTrue(verify["accepted"])
+        self.assertEqual(
+            record["save_run_route_verify_source"],
+            SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY,
+        )
+        self.assertEqual(record["source_route_verify"]["status"], SAVE_RUN_VERIFY_REPLAY_ACCEPTED)
+
+    def test_valid_route_with_fake_supplied_rejected_verify_rejects_as_mismatch(self):
+        route = self._route()
+        fake_rejected = self._fake_route_verify(
+            accepted=False,
+            status=VERIFY_REPLAY_REJECTED,
+        )
+        record = self._transition(route, save_run_route_verify=fake_rejected)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+            save_run_route_verify=fake_rejected,
+        )
+
+        self.assertFalse(record["supplied_route_verify_trusted"])
+        self.assert_rejected_with(verify, "supplied route verify mismatch rejected")
+
+    def test_embedded_route_verify_tamper_rejects(self):
+        route = self._route()
+        record = self._record_with(
+            self._transition(route),
+            source_route_verify={
+                "accepted": True,
+                "status": VERIFY_REPLAY_REJECTED,
+                "verification_scope": "caller_supplied",
+                "safe_default": SAFE_DEFAULT,
+            },
+        )
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assert_rejected_with(verify, "source_route_verify mismatch")
+
+    def test_save_run_route_verify_source_mismatch_rejects(self):
+        route = self._route()
+        record = self._record_with(
+            self._transition(route),
+            save_run_route_verify_source="caller_supplied",
+        )
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assert_rejected_with(verify, "save_run_route_verify_source mismatch")
+
+    def test_supplied_route_verify_trusted_true_rejects(self):
+        route = self._route()
+        record = self._record_with(self._transition(route), supplied_route_verify_trusted=True)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assert_rejected_with(verify, "supplied_route_verify_trusted mismatch")
+
+    def test_route_verify_recomputed_false_rejects(self):
+        route = self._route()
+        record = self._record_with(self._transition(route), route_verify_recomputed=False)
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assert_rejected_with(verify, "route_verify_recomputed mismatch")
+
+    def test_supplied_route_verify_mismatch_rejected_false_rejects(self):
+        route = self._route()
+        record = self._record_with(
+            self._transition(route),
+            supplied_route_verify_mismatch_rejected=False,
+        )
+
+        verify = verify_phase11a_known_gap_blocked_transition_evidence(
+            record,
+            save_run_route_evidence=route,
+        )
+
+        self.assert_rejected_with(verify, "supplied_route_verify_mismatch_rejected mismatch")
 
     def test_prior_known_gap_mismatch_rejects(self):
         route = self._route()
@@ -393,10 +537,16 @@ class Phase11aKnownGapBlockedTransitionTests(unittest.TestCase):
         )
         return route_save_run_write_request(repo_root=self.repo, request=request)
 
-    def _transition(self, route, prior_known_gap_status=KNOWN_GAP_EXPECTED_RED_BASELINE):
+    def _transition(
+        self,
+        route,
+        prior_known_gap_status=KNOWN_GAP_EXPECTED_RED_BASELINE,
+        save_run_route_verify=None,
+    ):
         return build_phase11a_known_gap_blocked_transition_evidence(
             prior_known_gap_status=prior_known_gap_status,
             save_run_route_evidence=route,
+            save_run_route_verify=save_run_route_verify,
         )
 
     def _route_with(self, route, **changes):
@@ -404,6 +554,23 @@ class Phase11aKnownGapBlockedTransitionTests(unittest.TestCase):
         tampered.update(changes)
         tampered["deterministic_evidence_digest"] = phase11a_save_run_routing_evidence_digest(tampered)
         return tampered
+
+    def _record_with(self, record, **changes):
+        tampered = deepcopy(record)
+        tampered.update(changes)
+        tampered["deterministic_evidence_digest"] = phase11a_known_gap_transition_evidence_digest(tampered)
+        return tampered
+
+    def _fake_route_verify(self, *, accepted, status):
+        return {
+            "accepted": accepted,
+            "status": status,
+            "rejection_reasons": [],
+            "verification_scope": "phase11a_save_run_write_routing_replay_only",
+            "is_runtime_wiring": False,
+            "is_runtime_enforcement": False,
+            "safe_default": SAFE_DEFAULT,
+        }
 
     def assert_rejected_with(self, verify, expected):
         self.assertFalse(verify["accepted"])

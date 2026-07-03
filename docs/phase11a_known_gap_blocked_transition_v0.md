@@ -58,7 +58,7 @@ transition_source_phase = 11-A-1
 
 The transition is accepted only when all of these are true:
 
-- 11-A-1 route evidence verifies.
+- 11-A-1 route evidence verifies by internal 11-A-2 replay recomputation.
 - write attribution basis is `deterministic_adapter_context`.
 - write attribution type is `executor_attributed`.
 - self-reported attribution is rejected.
@@ -83,6 +83,18 @@ sandbox, container, runtime, or executor enforcement.
 No `save_run()` call is made. No `.aeg` write is made. No ledger write is made.
 No runtime write path is wired or granted. No live executor authority is
 promoted.
+
+## supplied route verify trust boundary
+
+11-A-2 does not trust caller-supplied 11-A-1 route verify objects as transition
+acceptance authority. The transition builder and verifier recompute
+`verify_phase11a_save_run_write_routing_evidence(save_run_route_evidence)`
+internally and use only that replay result for acceptance.
+
+Supplied verify objects are diagnostic inputs only. If a supplied verify summary
+does not match the internally recomputed replay summary, the transition rejects.
+A fake `VERIFY_REPLAY_ACCEPTED` object cannot turn invalid 11-A-1 route evidence
+into blocked transition evidence.
 
 ## relation to 11-A-0 fallback
 
@@ -125,6 +137,10 @@ The 11-A-2 evidence record includes:
 - `save_run_route_evidence_digest`
 - `save_run_route_evidence_verified`
 - `save_run_route_verify_status`
+- `save_run_route_verify_source`
+- `supplied_route_verify_trusted`
+- `supplied_route_verify_mismatch_rejected`
+- `route_verify_recomputed`
 - `deterministic_attribution_verified`
 - `self_reported_attribution_rejected`
 - `trusted_runtime_self_claim_rejected`
@@ -158,6 +174,12 @@ Replay verification rejects:
 - prior known-gap status mismatch.
 - transition status mismatch.
 - route evidence verify mismatch.
+- route verify summaries that do not match internally recomputed replay.
+- any `save_run_route_verify_source` other than `recomputed_internal_replay`.
+- `supplied_route_verify_trusted = true`.
+- `route_verify_recomputed` missing or false.
+- `supplied_route_verify_mismatch_rejected` missing or false.
+- blocked transition claims when recomputed route replay rejects.
 - deterministic attribution mismatch.
 - self-reported attribution accepted state.
 - trusted-runtime self-claim accepted state.

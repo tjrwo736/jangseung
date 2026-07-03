@@ -60,6 +60,7 @@ ALLOWED_KNOWN_GAP_TRANSITION_STATUSES = (
 )
 
 TRANSITION_BASIS_PRELIVE_SAVE_RUN_ROUTE = "phase11a1_verified_prelive_save_run_route"
+SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY = "recomputed_internal_replay"
 
 RUNTIME_WRITE_PATH_STATUS_NOT_WIRED = NOT_WIRED_TO_EXECUTOR_WRITE_PATH
 LIVE_EXECUTOR_AUTHORITY_STATUS_ON_HOLD = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
@@ -106,6 +107,10 @@ _EVIDENCE_FIELDS = frozenset(
         "save_run_route_evidence_digest",
         "save_run_route_evidence_verified",
         "save_run_route_verify_status",
+        "save_run_route_verify_source",
+        "supplied_route_verify_trusted",
+        "supplied_route_verify_mismatch_rejected",
+        "route_verify_recomputed",
         "deterministic_attribution_verified",
         "self_reported_attribution_rejected",
         "trusted_runtime_self_claim_rejected",
@@ -158,11 +163,12 @@ def build_phase11a_known_gap_blocked_transition_evidence(
 ) -> dict[str, Any]:
     """Build deterministic 11-A-2 known-gap transition evidence."""
 
-    route_verify = _route_verify(save_run_route_evidence, save_run_route_verify)
+    route_verify = _route_verify(save_run_route_evidence)
     rejection_reasons = _transition_rejection_reasons(
         prior_known_gap_status=prior_known_gap_status,
         save_run_route_evidence=save_run_route_evidence,
         save_run_route_verify=route_verify,
+        supplied_save_run_route_verify=save_run_route_verify,
     )
     accepted = not rejection_reasons
     route_evidence = deepcopy(dict(save_run_route_evidence))
@@ -182,6 +188,10 @@ def build_phase11a_known_gap_blocked_transition_evidence(
         "save_run_route_evidence_digest": phase11a_save_run_routing_evidence_digest(route_evidence),
         "save_run_route_evidence_verified": _route_verify_accepted(route_verify),
         "save_run_route_verify_status": route_verify.get("status"),
+        "save_run_route_verify_source": SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY,
+        "supplied_route_verify_trusted": False,
+        "supplied_route_verify_mismatch_rejected": True,
+        "route_verify_recomputed": True,
         "deterministic_attribution_verified": _deterministic_attribution_verified(route_evidence),
         "self_reported_attribution_rejected": _self_reported_attribution_rejected(route_evidence),
         "trusted_runtime_self_claim_rejected": _trusted_runtime_self_claim_rejected(route_evidence),
@@ -235,11 +245,11 @@ def verify_phase11a_known_gap_blocked_transition_evidence(
     for field in missing_fields:
         reasons.append(f"missing evidence record field: {field}")
 
-    route_verify = _route_verify(save_run_route_evidence, save_run_route_verify)
+    route_verify = _route_verify(save_run_route_evidence)
     expected_record = build_phase11a_known_gap_blocked_transition_evidence(
         prior_known_gap_status=expected_prior_known_gap_status,
         save_run_route_evidence=save_run_route_evidence,
-        save_run_route_verify=route_verify,
+        save_run_route_verify=save_run_route_verify,
     )
 
     for field in sorted(_EVIDENCE_FIELDS - {"deterministic_evidence_digest"}):
@@ -252,6 +262,11 @@ def verify_phase11a_known_gap_blocked_transition_evidence(
         reasons.append("known-gap transition status vocabulary mismatch")
     if evidence_record.get("known_gap_transition_status") != KNOWN_GAP_BLOCKED_BY_PRELIVE_ROUTE:
         reasons.append("known-gap transition was not accepted")
+    if (
+        evidence_record.get("known_gap_transition_status") == KNOWN_GAP_BLOCKED_BY_PRELIVE_ROUTE
+        and not _route_verify_accepted(route_verify)
+    ):
+        reasons.append("blocked transition status requires internally accepted route verify")
     if evidence_record.get("transition_basis") != TRANSITION_BASIS_PRELIVE_SAVE_RUN_ROUTE:
         reasons.append("transition basis mismatch")
     if evidence_record.get("transition_source_phase") != TRANSITION_SOURCE_PHASE:
@@ -282,6 +297,15 @@ def verify_phase11a_known_gap_blocked_transition_evidence(
     _expect_field(reasons, evidence_record, "live_executor_implemented", False)
     _expect_field(reasons, evidence_record, "tool_authority_granted", False)
     _expect_field(reasons, evidence_record, "provider_model_network_authority_granted", False)
+    _expect_field(
+        reasons,
+        evidence_record,
+        "save_run_route_verify_source",
+        SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY,
+    )
+    _expect_field(reasons, evidence_record, "supplied_route_verify_trusted", False)
+    _expect_field(reasons, evidence_record, "supplied_route_verify_mismatch_rejected", True)
+    _expect_field(reasons, evidence_record, "route_verify_recomputed", True)
 
     if evidence_record.get("save_run_route_evidence_verified") is not True:
         reasons.append("save_run route evidence verify rejected")
@@ -308,6 +332,7 @@ def verify_phase11a_known_gap_blocked_transition_evidence(
         prior_known_gap_status=expected_prior_known_gap_status,
         save_run_route_evidence=save_run_route_evidence,
         save_run_route_verify=route_verify,
+        supplied_save_run_route_verify=save_run_route_verify,
     ))
     reasons.extend(_recursive_overclaim_rejections(evidence_record))
 
@@ -347,6 +372,7 @@ def _transition_rejection_reasons(
     prior_known_gap_status: str,
     save_run_route_evidence: Mapping[str, Any],
     save_run_route_verify: Mapping[str, Any],
+    supplied_save_run_route_verify: Mapping[str, Any] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     route_evidence = save_run_route_evidence if isinstance(save_run_route_evidence, Mapping) else {}
@@ -355,6 +381,11 @@ def _transition_rejection_reasons(
         reasons.append("prior known-gap status mismatch")
     if not _route_verify_accepted(save_run_route_verify):
         reasons.append("save_run route evidence verify rejected")
+    if _supplied_route_verify_mismatch(
+        supplied_verify=supplied_save_run_route_verify,
+        recomputed_verify=save_run_route_verify,
+    ):
+        reasons.append("supplied route verify mismatch rejected")
     if not _deterministic_attribution_verified(route_evidence):
         reasons.append("deterministic attribution missing or mismatch")
     if not _self_reported_attribution_rejected(route_evidence):
@@ -391,12 +422,7 @@ def _transition_rejection_reasons(
     return _unique(reasons)
 
 
-def _route_verify(
-    save_run_route_evidence: Mapping[str, Any],
-    save_run_route_verify: Mapping[str, Any] | None,
-) -> Mapping[str, Any]:
-    if save_run_route_verify is not None:
-        return deepcopy(dict(save_run_route_verify))
+def _route_verify(save_run_route_evidence: Mapping[str, Any]) -> Mapping[str, Any]:
     return verify_phase11a_save_run_write_routing_evidence(save_run_route_evidence)
 
 
@@ -491,6 +517,16 @@ def _route_verify_summary(route_verify: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _supplied_route_verify_mismatch(
+    *,
+    supplied_verify: Mapping[str, Any] | None,
+    recomputed_verify: Mapping[str, Any],
+) -> bool:
+    if supplied_verify is None:
+        return False
+    return _route_verify_summary(supplied_verify) != _route_verify_summary(recomputed_verify)
+
+
 def _expect_field(reasons: list[str], record: Mapping[str, Any], field: str, expected: Any) -> None:
     if record.get(field) != expected:
         reasons.append(f"{field} mismatch")
@@ -558,6 +594,7 @@ __all__ = [
     "PHASE11A_STEP",
     "PHASE11B_STATUS_NOT_STARTED",
     "RUNTIME_WRITE_PATH_STATUS_NOT_WIRED",
+    "SAVE_RUN_ROUTE_VERIFY_SOURCE_RECOMPUTED_INTERNAL_REPLAY",
     "TRANSITION_BASIS_PRELIVE_SAVE_RUN_ROUTE",
     "TRANSITION_SOURCE_PHASE",
     "VERIFY_REPLAY_ACCEPTED",
