@@ -147,6 +147,9 @@ statuses. This is a policy contract, not a grant.
 | --- | --- | --- |
 | `PROPOSE_PATCH` | `propose_patch` | `ALLOWED_UNDER_POLICY` |
 | `REQUEST_REPO_READ` | `read_repo` | `LIMITED` |
+| `REQUEST_RISK_CLASSIFICATION` | `risk_classification` | `ALLOWED_UNDER_POLICY` |
+| `REQUEST_EXPLANATION` | `explanation` | `ALLOWED_UNDER_POLICY` |
+| `NOOP` | `noop` | `ALLOWED_UNDER_POLICY` |
 | `REQUEST_REPO_WRITE` | `write_repo` | `MEDIATED_AND_FUTURE_GATED` |
 | `WRITE_AEG_STATE` | `aeg_state_write` | `DENIED` |
 | `DIRECT_STORE_WRITE` | `store_sink_direct_access` | `DENIED` |
@@ -219,8 +222,8 @@ ledger_append
 
 The validator also rejects path-like payload or target-scope values that point
 at `.aeg/` or use absolute paths. Env or secret read requests are rejected
-through forbidden fields, forbidden action types, and capability requirement
-checks.
+through forbidden fields and forbidden action types at schema time, then by the
+11-B-1c capability gate when declared as capability requirements.
 
 ## 9. Validator behavior
 
@@ -262,7 +265,8 @@ Validator requirements implemented in v0:
 - raw shell, `run_command`, and process spawn reject.
 - provider/model/network requests reject unless a future explicit gate exists.
 - env and secret read requests reject.
-- `reported_only` capability grant claims are rejected.
+- `reported_only` capability grant claims remain data at schema time and are
+  rejected by the 11-B-1c capability gate.
 
 ## 10. Non-execution guarantee
 
@@ -315,19 +319,21 @@ It does not complete sink guard work by itself.
 schema contract + validator
 ```
 
-11-B-1c candidate scope:
+11-B-1c scope:
 
 ```text
 capability gate
 evidence binding
-verify overclaim rejection
-tool injection and escape fixtures
+reported_only/self-report rejection
+limited scope enforcement
 ```
 
-11-B-1b intentionally stops before implementing a mediator or gate that
-performs actions. A future gate must independently decide whether valid
-structured data may become a read, patch proposal review, mediated write
-request, or denial record.
+11-B-1b intentionally stops before action capability authorization. 11-B-1c
+adds `evaluate_action_capabilities(...)` as a separate non-executing gate.
+That gate independently decides whether valid structured data is allowed,
+limited, denied, future-gated, user-gated, not implemented, or unknown.
+
+Neither phase implements a mediator or gate that performs actions.
 
 ## 13. Explicit non-goals
 
