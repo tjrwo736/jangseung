@@ -155,7 +155,7 @@ class Phase11bStructuredActionTests(unittest.TestCase):
                 self.assertFalse(result.valid)
                 self.assertEqual(result.status, FORBIDDEN_PAYLOAD_FIELD_REJECTED)
 
-    def test_reported_only_capability_grant_rejected(self):
+    def test_reported_only_capability_claim_shape_is_schema_data_only(self):
         action = self._valid_noop(action_type=REQUEST_REPO_READ, capability_requirements=[])
         action["capability_requirements"] = [
             {
@@ -167,12 +167,9 @@ class Phase11bStructuredActionTests(unittest.TestCase):
 
         result = validate_structured_action(action)
 
-        self.assertFalse(result.valid)
-        self.assertIn("reported_only capability grant rejected", result.reasons)
-        self.assertIn(
-            "capability grant claims are not accepted by the structured action validator",
-            result.reasons,
-        )
+        self.assertTrue(result.valid)
+        self.assertEqual(result.status, VALID_STRUCTURED_ACTION)
+        self.assertFalse(result.write_authority_granted)
 
     def test_validator_pass_does_not_execute_action(self):
         with tempfile.TemporaryDirectory() as tempdir:
