@@ -178,13 +178,25 @@ ALLOWED_LIMITED_ACTION_CAPABILITY_MAPPING = {
 SELF_REPORT_TRUE_FIELDS = frozenset(
     {
         "capability_granted",
+        "execution_allowed",
         "granted",
+        "live_executor_ready",
+        "mutation_allowed",
         "trusted",
         "approved_by_executor",
         "safe",
+        "write_authority_granted",
     }
 )
-SELF_REPORT_AUTHORITY_FIELDS = frozenset({"authority"})
+SELF_REPORT_AUTHORITY_FIELDS = frozenset(
+    {
+        "authority",
+        "execution_authority",
+        "live_executor_authority",
+        "mutation_authority",
+        "write_authority",
+    }
+)
 REPORTED_ONLY_FIELDS = frozenset({"grant_source", "source", "basis"})
 
 PATH_FIELDS = frozenset(
@@ -663,7 +675,12 @@ def _has_explicit_user_gate(
 def _is_scope_rejection(reasons: Sequence[str]) -> bool:
     for reason in reasons:
         lowered = reason.lower()
-        if ".aeg" in lowered or "absolute path" in lowered or "env/secret" in lowered:
+        if (
+            ".aeg" in lowered
+            or "absolute path" in lowered
+            or "parent traversal" in lowered
+            or "env/secret" in lowered
+        ):
             return True
     return False
 
