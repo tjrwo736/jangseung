@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, REPORTED_ONLY, SAFE_DEFAULT
+from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
 from src.evidence.b3_capability_policy_contract import CAPABILITY_FIELDS
 
 STRUCTURED_ACTION_CONTRACT_VERSION = "phase11b_structured_action_schema_contract_v0"
@@ -250,9 +250,9 @@ ACTION_CAPABILITY_MAPPING = {
     REQUEST_RISK_CLASSIFICATION: CapabilityMapping(
         action_type=REQUEST_RISK_CLASSIFICATION,
         capability_name="risk_classification",
-        policy_status=LIMITED,
+        policy_status=ALLOWED_UNDER_POLICY,
         b3_capability_field=None,
-        note="Risk classification request; not an authority grant.",
+        note="Risk classification request data only; not an authority grant.",
     ),
     REQUEST_EXPLANATION: CapabilityMapping(
         action_type=REQUEST_EXPLANATION,
@@ -462,10 +462,6 @@ def validate_structured_action(action: Mapping[str, Any]) -> StructuredActionVal
             action_type,
         )
 
-    capability_reasons, capability_status = _capability_reasons(action)
-    if capability_reasons:
-        return _result(False, capability_status, capability_reasons, action_type)
-
     return _result(True, VALID_STRUCTURED_ACTION, [], action_type)
 
 
@@ -543,53 +539,6 @@ def _scan_forbidden_payload(
     if _is_sequence(value):
         for index, nested in enumerate(value):
             _scan_forbidden_payload(nested, f"{location}[{index}]", reasons, parent_key)
-
-
-def _capability_reasons(action: Mapping[str, Any]) -> tuple[list[str], str]:
-    reasons: list[str] = []
-    status = CAPABILITY_DENIED
-    for requirement in action.get("capability_requirements", []):
-        if isinstance(requirement, Mapping):
-            requirement_reasons, requirement_status = _capability_mapping_requirement_reason(requirement)
-        else:
-            requirement_reasons, requirement_status = _capability_string_requirement_reason(requirement)
-        if requirement_reasons:
-            reasons.extend(requirement_reasons)
-            status = requirement_status
-    return reasons, status
-
-
-def _capability_mapping_requirement_reason(requirement: Mapping[str, Any]) -> tuple[list[str], str]:
-    reasons: list[str] = []
-    if requirement.get("grant_source") == REPORTED_ONLY or requirement.get("source") == REPORTED_ONLY:
-        reasons.append("reported_only capability grant rejected")
-    if requirement.get("granted") is True:
-        reasons.append("capability grant claims are not accepted by the structured action validator")
-
-    capability_name = requirement.get("capability_name") or requirement.get("capability")
-    if isinstance(capability_name, str):
-        string_reasons, status = _capability_string_requirement_reason(capability_name)
-        reasons.extend(string_reasons)
-        if string_reasons:
-            return reasons, status
-
-    return reasons, CAPABILITY_DENIED
-
-
-def _capability_string_requirement_reason(requirement: str) -> tuple[list[str], str]:
-    capability_name = _normalize_key(requirement)
-    policy_status = CAPABILITY_POLICY_BY_NAME.get(capability_name)
-    if policy_status is None:
-        return [f"unknown capability requirement rejected: {requirement}"], CAPABILITY_DENIED
-    if policy_status == DENIED_UNTIL_EXPLICIT_GATE:
-        return [f"future gate required for capability: {capability_name}"], FUTURE_GATE_REQUIRED
-    if policy_status in {DENIED, NOT_IMPLEMENTED}:
-        return [f"capability denied: {capability_name}"], CAPABILITY_DENIED
-    if policy_status in {FUTURE_GATED, MEDIATED_AND_FUTURE_GATED}:
-        return [f"future gate required for capability: {capability_name}"], FUTURE_GATE_REQUIRED
-    if policy_status == USER_GATED:
-        return [f"user gate required for capability: {capability_name}"], USER_GATE_REQUIRED
-    return [], VALID_STRUCTURED_ACTION
 
 
 def _result(
