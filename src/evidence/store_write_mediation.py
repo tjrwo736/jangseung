@@ -1,10 +1,11 @@
-"""Phase 11-B-0 actual ``store.py`` write mediation evidence.
+"""Phase 11-B-0 draft ``store.py`` write mediation evidence.
 
-This module records the narrow runtime wiring added in Phase 11-B-0:
+This module records the narrow store-sink wiring proposed by PR #81:
 executor-attributed ``.aeg`` direct/traversal write attempts are routed through
 the guard/mediator path and blocked, while deterministic Aegis runtime writes
 remain allowed. It does not create a live executor, provider/model/network
-path, shell authority, general write tool, or external filesystem enforcement.
+path, shell authority, general write tool, write-authority safety, arbitrary
+code security boundary, or external filesystem enforcement.
 """
 
 from __future__ import annotations
@@ -324,7 +325,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     if payload.get("live_executor_ready") is True:
         reasons.append("live_executor_ready=true rejected; live executor authority remains on hold")
     if payload.get("write_authority_safe") is True:
-        reasons.append("write_authority_safe=true rejected; structured executor gate is not complete")
+        reasons.append("write_authority_safe=true rejected; store write mediation draft is not write authority safety")
     for claim_path, claim_label in _forbidden_store_write_overclaim_paths(payload):
         reasons.append(f"{claim_label} claim rejected at {claim_path}")
 
@@ -486,7 +487,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
             else STORE_WRITE_MEDIATION_VERIFICATION_REJECTED
         ),
         "rejection_reasons": _unique(reasons),
-        "verification_scope": "phase11b0_store_write_mediation_actual_runtime_replay",
+        "verification_scope": "phase11b0_store_write_mediation_sink_replay",
         "safe_default": SAFE_DEFAULT,
     }
 
