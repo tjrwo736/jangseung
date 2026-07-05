@@ -1,11 +1,24 @@
 # Phase 11-B-0 store write mediation v0
 
-Phase 11-B-0-b wires the actual `src/state/store.py` disk-write sinks to
-record and enforce a narrow trusted-context mediated path for protected `.aeg`
-writes. Phase 11-B-0-c reclassifies that line honestly: it is an in-process,
-tamper-evident, overclaim-resistant sink guard under a structured-executor
-assumption. It is not a security boundary against arbitrary in-process Python
-code execution.
+PR #81 is a draft store write mediation layer for `src/state/store.py`
+disk-write sinks. It records and mediates a narrow trusted-context path for
+protected `.aeg` writes under a structured-executor assumption.
+
+Its current role is sink-level defense-in-depth and evidence binding only. It
+is not a live executor, not 11-B-0 completion, not write-authority safety, not a
+tamper-proof store, and not a security boundary against arbitrary in-process
+Python code execution.
+
+Current baseline:
+
+- Phase 11-B-1 = `PHASE11B_1_STRUCTURED_EXECUTOR_PRELIVE_BASELINE_COMPLETE`
+- Post-11-B-1 symlink realpath fixture gap =
+  `CLOSED_AS_DETERMINISTIC_FIXTURE_BASELINE`
+- 11-B-0 = `NOT_COMPLETE`
+- 11-B-0-b/c = `NOT_READY_FOR_COMPLETION`
+- Phase 11-B live executor = `NOT_STARTED`
+- live executor authority = `LIVE_EXECUTOR_AUTHORITY_ON_HOLD`
+- safe default = `hold_current_state`
 
 ## In-process boundary limitation
 
@@ -34,20 +47,23 @@ boundary.
 
 ## Trusted-context guard meaning under structured executor assumption
 
-11-B-0-b now means:
+PR #81 now means:
 
-- sink-level trusted-context guard under a structured-executor assumption
-- tamper-evident and overclaim-resistant boundary
+- draft sink-level trusted-context guard under a structured-executor assumption
+- sink-level defense-in-depth and evidence layer
+- tamper-evident and overclaim-resistant store-sink record
 - accidental or declared-bypass path hardening
 - trusted runtime `save_run` and ledger append preservation
 
-11-B-0-b does not mean:
+PR #81 does not mean:
 
 - tamper-proof
 - arbitrary in-process code prevention
 - physical impossibility proof
 - OS/process isolation
 - live executor ready
+- 11-B-0 complete
+- write authority safe
 - executor `.aeg` writes fully blocked against all possible same-process code
 
 ## Tamper-evident vs tamper-proof distinction
@@ -62,11 +78,15 @@ Required invariant:
 - `TAMPER_EVIDENT != TAMPER_PROOF`
 - `STRUCTURED_EXECUTOR_ASSUMPTION != ARBITRARY_CODE_EXECUTION_SAFE`
 
-## Why 11-B-1 must restrict executor capability
+## Post-11-B-1 baseline interpretation
 
-Actual prevention requires the next strategy gate:
+Main now includes the Phase 11-B-1 structured executor pre-live baseline and
+the post-11-B-1 symlink realpath fixture closure. PR #81 must be read against
+that baseline, not as a claim that the live executor is ready or that 11-B-0 is
+complete.
 
-- 11-B-1 = Structured Executor Capability Restriction Gate
+The structured executor baseline requires:
+
 - executor output = data, not code
 - executor cannot import Python modules
 - executor cannot eval/exec
@@ -77,8 +97,14 @@ Actual prevention requires the next strategy gate:
 - executor cannot use general `write_file`
 - executor can only request mediated structured actions
 
-The trusted-context guard is meaningful only if the executor lacks the ability
-to steal or synthesize trusted context/capability material in the first place.
+Those requirements make the trusted-context guard meaningful as a draft
+defense-in-depth sink layer. They do not make trusted context an arbitrary-code
+security boundary, do not make write authority safe, and do not start live
+executor authority.
+
+The symlink realpath fixture closure is a deterministic fixture baseline. It is
+not a bypass-impossible proof and must not be used to upgrade PR #81 into
+11-B-0 completion.
 
 ## Process/OS isolation as separate constitutional design gate
 
@@ -109,6 +135,8 @@ PR #81 must not claim:
 - the guard is tamper-proof
 - live executor is ready
 - write authority is safe
+- 11-B-0 is complete
+- mergeable means ready to merge
 - process/OS/sandbox/container isolation is implemented
 
 Evidence and verify reject the following overclaim labels when they appear in
@@ -118,6 +146,16 @@ store-write mediation evidence:
 - `EXECUTOR_AEG_WRITE_FULLY_BLOCKED`
 - `RAW_BYPASS_IMPOSSIBLE`
 - `AEG_TAMPER_PROOF`
+
+Required PR #81 distinctions:
+
+- `mergeable=true != ready_to_merge`
+- store write mediation draft != 11-B-0 complete
+- trusted context != arbitrary-code security boundary
+- in-process guard != OS/process isolation
+- defense-in-depth != physical prevention
+- structured executor pre-live baseline != live executor ready
+- symlink fixture closure != bypass impossible
 
 ## Evidence Fields
 
