@@ -200,6 +200,15 @@ validated action is not passed directly to store.py
 capability decision is runtime-owned, not executor-owned
 ```
 
+Packet safety depends on constrained executor capability. A runtime-owned
+`action_decision_packet` must not be confused with executor self-report, but
+that distinction is only meaningful if the future executor cannot run
+arbitrary code that reads or tampers with runtime internals outside the action
+contract. Packet safety therefore depends on both preventing arbitrary executor
+code execution and forbidding introspection/internal-access actions. This is
+not a claim of process isolation, sandboxing, tamper-proofing, bypass
+impossibility, or live executor readiness.
+
 ## 8. Store-adjacent path boundary
 
 The store-adjacent path is any future path that can approach `store.py`, ledger
@@ -341,12 +350,41 @@ EVAL_EXEC
 READ_ENV
 READ_SECRET
 OPEN_ARBITRARY_PATH
+INTROSPECT_RUNTIME
+INSPECT_RUNTIME_STATE
+READ_RUNTIME_STATE
+READ_PROCESS_STATE
+READ_INTERNAL_OBJECTS
+LIST_INTERNAL_OBJECTS
 CALL_INTERNAL_FUNCTION
+READ_MEMORY
+READ_STACK
+READ_FRAME_LOCALS
+READ_MODULE_GLOBALS
 ```
 
 The gate also rejects executor-originated attempts to smuggle those capabilities
 through aliases, payload fields, target scope, self-report metadata, or
 declared capability grants.
+
+The introspection entries above are contract-level rejections, not a complete
+runtime security boundary by themselves. Blocking runtime introspection is not
+completed by an action allowlist alone; it also depends on an execution
+environment constraint that prevents the executor from running arbitrary
+Python or other arbitrary code. If arbitrary code execution is allowed, that
+code can bypass action typing and directly read process state, frames, module
+globals, internal objects, memory-facing data, or other runtime internals.
+Therefore the design dependency is:
+
+```text
+introspection blocked
+= validator/capability gate rejection
++ no arbitrary executor code execution environment constraint
+```
+
+This document fixes that relationship as a design gate. It does not implement
+a live executor sandbox, arbitrary-code security boundary, process isolation,
+tamper-proof runtime boundary, or proof that bypass is impossible.
 
 ## 13. Non-execution / non-mutation rule
 
@@ -448,9 +486,14 @@ This design gate does not implement or authorize:
 - `eval`, `exec`, or import execution path.
 - filesystem mutation.
 - `store.py` sink guard strengthening.
+- arbitrary-code security boundary.
+- runtime introspection proof.
 - process isolation.
+- sandbox guarantee.
 - OS or filesystem permission enforcement.
 - sandbox or container.
+- bypass-impossibility proof.
+- live executor readiness.
 - IPC.
 - main direct push.
 
