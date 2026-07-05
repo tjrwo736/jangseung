@@ -242,6 +242,7 @@ from src.contracts import (
     RESPONSE_STATUSES,
     RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUS_OVERCLAIM_REJECTED,
+    STORE_WRITE_MEDIATION_FIELDS,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_AUTHORITY_GRANT_SCAFFOLD_V0,
     TOOL_SURFACE_CLEAN,
@@ -290,6 +291,7 @@ from src.evidence.mediated_write_boundary import (
     expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
+from src.evidence.store_write_mediation import verify_store_write_mediation_metadata
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -357,6 +359,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     *MEDIATED_WRITE_BOUNDARY_FIELDS,
     *WRITE_BYPASS_HARNESS_FIELDS,
     *PRE_LIVE_EXECUTOR_GATE_FIELDS,
+    *STORE_WRITE_MEDIATION_FIELDS,
     *LEDGER_INTEGRITY_FIELDS,
 )
 
@@ -447,6 +450,7 @@ def validate_evidence_packet(packet: dict[str, Any]) -> list[str]:
     _validate_mediated_write_boundary_metadata(packet, errors)
     _validate_write_bypass_harness_metadata(packet, errors)
     _validate_pre_live_executor_gate_metadata(packet, errors)
+    _validate_store_write_mediation_metadata(packet, errors)
     _validate_ledger_integrity_metadata(packet, errors)
     _validate_forbidden_raw_prompt_response_fields(packet, errors)
 
@@ -2373,6 +2377,12 @@ def _validate_pre_live_executor_gate_metadata(packet: dict[str, Any], errors: li
         errors.append("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash must be sha256 hex")
     elif metadata_hash != expected_pre_live_executor_gate_metadata_hash(packet):
         errors.append("INVALID_EVIDENCE: pre_live_executor_gate_metadata_hash mismatch")
+
+
+def _validate_store_write_mediation_metadata(packet: dict[str, Any], errors: list[str]) -> None:
+    verify = verify_store_write_mediation_metadata(packet)
+    for reason in verify.get("rejection_reasons", []):
+        errors.append(f"INVALID_EVIDENCE: {reason}")
 
 
 def _validate_ledger_integrity_metadata(packet: dict[str, Any], errors: list[str]) -> None:

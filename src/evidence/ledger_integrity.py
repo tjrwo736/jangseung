@@ -56,6 +56,7 @@ _EVIDENCE_HASH_EXCLUDED_CHECK_FIELDS = frozenset(
         "mediated_write_boundary_manifest_binding_required",
         "write_bypass_harness_manifest_binding_required",
         "pre_live_executor_gate_manifest_binding_required",
+        "store_write_mediation_manifest_binding_required",
         "ledger_integrity_manifest_binding_required",
     )
 )
