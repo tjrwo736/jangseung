@@ -142,7 +142,14 @@ PROPOSE_PATCH_PAYLOAD_FIELDS = frozenset(
 FORBIDDEN_PAYLOAD_FIELDS = frozenset(
     {
         "python_code",
+        "args",
+        "bash",
+        "callback_url",
+        "cmd",
+        "command_line",
         "eval_code",
+        "eval",
+        "exec",
         "exec_code",
         "shell",
         "command",
@@ -153,8 +160,21 @@ FORBIDDEN_PAYLOAD_FIELDS = frozenset(
         "function_pointer",
         "callable_reference",
         "module",
+        "module_name",
+        "plugin",
+        "hook",
         "import_module",
         "import_path",
+        "proc",
+        "spawn",
+        "subprocess",
+        "terminal",
+        "powershell",
+        "write_file",
+        "run_command",
+        "direct_write",
+        "direct_write_file",
+        "hidden_action",
         "raw_file_write",
         "absolute_write_path",
         "aeg_path",
@@ -530,8 +550,12 @@ def _scan_forbidden_payload(
         normalized_value = _normalize_key(value)
         if parent_key in PATH_SEMANTIC_FIELDS and _is_absolute_path(value):
             reasons.append(f"absolute path rejected: {location}")
+        if parent_key in PATH_SEMANTIC_FIELDS and _contains_parent_traversal(value):
+            reasons.append(f"parent traversal path rejected: {location}")
         if parent_key in PATH_SEMANTIC_FIELDS and _contains_aeg_path(value):
             reasons.append(f".aeg target rejected: {location}")
+        if parent_key in PATH_SEMANTIC_FIELDS and _is_env_secret_target(value):
+            reasons.append(f"env/secret target rejected: {location}")
         if normalized_value in ENV_SECRET_REQUEST_TOKENS:
             reasons.append(f"env/secret read request rejected: {location}")
         return
@@ -570,9 +594,30 @@ def _is_absolute_path(value: str) -> bool:
 
 
 def _contains_aeg_path(value: str) -> bool:
-    normalized = value.replace("\\", "/").strip()
+    normalized = _slash_normalized(value).strip()
     return normalized == ".aeg" or normalized.startswith(".aeg/") or "/.aeg/" in normalized
+
+
+def _contains_parent_traversal(value: str) -> bool:
+    parts = _slash_normalized(value).split("/")
+    return ".." in parts
+
+
+def _is_env_secret_target(value: str) -> bool:
+    normalized = _slash_normalized(value).strip().lower()
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return False
+    if parts[-1].startswith(".env"):
+        return True
+    if any(part in {"secret", "secrets"} for part in parts):
+        return True
+    return parts[-1] in {"secrets.json", "secret.json"}
 
 
 def _is_sequence(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _slash_normalized(value: str) -> str:
+    return "/".join(value.split("\\"))
