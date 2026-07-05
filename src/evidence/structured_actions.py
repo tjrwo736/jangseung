@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
@@ -450,7 +451,11 @@ def build_structured_action_contract_evidence() -> dict[str, Any]:
     return dict(STRUCTURED_ACTION_CONTRACT_EVIDENCE)
 
 
-def validate_structured_action(action: Mapping[str, Any]) -> StructuredActionValidationResult:
+def validate_structured_action(
+    action: Mapping[str, Any],
+    *,
+    repo_root: str | Path | None = None,
+) -> StructuredActionValidationResult:
     reasons: list[str] = []
     action_type = _schema_action_type(action, reasons)
     if reasons:
@@ -473,7 +478,7 @@ def validate_structured_action(action: Mapping[str, Any]) -> StructuredActionVal
     if reasons:
         return _result(False, INVALID_ACTION_SCHEMA, reasons, action_type)
 
-    forbidden_payload_reasons = _forbidden_payload_reasons(action)
+    forbidden_payload_reasons = _forbidden_payload_reasons(action, repo_root=repo_root)
     if forbidden_payload_reasons:
         return _result(
             False,
@@ -524,10 +529,52 @@ def _validate_schema_fields(action: Mapping[str, Any], reasons: list[str]) -> No
         reasons.append("payload must be a mapping")
 
 
-def _forbidden_payload_reasons(action: Mapping[str, Any]) -> list[str]:
+def realpath_scope_rejection_reasons(
+    value: str,
+    location: str,
+    repo_root: str | Path,
+) -> tuple[str, ...]:
+    """Return fail-closed realpath scope rejection reasons for one path value."""
+
+    try:
+        repo_path = Path(repo_root).resolve(strict=False)
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = repo_path / candidate
+        resolved_candidate = candidate.resolve(strict=False)
+        aeg_root = (repo_path / ".aeg").resolve(strict=False)
+        env_target = (repo_path / ".env").resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        return (f"realpath resolution failed closed: {location}: {exc.__class__.__name__}",)
+
+    reasons: list[str] = []
+    if not _path_is_relative_to(resolved_candidate, repo_path):
+        reasons.append(f"realpath outside repo rejected: {location}")
+    if _path_is_relative_to(resolved_candidate, aeg_root):
+        reasons.append(f"realpath .aeg target rejected: {location}")
+    if resolved_candidate == env_target or _is_env_secret_target(
+        resolved_candidate.relative_to(repo_path).as_posix()
+        if _path_is_relative_to(resolved_candidate, repo_path)
+        else resolved_candidate.name
+    ):
+        reasons.append(f"realpath env/secret target rejected: {location}")
+    return tuple(reasons)
+
+
+def _forbidden_payload_reasons(
+    action: Mapping[str, Any],
+    *,
+    repo_root: str | Path | None,
+) -> list[str]:
     reasons: list[str] = []
     for root_field in ("payload", "target_scope"):
-        _scan_forbidden_payload(action.get(root_field), root_field, reasons, parent_key=None)
+        _scan_forbidden_payload(
+            action.get(root_field),
+            root_field,
+            reasons,
+            parent_key=None,
+            repo_root=repo_root,
+        )
     return reasons
 
 
@@ -536,6 +583,7 @@ def _scan_forbidden_payload(
     location: str,
     reasons: list[str],
     parent_key: str | None,
+    repo_root: str | Path | None,
 ) -> None:
     if isinstance(value, Mapping):
         for key, nested in value.items():
@@ -543,7 +591,13 @@ def _scan_forbidden_payload(
             nested_location = f"{location}.{key}"
             if normalized_key in FORBIDDEN_PAYLOAD_FIELDS:
                 reasons.append(f"forbidden payload field rejected: {nested_location}")
-            _scan_forbidden_payload(nested, nested_location, reasons, normalized_key)
+            _scan_forbidden_payload(
+                nested,
+                nested_location,
+                reasons,
+                normalized_key,
+                repo_root,
+            )
         return
 
     if isinstance(value, str):
@@ -556,13 +610,21 @@ def _scan_forbidden_payload(
             reasons.append(f".aeg target rejected: {location}")
         if parent_key in PATH_SEMANTIC_FIELDS and _is_env_secret_target(value):
             reasons.append(f"env/secret target rejected: {location}")
+        if parent_key in PATH_SEMANTIC_FIELDS and repo_root is not None:
+            reasons.extend(realpath_scope_rejection_reasons(value, location, repo_root))
         if normalized_value in ENV_SECRET_REQUEST_TOKENS:
             reasons.append(f"env/secret read request rejected: {location}")
         return
 
     if _is_sequence(value):
         for index, nested in enumerate(value):
-            _scan_forbidden_payload(nested, f"{location}[{index}]", reasons, parent_key)
+            _scan_forbidden_payload(
+                nested,
+                f"{location}[{index}]",
+                reasons,
+                parent_key,
+                repo_root,
+            )
 
 
 def _result(
@@ -621,3 +683,11 @@ def _is_sequence(value: Any) -> bool:
 
 def _slash_normalized(value: str) -> str:
     return "/".join(value.split("\\"))
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
