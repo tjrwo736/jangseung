@@ -97,6 +97,15 @@ from src.contracts import (
     RUNTIME_WIRING_NOT_IMPLEMENTED,
     STATUSES,
     STATUS_OVERCLAIM_REJECTED,
+    STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
+    STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
+    STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
+    STORE_WRITE_MEDIATION_FIELDS,
+    STORE_WRITE_MEDIATION_RESULT_BLOCKED,
+    STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED,
+    STORE_WRITE_SINK_APPEND_LEDGER,
+    STORE_WRITE_SINK_WRITE_JSON,
+    STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
     TOOL_AUTHORITY_GRANT_FIELDS,
     TOOL_SURFACE_CLEAN,
     TOOL_SURFACE_FIELDS,
@@ -129,6 +138,7 @@ from src.evidence.binding import (
     repo_relative_path,
     sha256_json,
     sha256_text,
+    store_write_mediation_manifest_fields,
     citizen_one_manifest_fields,
     provider_network_guard_manifest_fields,
     provider_request_manifest_fields,
@@ -170,6 +180,10 @@ from src.evidence.mediated_write_boundary import (
     expected_write_mediation_decision_hash,
 )
 from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
+from src.evidence.store_write_mediation import (
+    expected_store_write_mediation_metadata_hash,
+    verify_store_write_mediation_metadata,
+)
 from src.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
@@ -349,6 +363,10 @@ def verify_latest(cwd: str | Path) -> VerifyResult:
     gate_checks, gate_errors = _verify_pre_live_executor_gate(evidence, manifest)
     checks.extend(gate_checks)
     errors.extend(gate_errors)
+
+    store_write_mediation_checks, store_write_mediation_errors = _verify_store_write_mediation(evidence, manifest)
+    checks.extend(store_write_mediation_checks)
+    errors.extend(store_write_mediation_errors)
 
     ledger_checks, ledger_errors = _verify_ledger_integrity(evidence, manifest, ledger_entry)
     checks.extend(ledger_checks)
@@ -1137,6 +1155,17 @@ def _verify_manifest_binding(
     _check_manifest_field_group(
         checks,
         errors,
+        "store write mediation metadata",
+        STORE_WRITE_MEDIATION_FIELDS,
+        "store_write_mediation_manifest_hash",
+        evidence,
+        manifest,
+        store_write_mediation_manifest_fields(evidence),
+        store_write_mediation_manifest_fields(manifest),
+    )
+    _check_manifest_field_group(
+        checks,
+        errors,
         "ledger integrity scaffold metadata",
         LEDGER_INTEGRITY_FIELDS,
         "ledger_integrity_manifest_hash",
@@ -1359,6 +1388,13 @@ def _verify_manifest_binding(
         "bound_pre_live_executor_gate_metadata_hash",
         evidence.get("bound_pre_live_executor_gate_metadata_hash"),
         sha256_json(pre_live_executor_gate_manifest_fields(evidence)),
+    )
+    _check_equal(
+        checks,
+        errors,
+        "bound_store_write_mediation_metadata_hash",
+        evidence.get("bound_store_write_mediation_metadata_hash"),
+        sha256_json(store_write_mediation_manifest_fields(evidence)),
     )
     _check_equal(
         checks,
@@ -2633,6 +2669,194 @@ def _verify_pre_live_executor_gate(
             checks.append("manifest pre_live_executor_gate_metadata_hash matched evidence")
         else:
             errors.append("INVALID_EVIDENCE: manifest pre_live_executor_gate_metadata_hash mismatch with evidence")
+
+    return checks, errors
+
+
+def _verify_store_write_mediation(
+    evidence: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    checks: list[str] = []
+    errors: list[str] = []
+
+    replay = verify_store_write_mediation_metadata(evidence)
+    if replay.get("accepted") is True:
+        checks.append("store write mediation replay accepted")
+    else:
+        for reason in replay.get("rejection_reasons", []):
+            errors.append(f"INVALID_EVIDENCE: {reason}")
+
+    if evidence.get("store_write_mediation_enabled") is True:
+        checks.append("store_write_mediation_enabled remained true and bound")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_enabled must remain true")
+
+    if evidence.get("store_write_mediation_binding_present") is True:
+        checks.append("store write mediation binding present")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_enabled=true requires binding")
+
+    if evidence.get("store_write_boundary") == STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED:
+        checks.append("store write boundary is sink-level guarded")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_boundary must be SINK_LEVEL_GUARDED")
+
+    if evidence.get("store_write_boundary_strength") == STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY:
+        checks.append("store write boundary strength is IN_PROCESS_TAMPER_EVIDENT_ONLY")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_boundary_strength must be IN_PROCESS_TAMPER_EVIDENT_ONLY")
+
+    if evidence.get("trusted_context_security_boundary") is False:
+        checks.append("trusted context is not claimed as an arbitrary-code security boundary")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted_context_security_boundary must remain false")
+
+    if evidence.get("requires_structured_executor") is True:
+        checks.append("store write boundary requires structured executor capability restriction")
+    else:
+        errors.append("INVALID_EVIDENCE: requires_structured_executor must remain true")
+
+    if evidence.get("arbitrary_in_process_code_breaks_boundary") is True:
+        checks.append("arbitrary in-process Python code breaks trusted-context secrecy")
+    else:
+        errors.append("INVALID_EVIDENCE: arbitrary_in_process_code_breaks_boundary must remain true")
+
+    if evidence.get("process_isolation_status") == STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED:
+        checks.append("process isolation status remained NOT_IMPLEMENTED")
+    else:
+        errors.append("INVALID_EVIDENCE: process_isolation_status must remain NOT_IMPLEMENTED")
+
+    if evidence.get("os_sandbox_status") == STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED:
+        checks.append("OS sandbox status remained NOT_IMPLEMENTED")
+    else:
+        errors.append("INVALID_EVIDENCE: os_sandbox_status must remain NOT_IMPLEMENTED")
+
+    if evidence.get("executor_code_execution_model") == STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED:
+        checks.append("executor code execution model requires structured actions")
+    else:
+        errors.append("INVALID_EVIDENCE: executor_code_execution_model must be STRUCTURED_ACTIONS_REQUIRED")
+
+    for field in (
+        "tamper_proof_claimed",
+        "physical_prevention_claimed",
+        "raw_bypass_impossible",
+        "arbitrary_in_process_code_safe",
+        "live_executor_ready",
+        "write_authority_safe",
+    ):
+        if evidence.get(field) is False:
+            checks.append(f"{field} remained false")
+        else:
+            errors.append(f"INVALID_EVIDENCE: {field} must remain false")
+
+    guarded_sinks = evidence.get("guarded_sinks")
+    if guarded_sinks == [STORE_WRITE_SINK_APPEND_LEDGER, STORE_WRITE_SINK_WRITE_JSON]:
+        checks.append("guarded_sinks covered _write_json and _append_ledger_unmediated")
+    else:
+        errors.append("INVALID_EVIDENCE: guarded_sinks did not cover both store.py sinks")
+
+    if evidence.get("write_json_sink_guarded") is True:
+        checks.append("_write_json sink guard recorded")
+    else:
+        errors.append("INVALID_EVIDENCE: _write_json sink guard missing")
+
+    if evidence.get("ledger_append_sink_guarded") is True:
+        checks.append("_append_ledger_unmediated sink guard recorded")
+    else:
+        errors.append("INVALID_EVIDENCE: _append_ledger_unmediated sink guard missing")
+
+    if evidence.get("trusted_runtime_write_allowed") is True:
+        checks.append("trusted runtime write allowed by deterministic call-site")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted runtime write failed or was not recorded as allowed")
+
+    if evidence.get("trusted_runtime_ledger_append_allowed") is True:
+        checks.append("trusted runtime ledger append allowed by deterministic call-site")
+    else:
+        errors.append("INVALID_EVIDENCE: trusted runtime ledger append failed or was not recorded as allowed")
+
+    if evidence.get("executor_self_report_ignored") is True:
+        checks.append("executor self-report was ignored for store write provenance")
+    else:
+        errors.append("INVALID_EVIDENCE: executor self-report trusted provenance was accepted")
+
+    if evidence.get("executor_omitted_declaration_rejected") is True:
+        checks.append("executor omitted declaration was rejected at sink level")
+    elif evidence.get("executor_attributed_write_blocked") is True:
+        errors.append("INVALID_EVIDENCE: executor-attributed sink evidence did not reject omitted declaration")
+    else:
+        checks.append("no executor omitted declaration sink attempt was recorded in this run")
+
+    if evidence.get("executor_attributed_write_blocked") is True:
+        checks.append("executor-attributed .aeg write block evidence replay matched")
+        if evidence.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+            checks.append("write_mediation_result BLOCKED matched executor-attributed block")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor-attributed .aeg write attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: blocked_write_target_count requires executor_attributed_write_blocked=true")
+
+    if evidence.get("executor_direct_sink_write_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+        checks.append("executor direct _write_json sink write was blocked")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor direct _write_json sink attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct _write_json sink write was not blocked")
+
+    if evidence.get("executor_direct_ledger_append_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED:
+        checks.append("executor direct ledger append was blocked")
+    elif evidence.get("blocked_write_target_count") == 0:
+        checks.append("no executor direct ledger append attempt was recorded in this run")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct ledger append was not blocked")
+
+    if evidence.get("blocked_write_created_files_count") == 0:
+        checks.append("blocked_write_created_files_count replay matched zero")
+    else:
+        errors.append("INVALID_EVIDENCE: blocked_write_created_files_count > 0 cannot support BLOCKED claim")
+
+    if evidence.get("executor_direct_sink_write_created_files_count") == 0:
+        checks.append("executor direct sink write created zero files")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct sink BLOCKED claim created files")
+
+    if evidence.get("executor_direct_ledger_entries_appended_count") == 0:
+        checks.append("executor direct ledger append created zero ledger entries")
+    else:
+        errors.append("INVALID_EVIDENCE: executor direct ledger BLOCKED claim appended forged entries")
+
+    if evidence.get("rollback_used") == evidence.get("fallback_to_unwired"):
+        checks.append("rollback_used matched fallback_to_unwired")
+    else:
+        errors.append("INVALID_EVIDENCE: rollback/fallback mismatch")
+
+    if evidence.get("fallback_to_unwired") is True:
+        if evidence.get("fallback_evidence_recorded") is True:
+            checks.append("fallback-to-unwired evidence recorded")
+        else:
+            errors.append("INVALID_EVIDENCE: fallback used but evidence was not recorded")
+    elif evidence.get("fallback_evidence_recorded") is False:
+        checks.append("fallback-to-unwired not used")
+    else:
+        errors.append("INVALID_EVIDENCE: fallback evidence recorded mismatch")
+
+    if evidence.get("store_write_mediation_metadata_hash") == expected_store_write_mediation_metadata_hash(evidence):
+        checks.append("store_write_mediation_metadata_hash replay matched")
+    else:
+        errors.append("INVALID_EVIDENCE: store_write_mediation_metadata_hash mismatch")
+
+    if manifest is not None:
+        if manifest.get("store_write_mediation_metadata_hash") == evidence.get("store_write_mediation_metadata_hash"):
+            checks.append("manifest store_write_mediation_metadata_hash matched evidence")
+        else:
+            errors.append("INVALID_EVIDENCE: manifest store_write_mediation_metadata_hash mismatch with evidence")
+        if manifest.get("store_write_mediation_manifest_hash") == sha256_json(
+            store_write_mediation_manifest_fields(manifest)
+        ):
+            checks.append("store_write_mediation_manifest_hash replay matched")
+        else:
+            errors.append("INVALID_EVIDENCE: store_write_mediation_manifest_hash mismatch")
 
     return checks, errors
 
