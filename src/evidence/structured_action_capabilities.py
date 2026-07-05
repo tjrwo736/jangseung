@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, REPORTED_ONLY, SAFE_DEFAULT
@@ -45,6 +46,7 @@ from src.evidence.structured_actions import (
     WRITE_AEG_STATE,
     WRITE_FILE,
     StructuredActionValidationResult,
+    realpath_scope_rejection_reasons,
     validate_structured_action,
 )
 
@@ -258,6 +260,7 @@ def evaluate_action_capabilities(
     schema_validation: StructuredActionValidationResult | None = None,
     *,
     explicit_user_gate_evidence: bool | Mapping[str, Any] | None = None,
+    repo_root: str | Path | None = None,
 ) -> ActionCapabilityGateResult:
     """Evaluate capability authorization after structured action validation.
 
@@ -265,7 +268,7 @@ def evaluate_action_capabilities(
     mutation, write-authority, and live-executor flags remain false.
     """
 
-    validation = schema_validation or validate_structured_action(action)
+    validation = schema_validation or validate_structured_action(action, repo_root=repo_root)
     action_type = validation.action_type
     required_capabilities = _required_capabilities(action, action_type)
 
@@ -390,7 +393,11 @@ def evaluate_action_capabilities(
             )
 
         if status == LIMITED:
-            scope_reasons = _limited_scope_rejection_reasons(action_type, action)
+            scope_reasons = _limited_scope_rejection_reasons(
+                action_type,
+                action,
+                repo_root=repo_root,
+            )
             if scope_reasons:
                 decisions.append(
                     CapabilityDecision(
@@ -587,6 +594,8 @@ def _scan_self_report_claims(value: Any, location: str, reasons: list[str]) -> N
 def _limited_scope_rejection_reasons(
     action_type: str | None,
     action: Mapping[str, Any],
+    *,
+    repo_root: str | Path | None,
 ) -> list[str]:
     reasons: list[str] = []
     target_scope = action.get("target_scope")
@@ -608,6 +617,8 @@ def _limited_scope_rejection_reasons(
             reasons.append(f"limited scope .aeg target rejected: {location}")
         if _is_env_secret_target(value):
             reasons.append(f"limited scope env/secret target rejected: {location}")
+        if repo_root is not None:
+            reasons.extend(realpath_scope_rejection_reasons(value, location, repo_root))
 
     if action_type == REQUEST_REPO_READ:
         for requirement in action.get("capability_requirements", []):
@@ -680,6 +691,9 @@ def _is_scope_rejection(reasons: Sequence[str]) -> bool:
             or "absolute path" in lowered
             or "parent traversal" in lowered
             or "env/secret" in lowered
+            or "outside repo" in lowered
+            or "realpath" in lowered
+            or "resolution failed closed" in lowered
         ):
             return True
     return False
