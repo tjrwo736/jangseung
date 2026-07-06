@@ -18,9 +18,13 @@ from typing import Any
 from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
 from src.evidence.executor_output_ingress import (
     ActionDecisionPacket,
+    DIRECT_PACKET_EVIDENCE_SUBMISSION_PARSE_REJECTED,
+    DIRECT_PACKET_SUBMISSION_PARSE_REJECTED,
+    DIRECT_STORE_ADJACENT_CANDIDATE_PARSE_REJECTED,
     PARSE_OK,
     RUNTIME_INGRESS_ADAPTER,
     ingest_executor_output,
+    is_runtime_built_action_decision_packet,
 )
 from src.evidence.structured_action_capabilities import (
     CAPABILITY_GATE_ALLOWED,
@@ -44,6 +48,12 @@ STORE_PATH_REJECTION_FIXTURES_VERSION = (
 VALIDATOR_ENFORCED_ROUTING_BATCH_VERSION = (
     "phase11b_2_validator_enforced_routing_batch_v0"
 )
+STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION = (
+    "phase11b_3_1_structural_contract_enforcement_v0"
+)
+STRUCTURAL_CONTRACT_REJECTION_FIXTURES_VERSION = (
+    "phase11b_3_1_structural_contract_rejection_fixtures_v0"
+)
 
 ACTION_DECISION_PACKET_VERIFY_ACCEPTED = (
     "ACTION_DECISION_PACKET_EVIDENCE_VERIFY_ACCEPTED"
@@ -57,9 +67,18 @@ ACTION_DECISION_PACKET_VERIFY_NOT_RUN = (
 
 STORE_ADJACENT_CANDIDATE_ACCEPTED = "STORE_ADJACENT_CANDIDATE_ACCEPTED"
 RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED = "RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED"
+DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED = (
+    "DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED"
+)
+DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED = (
+    "DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED"
+)
 UNVALIDATED_ACTION_STORE_PATH_REJECTED = "UNVALIDATED_ACTION_STORE_PATH_REJECTED"
 DENIED_CAPABILITY_STORE_PATH_REJECTED = "DENIED_CAPABILITY_STORE_PATH_REJECTED"
 REPORTED_ONLY_STORE_PATH_REJECTED = "REPORTED_ONLY_STORE_PATH_REJECTED"
+SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED = (
+    "SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED"
+)
 PACKET_EVIDENCE_STORE_PATH_REJECTED = "PACKET_EVIDENCE_STORE_PATH_REJECTED"
 
 _ALLOWED_CANDIDATE_GATE_RESULTS = frozenset(
@@ -71,9 +90,11 @@ _ALLOWED_CANDIDATE_GATE_RESULTS = frozenset(
 
 _ACTION_DECISION_PACKET_EVIDENCE_FIELDS = (
     "action_decision_packet_evidence_binding_version",
+    "structural_contract_enforcement_version",
     "packet_id",
     "packet_created_by",
     "packet_runtime_owned",
+    "packet_runtime_built_by_ingress",
     "raw_output_hash",
     "parse_status",
     "parse_error",
@@ -99,6 +120,12 @@ _ACTION_DECISION_PACKET_EVIDENCE_FIELDS = (
     "denied_capability_reaches_store",
     "reported_only_authority_reaches_store",
     "store_path_accepts_only_runtime_owned_decision",
+    "direct_action_decision_packet_submission_rejected",
+    "direct_packet_evidence_submission_rejected",
+    "direct_store_adjacent_candidate_submission_rejected",
+    "executor_self_report_is_authority",
+    "capability_gate_self_report_is_authority",
+    "metadata_only_candidate_is_store_write",
     "store_adjacent_candidate_eligible",
     "store_adjacent_candidate_gate_version",
     "store_adjacent_candidate_gate_metadata_only",
@@ -111,6 +138,39 @@ _ACTION_DECISION_PACKET_EVIDENCE_FIELDS = (
     "live_executor_authority",
     "safe_default",
     "action_decision_packet_evidence_hash",
+)
+
+_DIRECT_PACKET_SUBMISSION_FIELDS = frozenset(
+    {
+        "packet_id",
+        "raw_output_hash",
+        "parse_status",
+        "parse_error",
+        "normalized_action",
+        "validation_result",
+        "capability_result",
+        "decision_basis",
+        "adapter_version",
+        "created_by",
+    }
+)
+_DIRECT_PACKET_EVIDENCE_SUBMISSION_FIELDS = frozenset(
+    {
+        "action_decision_packet_evidence_binding_version",
+        "action_decision_packet_evidence_hash",
+        "packet_created_by",
+        "packet_runtime_owned",
+    }
+)
+_DIRECT_STORE_ADJACENT_CANDIDATE_FIELDS = frozenset(
+    {
+        "candidate_accepted",
+        "gate_status",
+        "gate_reason",
+        "packet_evidence_hash",
+        "evidence_verification_status",
+        "store_adjacent_candidate_gate_version",
+    }
 )
 
 
@@ -175,6 +235,8 @@ def bind_action_decision_packet_evidence(
         and validation_valid is True
         and capability_gate_result in _ALLOWED_CANDIDATE_GATE_RESULTS
         and packet.created_by == RUNTIME_INGRESS_ADAPTER
+        and is_runtime_built_action_decision_packet(packet)
+        and not packet.ignored_reported_only_fields
         and not packet.execution_allowed
         and not packet.mutation_allowed
         and not packet.write_authority_granted
@@ -186,9 +248,15 @@ def bind_action_decision_packet_evidence(
         "action_decision_packet_evidence_binding_version": (
             ACTION_DECISION_PACKET_EVIDENCE_BINDING_VERSION
         ),
+        "structural_contract_enforcement_version": (
+            STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION
+        ),
         "packet_id": packet.packet_id,
         "packet_created_by": packet.created_by,
         "packet_runtime_owned": packet.created_by == RUNTIME_INGRESS_ADAPTER,
+        "packet_runtime_built_by_ingress": (
+            is_runtime_built_action_decision_packet(packet)
+        ),
         "raw_output_hash": packet.raw_output_hash,
         "parse_status": packet.parse_status,
         "parse_error": packet.parse_error,
@@ -226,6 +294,12 @@ def bind_action_decision_packet_evidence(
         "denied_capability_reaches_store": False,
         "reported_only_authority_reaches_store": False,
         "store_path_accepts_only_runtime_owned_decision": True,
+        "direct_action_decision_packet_submission_rejected": True,
+        "direct_packet_evidence_submission_rejected": True,
+        "direct_store_adjacent_candidate_submission_rejected": True,
+        "executor_self_report_is_authority": False,
+        "capability_gate_self_report_is_authority": False,
+        "metadata_only_candidate_is_store_write": False,
         "store_adjacent_candidate_eligible": store_adjacent_candidate_eligible,
         "store_adjacent_candidate_gate_version": STORE_ADJACENT_CANDIDATE_GATE_VERSION,
         "store_adjacent_candidate_gate_metadata_only": True,
@@ -274,8 +348,15 @@ def verify_action_decision_packet_evidence(
         "action_decision_packet_evidence_binding_version",
         ACTION_DECISION_PACKET_EVIDENCE_BINDING_VERSION,
     )
+    _expect(
+        reasons,
+        payload,
+        "structural_contract_enforcement_version",
+        STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION,
+    )
     _expect(reasons, payload, "packet_created_by", RUNTIME_INGRESS_ADAPTER)
     _expect(reasons, payload, "packet_runtime_owned", True)
+    _expect(reasons, payload, "packet_runtime_built_by_ingress", True)
     _expect(reasons, payload, "validator_enforced_routing_required", True)
     _expect(reasons, payload, "executor_output_ingress_required", True)
     _expect(reasons, payload, "structured_action_validation_required", True)
@@ -287,6 +368,17 @@ def verify_action_decision_packet_evidence(
     _expect(reasons, payload, "denied_capability_reaches_store", False)
     _expect(reasons, payload, "reported_only_authority_reaches_store", False)
     _expect(reasons, payload, "store_path_accepts_only_runtime_owned_decision", True)
+    _expect(reasons, payload, "direct_action_decision_packet_submission_rejected", True)
+    _expect(reasons, payload, "direct_packet_evidence_submission_rejected", True)
+    _expect(
+        reasons,
+        payload,
+        "direct_store_adjacent_candidate_submission_rejected",
+        True,
+    )
+    _expect(reasons, payload, "executor_self_report_is_authority", False)
+    _expect(reasons, payload, "capability_gate_self_report_is_authority", False)
+    _expect(reasons, payload, "metadata_only_candidate_is_store_write", False)
     _expect(
         reasons,
         payload,
@@ -305,6 +397,7 @@ def verify_action_decision_packet_evidence(
 
     for field in (
         "packet_runtime_owned",
+        "packet_runtime_built_by_ingress",
         "validation_valid",
         "validator_enforced_routing_required",
         "executor_output_ingress_required",
@@ -317,6 +410,12 @@ def verify_action_decision_packet_evidence(
         "denied_capability_reaches_store",
         "reported_only_authority_reaches_store",
         "store_path_accepts_only_runtime_owned_decision",
+        "direct_action_decision_packet_submission_rejected",
+        "direct_packet_evidence_submission_rejected",
+        "direct_store_adjacent_candidate_submission_rejected",
+        "executor_self_report_is_authority",
+        "capability_gate_self_report_is_authority",
+        "metadata_only_candidate_is_store_write",
         "store_adjacent_candidate_eligible",
         "store_adjacent_candidate_gate_metadata_only",
         "store_routing_allowed",
@@ -338,9 +437,17 @@ def verify_action_decision_packet_evidence(
         "mutation_allowed",
         "write_authority_granted",
         "live_executor_ready",
+        "executor_self_report_is_authority",
+        "capability_gate_self_report_is_authority",
+        "metadata_only_candidate_is_store_write",
     ):
         if payload.get(field) is True:
             reasons.append(f"{field}=true rejected")
+
+    if packet is None:
+        reasons.append("runtime-built ActionDecisionPacket required for evidence verification")
+    elif not is_runtime_built_action_decision_packet(packet):
+        reasons.append("packet was not built by runtime ingress adapter")
 
     raw_output_hash = payload.get("raw_output_hash")
     if not _is_prefixed_sha256(raw_output_hash):
@@ -362,12 +469,19 @@ def verify_action_decision_packet_evidence(
     validation_status = payload.get("validation_status")
     validation_valid = payload.get("validation_valid")
     capability_gate_result = payload.get("capability_gate_result")
+    ignored_reported_only_fields = payload.get("ignored_reported_only_fields")
+    no_ignored_self_reports = (
+        isinstance(ignored_reported_only_fields, (list, tuple))
+        and len(ignored_reported_only_fields) == 0
+    )
     expected_candidate_eligible = (
         payload.get("parse_status") == PARSE_OK
         and validation_status == VALID_STRUCTURED_ACTION
         and validation_valid is True
         and capability_gate_result in _ALLOWED_CANDIDATE_GATE_RESULTS
         and payload.get("packet_runtime_owned") is True
+        and payload.get("packet_runtime_built_by_ingress") is True
+        and no_ignored_self_reports
         and payload.get("execution_allowed") is False
         and payload.get("mutation_allowed") is False
         and payload.get("write_authority_granted") is False
@@ -385,6 +499,8 @@ def verify_action_decision_packet_evidence(
         and validation_status != VALID_STRUCTURED_ACTION
     ):
         reasons.append("capability gate allow without valid structured action rejected")
+    if not isinstance(ignored_reported_only_fields, (list, tuple)):
+        reasons.append("ignored_reported_only_fields must be a sequence")
 
     decision_basis = payload.get("decision_basis")
     decision_basis_hash = payload.get("decision_basis_hash")
@@ -421,6 +537,34 @@ def evaluate_store_adjacent_candidate_gate(
     """Accept only verified runtime-owned packets as candidate metadata."""
 
     if not isinstance(candidate, ActionDecisionPacket):
+        if isinstance(candidate, Mapping) and _is_direct_packet_submission(candidate):
+            return _gate_rejection(
+                gate_status=DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED,
+                gate_reason=(
+                    "direct ActionDecisionPacket-shaped submissions cannot reach "
+                    "store-adjacent path"
+                ),
+                packet_id=None,
+                packet_evidence_hash=None,
+                evidence_verification_status=ACTION_DECISION_PACKET_VERIFY_NOT_RUN,
+                rejection_reasons=(
+                    "ActionDecisionPacket must be runtime-built from raw executor output",
+                ),
+            )
+        if isinstance(candidate, Mapping) and _is_direct_store_adjacent_candidate(candidate):
+            return _gate_rejection(
+                gate_status=DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED,
+                gate_reason=(
+                    "direct store-adjacent candidate submissions cannot reach "
+                    "store-adjacent path"
+                ),
+                packet_id=None,
+                packet_evidence_hash=None,
+                evidence_verification_status=ACTION_DECISION_PACKET_VERIFY_NOT_RUN,
+                rejection_reasons=(
+                    "store-adjacent candidate metadata must be derived from verified packet",
+                ),
+            )
         return _gate_rejection(
             gate_status=RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
             gate_reason="store-adjacent guard requires runtime-owned ActionDecisionPacket",
@@ -494,6 +638,22 @@ def evaluate_store_adjacent_candidate_gate(
             verify,
             DENIED_CAPABILITY_STORE_PATH_REJECTED,
             "denied capability cannot reach store-adjacent candidate metadata",
+        )
+    if candidate.ignored_reported_only_fields:
+        return _packet_gate_rejection(
+            candidate,
+            evidence,
+            verify,
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            "executor self-reported authority fields cannot reach store-adjacent metadata",
+        )
+    if evidence.get("store_adjacent_candidate_eligible") is not True:
+        return _packet_gate_rejection(
+            candidate,
+            evidence,
+            verify,
+            PACKET_EVIDENCE_STORE_PATH_REJECTED,
+            "verified packet evidence did not derive eligible metadata-only candidate",
         )
 
     return StoreAdjacentCandidateGateResult(
@@ -583,15 +743,179 @@ def build_store_path_rejection_fixture_results() -> tuple[dict[str, Any], ...]:
     return tuple(records)
 
 
+def build_structural_contract_rejection_fixture_results() -> tuple[dict[str, Any], ...]:
+    """Return deterministic 11-B-3-1 structural contract rejection outcomes."""
+
+    raw_direct_packet = _direct_packet_shaped_fixture()
+    direct_candidate = _direct_store_adjacent_candidate_fixture()
+    fixtures: tuple[tuple[str, Any, str, str | None], ...] = (
+        (
+            "direct_action_decision_packet_shaped_dict",
+            raw_direct_packet,
+            DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED,
+            DIRECT_PACKET_SUBMISSION_PARSE_REJECTED,
+        ),
+        (
+            "created_by_runtime_ingress_adapter_spoof",
+            _self_report_fixture("created_by", RUNTIME_INGRESS_ADAPTER),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "packet_id_spoof",
+            _self_report_fixture("packet_id", "action-decision-packet-forged"),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "capability_gate_allowed_self_report",
+            _self_report_fixture("capability_gate_result", CAPABILITY_GATE_ALLOWED),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "execution_allowed_true",
+            _self_report_fixture("execution_allowed", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "mutation_allowed_true",
+            _self_report_fixture("mutation_allowed", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "write_authority_granted_true",
+            _self_report_fixture("write_authority_granted", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "store_routing_allowed_true",
+            _self_report_fixture("store_routing_allowed", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "store_path_reachable_true",
+            _self_report_fixture("store_path_reachable", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "raw_output_skipping_ingress",
+            _valid_noop_action("fixture-raw-skips-ingress"),
+            RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "unvalidated_action_reaching_store_adjacent_path",
+            ingest_executor_output(
+                {
+                    "action_type": NOOP,
+                    "action_id": "fixture-unvalidated-structural-contract",
+                }
+            ),
+            UNVALIDATED_ACTION_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "denied_capability_reaching_store_adjacent_path",
+            ingest_executor_output(
+                _valid_noop_action(
+                    "fixture-denied-structural-contract",
+                    capability_requirements=("network",),
+                )
+            ),
+            DENIED_CAPABILITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "reported_only_authority_reaching_store_adjacent_path",
+            ingest_executor_output(
+                _valid_noop_action(
+                    "fixture-reported-only-structural-contract",
+                    payload={
+                        "authority": "write_file",
+                        "approved_by_executor": True,
+                    },
+                )
+            ),
+            REPORTED_ONLY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "direct_store_adjacent_candidate_submission",
+            direct_candidate,
+            DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED,
+            DIRECT_STORE_ADJACENT_CANDIDATE_PARSE_REJECTED,
+        ),
+    )
+
+    records: list[dict[str, Any]] = []
+    for fixture_name, candidate, expected_status, expected_parse_error in fixtures:
+        ingress_packet = (
+            ingest_executor_output(candidate)
+            if isinstance(candidate, Mapping)
+            else None
+        )
+        gate_candidate = (
+            ingress_packet
+            if (
+                expected_status == SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
+                and ingress_packet is not None
+            )
+            else candidate
+        )
+        result = evaluate_store_adjacent_candidate_gate(gate_candidate)
+        verify = (
+            verify_action_decision_packet_evidence(candidate)
+            if isinstance(candidate, Mapping)
+            else None
+        )
+        records.append(
+            {
+                "fixture_set_version": STRUCTURAL_CONTRACT_REJECTION_FIXTURES_VERSION,
+                "fixture_name": fixture_name,
+                "expected_gate_status": expected_status,
+                "actual_gate_status": result.gate_status,
+                "candidate_accepted": result.candidate_accepted,
+                "ingress_parse_error": (
+                    ingress_packet.parse_error if ingress_packet is not None else None
+                ),
+                "expected_ingress_parse_error": expected_parse_error,
+                "evidence_verify_status": (
+                    verify.status
+                    if verify is not None
+                    else ACTION_DECISION_PACKET_VERIFY_NOT_RUN
+                ),
+                "store_adjacent_candidate": result.store_adjacent_candidate,
+                "store_routing_allowed": result.store_routing_allowed,
+                "store_path_reachable": result.store_path_reachable,
+                "execution_allowed": result.execution_allowed,
+                "mutation_allowed": result.mutation_allowed,
+                "write_authority_granted": result.write_authority_granted,
+                "live_executor_ready": result.live_executor_ready,
+                "live_executor_authority": result.live_executor_authority,
+                "safe_default": result.safe_default,
+            }
+        )
+    return tuple(records)
+
+
 def build_validator_enforced_routing_batch_evidence() -> dict[str, Any]:
     """Return static 11-B-2 batch evidence for the pre-live routing contract."""
 
     rejection_fixtures = build_store_path_rejection_fixture_results()
+    structural_rejection_fixtures = build_structural_contract_rejection_fixture_results()
     return {
         "validator_enforced_routing_batch_version": VALIDATOR_ENFORCED_ROUTING_BATCH_VERSION,
+        "structural_contract_enforcement_version": STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION,
         "phase11b_2_2_action_decision_packet_evidence_binding": "COMPLETE",
         "phase11b_2_3_store_adjacent_routing_guard": "COMPLETE",
         "phase11b_2_4_rejection_fixtures": "COMPLETE",
+        "phase11b_3_1_structural_contract_enforcement": "COMPLETE",
         "flow": (
             "raw_executor_output",
             "executor_output_ingress_adapter",
@@ -606,11 +930,27 @@ def build_validator_enforced_routing_batch_evidence() -> dict[str, Any]:
         ),
         "store_path_rejection_fixtures": rejection_fixtures,
         "store_path_rejection_fixture_count": len(rejection_fixtures),
+        "structural_contract_rejection_fixtures": structural_rejection_fixtures,
+        "structural_contract_rejection_fixture_count": len(
+            structural_rejection_fixtures
+        ),
         "validator_enforced_routing_required": True,
         "executor_output_ingress_required": True,
         "structured_action_validation_required": True,
         "capability_gate_required": True,
         "store_path_accepts_only_runtime_owned_decision": True,
+        "action_decision_packet_runtime_built_only": True,
+        "direct_action_decision_packet_submission_rejected": True,
+        "direct_packet_evidence_submission_rejected": True,
+        "direct_store_adjacent_candidate_submission_rejected": True,
+        "executor_self_report_is_authority": False,
+        "capability_gate_self_report_is_authority": False,
+        "valid_structured_action_is_authorized_capability": False,
+        "authorized_capability_is_action_executed": False,
+        "propose_patch_is_write": False,
+        "propose_patch_is_mutation": False,
+        "metadata_only_candidate_is_store_write": False,
+        "store_adjacent_metadata_is_store_path_reachability": False,
         "store_adjacent_candidate_gate_metadata_only": True,
         "raw_executor_output_reaches_store": False,
         "unvalidated_action_reaches_store": False,
@@ -636,6 +976,9 @@ def _packet_mismatch_reasons(
     expected_values = {
         "packet_id": packet.packet_id,
         "packet_created_by": packet.created_by,
+        "packet_runtime_built_by_ingress": (
+            is_runtime_built_action_decision_packet(packet)
+        ),
         "raw_output_hash": packet.raw_output_hash,
         "parse_status": packet.parse_status,
         "parse_error": packet.parse_error,
@@ -742,6 +1085,73 @@ def _valid_noop_action(
     }
 
 
+def _self_report_fixture(field: str, value: Any) -> dict[str, Any]:
+    return {
+        "action": _valid_noop_action(f"fixture-self-report-{field}"),
+        field: value,
+    }
+
+
+def _direct_packet_shaped_fixture() -> dict[str, Any]:
+    packet = ingest_executor_output(_valid_noop_action("fixture-direct-packet-shaped"))
+    return {
+        "packet_id": packet.packet_id,
+        "raw_output_hash": packet.raw_output_hash,
+        "parse_status": packet.parse_status,
+        "parse_error": packet.parse_error,
+        "normalized_action": _jsonable(packet.normalized_action),
+        "decision_basis": tuple(packet.decision_basis),
+        "adapter_version": packet.adapter_version,
+        "created_by": packet.created_by,
+        "execution_allowed": True,
+        "mutation_allowed": True,
+        "write_authority_granted": True,
+        "store_routing_allowed": True,
+        "store_path_reachable": True,
+    }
+
+
+def _direct_store_adjacent_candidate_fixture() -> dict[str, Any]:
+    packet = ingest_executor_output(_valid_noop_action("fixture-direct-candidate"))
+    result = evaluate_store_adjacent_candidate_gate(packet)
+    return {
+        "candidate_accepted": result.candidate_accepted,
+        "gate_status": result.gate_status,
+        "gate_reason": result.gate_reason,
+        "packet_id": result.packet_id,
+        "packet_evidence_hash": result.packet_evidence_hash,
+        "evidence_verification_status": result.evidence_verification_status,
+        "store_adjacent_candidate": result.store_adjacent_candidate,
+        "store_adjacent_candidate_gate_version": (
+            result.store_adjacent_candidate_gate_version
+        ),
+        "store_adjacent_candidate_gate_metadata_only": (
+            result.store_adjacent_candidate_gate_metadata_only
+        ),
+        "store_routing_allowed": result.store_routing_allowed,
+        "store_path_reachable": result.store_path_reachable,
+        "execution_allowed": result.execution_allowed,
+        "mutation_allowed": result.mutation_allowed,
+        "write_authority_granted": result.write_authority_granted,
+    }
+
+
+def _is_direct_packet_submission(candidate: Mapping[str, Any]) -> bool:
+    keys = _normalized_keys(candidate)
+    return bool(keys & _DIRECT_PACKET_EVIDENCE_SUBMISSION_FIELDS) or (
+        {"packet_id", "raw_output_hash"}.issubset(keys)
+        and bool(keys & _DIRECT_PACKET_SUBMISSION_FIELDS)
+    )
+
+
+def _is_direct_store_adjacent_candidate(candidate: Mapping[str, Any]) -> bool:
+    return bool(_normalized_keys(candidate) & _DIRECT_STORE_ADJACENT_CANDIDATE_FIELDS)
+
+
+def _normalized_keys(candidate: Mapping[str, Any]) -> frozenset[str]:
+    return frozenset("_".join(str(key).strip().lower().split("-")) for key in candidate)
+
+
 def _optional_sha256_json(value: Any) -> str | None:
     if value is None:
         return None
@@ -811,18 +1221,24 @@ __all__ = [
     "ACTION_DECISION_PACKET_VERIFY_NOT_RUN",
     "ACTION_DECISION_PACKET_VERIFY_REJECTED",
     "DENIED_CAPABILITY_STORE_PATH_REJECTED",
+    "DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED",
+    "DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED",
     "PACKET_EVIDENCE_STORE_PATH_REJECTED",
     "RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED",
     "REPORTED_ONLY_STORE_PATH_REJECTED",
+    "SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED",
     "STORE_ADJACENT_CANDIDATE_ACCEPTED",
     "STORE_ADJACENT_CANDIDATE_GATE_VERSION",
     "STORE_PATH_REJECTION_FIXTURES_VERSION",
+    "STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION",
+    "STRUCTURAL_CONTRACT_REJECTION_FIXTURES_VERSION",
     "UNVALIDATED_ACTION_STORE_PATH_REJECTED",
     "VALIDATOR_ENFORCED_ROUTING_BATCH_VERSION",
     "ActionDecisionPacketEvidenceVerifyResult",
     "StoreAdjacentCandidateGateResult",
     "bind_action_decision_packet_evidence",
     "build_store_path_rejection_fixture_results",
+    "build_structural_contract_rejection_fixture_results",
     "build_validator_enforced_routing_batch_evidence",
     "evaluate_store_adjacent_candidate_gate",
     "expected_action_decision_packet_evidence_hash",
