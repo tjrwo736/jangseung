@@ -4,6 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,10 @@ from src.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
     SAFE_DEFAULT,
+    STORE_ADJACENT_PACKET_ORIGIN_BASIS_RUNTIME_BUILD_PATH,
+    STORE_ADJACENT_RUNTIME_SEAL_COMPLETE_LABEL,
+    STORE_ADJACENT_RUNTIME_SEAL_LIMITS,
+    STORE_ADJACENT_SEALING_FAILURE_FALLBACK_NONE,
     STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY,
     STORE_WRITE_BOUNDARY_SINK_LEVEL_GUARDED,
     STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED,
@@ -41,6 +46,9 @@ from src.evidence.binding import (
     store_write_mediation_manifest_fields,
 )
 from src.evidence.store_write_mediation import expected_store_write_mediation_metadata_hash
+from src.evidence.store_adjacent_runtime_seal import (
+    expected_store_adjacent_runtime_seal_metadata_hash,
+)
 from src.state.store import (
     StoreWriteMediationBlocked,
     _append_ledger_unmediated,
@@ -100,6 +108,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["executor_direct_sink_write_created_files_count"], 0)
         self.assertEqual(evidence["executor_direct_ledger_append_result"], STORE_WRITE_MEDIATION_RESULT_BLOCKED)
         self.assertEqual(evidence["executor_direct_ledger_entries_appended_count"], 0)
+        self._assert_store_adjacent_runtime_seal_fields(evidence, raw_sink_bypass_rejected=True)
         self.assertTrue(evidence["trusted_runtime_write_allowed"])
         self.assertTrue(evidence["trusted_runtime_ledger_append_allowed"])
         self.assertTrue(evidence["executor_self_report_ignored"])
@@ -262,6 +271,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["executor_direct_sink_write_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
         self.assertEqual(evidence["executor_direct_ledger_append_result"], STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT)
         self.assertEqual(evidence["blocked_write_created_files_count"], 0)
+        self._assert_store_adjacent_runtime_seal_fields(evidence, raw_sink_bypass_rejected=False)
         trusted_events = [
             event
             for event in evidence["store_write_mediation_events"]
@@ -553,6 +563,65 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
                 del evidence["store_write_mediation_events"][0]["forbidden_overclaim_label"]
                 self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
 
+    def test_verify_rejects_store_adjacent_runtime_seal_overclaims_after_rehash(self):
+        self._init()
+        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+            self.assertEqual(self._run("fix typo in README"), 0)
+        pristine_evidence, evidence_path = self._latest_evidence_with_path()
+        pristine_manifest, manifest_path = self._latest_manifest_with_path()
+
+        cases = (
+            (
+                "direct_packet_submission_rejected",
+                False,
+                "direct_packet_submission_rejected must be true",
+            ),
+            ("packet_origin_basis", "created_by_text", "packet_origin_basis mismatch"),
+            (
+                "accepted_store_adjacent_candidate_store_routing_allowed",
+                True,
+                "accepted_store_adjacent_candidate_store_routing_allowed=true rejected",
+            ),
+            (
+                "direct_write_json_bypass_created_files_count",
+                1,
+                "direct write_json bypass created files count must be 0",
+            ),
+            (
+                "direct_ledger_bypass_appended_count",
+                1,
+                "direct ledger bypass appended count must be 0",
+            ),
+            (
+                "trusted_runtime_write_preserved",
+                False,
+                "trusted_runtime_write_preserved must be true",
+            ),
+            ("sealing_failed", True, "sealing_failed=true rejected"),
+            ("sealing_pass_claimed", True, "sealing_pass_claimed=true rejected"),
+            ("fallback_success_claimed", True, "fallback_success_claimed=true rejected"),
+            (
+                "live_executor_authority",
+                "PROMOTED",
+                "live_executor_authority mismatch",
+            ),
+        )
+
+        for field, value, expected_error in cases:
+            with self.subTest(field=field):
+                evidence = deepcopy(pristine_evidence)
+                manifest = deepcopy(pristine_manifest)
+                evidence[field] = value
+                self._rebind_store_write_mediation(evidence, evidence_path, manifest, manifest_path)
+
+                verify = verify_latest(self.repo)
+
+                self.assertFalse(verify.ok)
+                self.assertTrue(
+                    any(expected_error in error for error in verify.errors),
+                    verify.errors,
+                )
+
     def _executor_with_aeg_write_attempts(self, task_text, classification, law_result):
         result = noop_execute_contract(task_text, classification, law_result)
         result["executor_attributed_aeg_write_attempts"] = [
@@ -623,7 +692,60 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
         self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
         self.assertEqual(evidence["phase11b_live_executor_status"], PHASE11B_LIVE_EXECUTOR_NOT_STARTED)
 
+    def _assert_store_adjacent_runtime_seal_fields(self, evidence, *, raw_sink_bypass_rejected):
+        self.assertEqual(
+            evidence["phase11b_3_6_store_adjacent_runtime_seal_label"],
+            STORE_ADJACENT_RUNTIME_SEAL_COMPLETE_LABEL,
+        )
+        self.assertEqual(
+            tuple(evidence["phase11b_3_6_store_adjacent_runtime_seal_limits"]),
+            STORE_ADJACENT_RUNTIME_SEAL_LIMITS,
+        )
+        self.assertTrue(evidence["store_adjacent_runtime_seal_enabled"])
+        self.assertTrue(evidence["runtime_build_packet_only_enforced"])
+        self.assertEqual(
+            evidence["packet_origin_basis"],
+            STORE_ADJACENT_PACKET_ORIGIN_BASIS_RUNTIME_BUILD_PATH,
+        )
+        self.assertTrue(evidence["direct_packet_submission_rejected"])
+        self.assertTrue(evidence["executor_built_packet_rejected"])
+        self.assertTrue(evidence["created_by_text_ownership_rejected"])
+        self.assertTrue(evidence["packet_id_text_ownership_rejected"])
+        self.assertTrue(evidence["capability_gate_result_self_report_rejected"])
+        self.assertTrue(evidence["execution_self_report_rejected"])
+        self.assertTrue(evidence["mutation_self_report_rejected"])
+        self.assertTrue(evidence["write_authority_self_report_rejected"])
+        self.assertTrue(evidence["store_routing_self_report_rejected"])
+        self.assertTrue(evidence["store_path_self_report_rejected"])
+        self.assertTrue(evidence["live_executor_self_report_rejected"])
+        self.assertTrue(evidence["authority_promotion_rejected"])
+        self.assertTrue(evidence["raw_store_adjacent_path_rejected"])
+        self.assertTrue(evidence["unvalidated_store_adjacent_path_rejected"])
+        self.assertTrue(evidence["denied_store_adjacent_path_rejected"])
+        self.assertTrue(evidence["reported_only_store_adjacent_path_rejected"])
+        self.assertTrue(evidence["accepted_store_adjacent_candidate_metadata_only"])
+        self.assertFalse(evidence["accepted_store_adjacent_candidate_store_routing_allowed"])
+        self.assertFalse(evidence["accepted_store_adjacent_candidate_store_path_reachable"])
+        self.assertFalse(evidence["accepted_store_adjacent_candidate_execution_allowed"])
+        self.assertFalse(evidence["accepted_store_adjacent_candidate_mutation_allowed"])
+        self.assertFalse(evidence["accepted_store_adjacent_candidate_write_authority_granted"])
+        self.assertEqual(evidence["raw_store_sink_bypass_rejected"], raw_sink_bypass_rejected)
+        self.assertEqual(evidence["direct_write_json_bypass_created_files_count"], 0)
+        self.assertEqual(evidence["direct_ledger_bypass_appended_count"], 0)
+        self.assertTrue(evidence["trusted_runtime_write_preserved"])
+        self.assertTrue(evidence["trusted_runtime_ledger_preserved"])
+        self.assertEqual(
+            evidence["sealing_failure_fallback_status"],
+            STORE_ADJACENT_SEALING_FAILURE_FALLBACK_NONE,
+        )
+        self.assertFalse(evidence["sealing_failed"])
+        self.assertFalse(evidence["sealing_pass_claimed"])
+        self.assertFalse(evidence["fallback_success_claimed"])
+
     def _rebind_store_write_mediation(self, evidence, evidence_path, manifest, manifest_path):
+        evidence["store_adjacent_runtime_seal_metadata_hash"] = (
+            expected_store_adjacent_runtime_seal_metadata_hash(evidence)
+        )
         evidence["store_write_mediation_metadata_hash"] = expected_store_write_mediation_metadata_hash(evidence)
         for field in STORE_WRITE_MEDIATION_FIELDS:
             manifest[field] = evidence[field]

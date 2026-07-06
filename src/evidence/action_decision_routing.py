@@ -433,6 +433,8 @@ def verify_action_decision_packet_evidence(
         "unvalidated_action_reaches_store",
         "denied_capability_reaches_store",
         "reported_only_authority_reaches_store",
+        "store_routing_allowed",
+        "store_path_reachable",
         "execution_allowed",
         "mutation_allowed",
         "write_authority_granted",
@@ -443,6 +445,8 @@ def verify_action_decision_packet_evidence(
     ):
         if payload.get(field) is True:
             reasons.append(f"{field}=true rejected")
+    if payload.get("live_executor_authority") != LIVE_EXECUTOR_AUTHORITY_ON_HOLD:
+        reasons.append("live_executor_authority promotion rejected")
 
     if packet is None:
         reasons.append("runtime-built ActionDecisionPacket required for evidence verification")
@@ -800,6 +804,18 @@ def build_structural_contract_rejection_fixture_results() -> tuple[dict[str, Any
         (
             "store_path_reachable_true",
             _self_report_fixture("store_path_reachable", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "live_executor_ready_true",
+            _self_report_fixture("live_executor_ready", True),
+            SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            None,
+        ),
+        (
+            "live_executor_authority_promotion",
+            _self_report_fixture("live_executor_authority", "PROMOTED"),
             SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
             None,
         ),

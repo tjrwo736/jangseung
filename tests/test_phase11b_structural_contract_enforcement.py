@@ -149,6 +149,8 @@ class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
             ("write_authority_granted", True),
             ("store_routing_allowed", True),
             ("store_path_reachable", True),
+            ("live_executor_ready", True),
+            ("live_executor_authority", "PROMOTED"),
         )
 
         for field, value in cases:
@@ -253,6 +255,8 @@ class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
                 "write_authority_granted_true",
                 "store_routing_allowed_true",
                 "store_path_reachable_true",
+                "live_executor_ready_true",
+                "live_executor_authority_promotion",
                 "raw_output_skipping_ingress",
                 "unvalidated_action_reaching_store_adjacent_path",
                 "denied_capability_reaching_store_adjacent_path",
@@ -279,6 +283,10 @@ class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
             ),
             "store_routing_allowed_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
             "store_path_reachable_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            "live_executor_ready_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
+            "live_executor_authority_promotion": (
+                SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
+            ),
             "raw_output_skipping_ingress": RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
             "unvalidated_action_reaching_store_adjacent_path": (
                 UNVALIDATED_ACTION_STORE_PATH_REJECTED
@@ -317,7 +325,7 @@ class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
             evidence["phase11b_3_1_structural_contract_enforcement"],
             "COMPLETE",
         )
-        self.assertEqual(evidence["structural_contract_rejection_fixture_count"], 14)
+        self.assertEqual(evidence["structural_contract_rejection_fixture_count"], 16)
         self.assertTrue(evidence["action_decision_packet_runtime_built_only"])
         self.assertTrue(evidence["direct_action_decision_packet_submission_rejected"])
         self.assertTrue(evidence["direct_packet_evidence_submission_rejected"])

@@ -536,6 +536,68 @@ STORE_WRITE_BOUNDARY_STRENGTH_IN_PROCESS_TAMPER_EVIDENT_ONLY = "IN_PROCESS_TAMPE
 STORE_WRITE_PROCESS_ISOLATION_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 STORE_WRITE_EXECUTOR_CODE_EXECUTION_MODEL_STRUCTURED_ACTIONS_REQUIRED = "STRUCTURED_ACTIONS_REQUIRED"
+STORE_ADJACENT_RUNTIME_SEAL_V0 = "phase11b_3_6_store_adjacent_runtime_seal_v0"
+STORE_ADJACENT_RUNTIME_SEAL_COMPLETE_LABEL = (
+    "PHASE11B_3_STORE_ADJACENT_RUNTIME_SEAL_COMPLETE_NOT_MODEL"
+)
+STORE_ADJACENT_RUNTIME_SEAL_LIMITS = (
+    "NOT_MODEL_EXECUTOR",
+    "NOT_PROVIDER_READY",
+    "NOT_ACTION_EXECUTION_ENGINE",
+    "NOT_WRITE_AUTHORITY",
+    "NOT_PATCH_APPLY",
+    "NOT_BYPASS_IMPOSSIBLE",
+    "NOT_TAMPER_PROOF",
+    "STRUCTURED_EXECUTOR_ASSUMPTION_REQUIRED",
+)
+STORE_ADJACENT_PACKET_ORIGIN_BASIS_RUNTIME_BUILD_PATH = "runtime_build_path"
+STORE_ADJACENT_SEALING_FAILURE_FALLBACK_NONE = "NO_FALLBACK_USED"
+STORE_ADJACENT_SEALING_FAILURE_FALLBACK_RECORDED = (
+    "FALLBACK_RECORDED_SUCCESS_NOT_CLAIMED"
+)
+STORE_ADJACENT_RUNTIME_SEAL_FIELDS = (
+    "phase11b_3_6_store_adjacent_runtime_seal_version",
+    "phase11b_3_6_store_adjacent_runtime_seal_label",
+    "phase11b_3_6_store_adjacent_runtime_seal_limits",
+    "store_adjacent_runtime_seal_enabled",
+    "runtime_build_packet_only_enforced",
+    "packet_origin_basis",
+    "forced_store_adjacent_runtime_path",
+    "direct_packet_submission_rejected",
+    "executor_built_packet_rejected",
+    "created_by_text_ownership_rejected",
+    "packet_id_text_ownership_rejected",
+    "capability_gate_result_self_report_rejected",
+    "execution_self_report_rejected",
+    "mutation_self_report_rejected",
+    "write_authority_self_report_rejected",
+    "store_routing_self_report_rejected",
+    "store_path_self_report_rejected",
+    "live_executor_self_report_rejected",
+    "authority_promotion_rejected",
+    "raw_store_adjacent_path_rejected",
+    "unvalidated_store_adjacent_path_rejected",
+    "denied_store_adjacent_path_rejected",
+    "reported_only_store_adjacent_path_rejected",
+    "accepted_store_adjacent_candidate_metadata_only",
+    "accepted_store_adjacent_candidate_store_routing_allowed",
+    "accepted_store_adjacent_candidate_store_path_reachable",
+    "accepted_store_adjacent_candidate_execution_allowed",
+    "accepted_store_adjacent_candidate_mutation_allowed",
+    "accepted_store_adjacent_candidate_write_authority_granted",
+    "raw_store_sink_bypass_rejected",
+    "direct_write_json_bypass_created_files_count",
+    "direct_ledger_bypass_appended_count",
+    "trusted_runtime_write_preserved",
+    "trusted_runtime_ledger_preserved",
+    "sealing_failure_fallback_status",
+    "sealing_failed",
+    "sealing_pass_claimed",
+    "fallback_success_claimed",
+    "store_adjacent_runtime_seal_rejection_fixtures",
+    "store_adjacent_runtime_seal_fixture_count",
+    "store_adjacent_runtime_seal_metadata_hash",
+)
 STORE_WRITE_MEDIATION_FIELDS = (
     "store_write_mediation_version",
     "store_write_mediation_enabled",
@@ -586,8 +648,10 @@ STORE_WRITE_MEDIATION_FIELDS = (
     "fallback_evidence_recorded",
     "known_gap_aeg_direct_traversal_status",
     "known_gap_non_aeg_status",
+    *STORE_ADJACENT_RUNTIME_SEAL_FIELDS,
     "live_executor_authority",
     "phase11b_live_executor_status",
+    "safe_default",
     "store_write_mediation_events",
     "store_write_mediation_metadata_hash",
 )
