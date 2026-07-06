@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -33,6 +33,13 @@ PARSE_OK = "PARSE_OK"
 PARSE_FAILED = "PARSE_FAILED"
 VALIDATION_NOT_RUN_PARSE_FAILED = "VALIDATION_NOT_RUN_PARSE_FAILED"
 CAPABILITY_NOT_RUN_PARSE_FAILED = "CAPABILITY_NOT_RUN_PARSE_FAILED"
+DIRECT_PACKET_SUBMISSION_PARSE_REJECTED = "DIRECT_PACKET_SUBMISSION_PARSE_REJECTED"
+DIRECT_PACKET_EVIDENCE_SUBMISSION_PARSE_REJECTED = (
+    "DIRECT_PACKET_EVIDENCE_SUBMISSION_PARSE_REJECTED"
+)
+DIRECT_STORE_ADJACENT_CANDIDATE_PARSE_REJECTED = (
+    "DIRECT_STORE_ADJACENT_CANDIDATE_PARSE_REJECTED"
+)
 
 PREDEFINED_RAW_OUTPUT_SAMPLE: dict[str, Any] = {
     "action_type": NOOP,
@@ -50,28 +57,81 @@ _IGNORABLE_SELF_REPORT_FIELDS = frozenset(
         "approved_by_executor",
         "authority",
         "capability_granted",
+        "capability_gate_reason",
+        "capability_gate_result",
+        "candidate_accepted",
         "created_by",
         "decision",
         "decision_basis",
+        "denied_capability_reaches_store",
+        "direct_packet_submission_rejected",
         "execution_allowed",
         "execution_authority",
+        "executor_output_ingress_required",
         "granted",
+        "ignored_reported_only_fields",
         "live_executor_authority",
         "live_executor_ready",
         "mutation_allowed",
         "mutation_authority",
         "packet_id",
+        "packet_created_by",
+        "packet_runtime_owned",
         "reported_authority",
         "reported_only",
+        "reported_only_authority_reaches_store",
         "safe",
+        "store_adjacent_candidate",
+        "store_adjacent_candidate_eligible",
+        "store_adjacent_candidate_gate_metadata_only",
+        "store_adjacent_candidate_gate_version",
         "store_path_reachable",
         "store_routing_allowed",
+        "unvalidated_action_reaches_store",
+        "validation_status",
+        "validation_valid",
         "trusted",
+        "validated_action_forwarded_to_store",
         "write_authority",
         "write_authority_granted",
     }
 )
 _REPORTED_ONLY_MARKER_FIELDS = frozenset({"basis", "grant_source", "source"})
+
+_RUNTIME_BUILD_MARKER = object()
+
+_DIRECT_PACKET_FIELDS = frozenset(
+    {
+        "packet_id",
+        "raw_output_hash",
+        "parse_status",
+        "parse_error",
+        "normalized_action",
+        "validation_result",
+        "capability_result",
+        "decision_basis",
+        "adapter_version",
+        "created_by",
+    }
+)
+_DIRECT_PACKET_EVIDENCE_FIELDS = frozenset(
+    {
+        "action_decision_packet_evidence_binding_version",
+        "action_decision_packet_evidence_hash",
+        "packet_created_by",
+        "packet_runtime_owned",
+    }
+)
+_DIRECT_STORE_ADJACENT_CANDIDATE_FIELDS = frozenset(
+    {
+        "candidate_accepted",
+        "gate_status",
+        "gate_reason",
+        "packet_evidence_hash",
+        "evidence_verification_status",
+        "store_adjacent_candidate_gate_version",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -94,14 +154,21 @@ class ActionDecisionPacket:
     live_executor_authority: str = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
     safe_default: str = SAFE_DEFAULT
     created_by: str = RUNTIME_INGRESS_ADAPTER
+    runtime_built_by_ingress: bool = field(default=False, init=False)
+    _runtime_build_marker: InitVar[Any] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _runtime_build_marker: Any) -> None:
         object.__setattr__(self, "normalized_action", _freeze_value(self.normalized_action))
         object.__setattr__(self, "decision_basis", tuple(self.decision_basis))
         object.__setattr__(
             self,
             "ignored_reported_only_fields",
             tuple(self.ignored_reported_only_fields),
+        )
+        object.__setattr__(
+            self,
+            "runtime_built_by_ingress",
+            _runtime_build_marker is _RUNTIME_BUILD_MARKER,
         )
 
 
@@ -121,19 +188,24 @@ def ingest_executor_output(
     ignored_reported_only_fields: tuple[str, ...] = tuple()
 
     if parse_status == PARSE_OK and parsed is not None:
-        normalized_action, ignored_reported_only_fields = _normalize_parsed_output(parsed)
-        action_for_validation: Mapping[str, Any] = (
-            normalized_action if normalized_action is not None else {}
-        )
-        validation_result = validate_structured_action(
-            action_for_validation,
-            repo_root=repo_root,
-        )
-        capability_result = evaluate_action_capabilities(
-            action_for_validation,
-            validation_result,
-            repo_root=repo_root,
-        )
+        direct_submission_error = _direct_submission_parse_error(parsed)
+        if direct_submission_error is not None:
+            parse_status = PARSE_FAILED
+            parse_error = direct_submission_error
+        else:
+            normalized_action, ignored_reported_only_fields = _normalize_parsed_output(parsed)
+            action_for_validation: Mapping[str, Any] = (
+                normalized_action if normalized_action is not None else {}
+            )
+            validation_result = validate_structured_action(
+                action_for_validation,
+                repo_root=repo_root,
+            )
+            capability_result = evaluate_action_capabilities(
+                action_for_validation,
+                validation_result,
+                repo_root=repo_root,
+            )
 
     return ActionDecisionPacket(
         packet_id=_packet_id(raw_output_hash),
@@ -150,11 +222,19 @@ def ingest_executor_output(
             ignored_reported_only_fields=ignored_reported_only_fields,
         ),
         ignored_reported_only_fields=ignored_reported_only_fields,
+        _runtime_build_marker=_RUNTIME_BUILD_MARKER,
     )
 
 
 def build_predefined_raw_output_sample() -> dict[str, Any]:
     return _clone_json_data(PREDEFINED_RAW_OUTPUT_SAMPLE)
+
+
+def is_runtime_built_action_decision_packet(value: Any) -> bool:
+    return (
+        isinstance(value, ActionDecisionPacket)
+        and value.runtime_built_by_ingress is True
+    )
 
 
 def build_executor_output_ingress_adapter_evidence() -> dict[str, Any]:
@@ -171,6 +251,9 @@ def build_executor_output_ingress_adapter_evidence() -> dict[str, Any]:
         "created_by": RUNTIME_INGRESS_ADAPTER,
         "executor_output_is_data_not_code": True,
         "raw_output_trusted_as_decision": False,
+        "direct_action_decision_packet_submission_rejected": True,
+        "direct_packet_evidence_submission_rejected": True,
+        "direct_store_adjacent_candidate_submission_rejected": True,
         "validator_pass_is_execution": False,
         "capability_gate_pass_is_execution": False,
         "execution_allowed": False,
@@ -221,6 +304,20 @@ def _normalize_parsed_output(
     action = _clone_json_data(action_candidate)
     ignored_reported_only_fields.extend(_strip_top_level_self_reports(action, "action"))
     return action, tuple(_unique(ignored_reported_only_fields))
+
+
+def _direct_submission_parse_error(parsed: Mapping[str, Any]) -> str | None:
+    normalized_keys = frozenset(_normalize_key(str(key)) for key in parsed)
+    if normalized_keys & _DIRECT_PACKET_EVIDENCE_FIELDS:
+        return DIRECT_PACKET_EVIDENCE_SUBMISSION_PARSE_REJECTED
+    if normalized_keys & _DIRECT_STORE_ADJACENT_CANDIDATE_FIELDS:
+        return DIRECT_STORE_ADJACENT_CANDIDATE_PARSE_REJECTED
+    if (
+        {"packet_id", "raw_output_hash"}.issubset(normalized_keys)
+        and normalized_keys & _DIRECT_PACKET_FIELDS
+    ):
+        return DIRECT_PACKET_SUBMISSION_PARSE_REJECTED
+    return None
 
 
 def _strip_top_level_self_reports(action: dict[str, Any], location: str) -> tuple[str, ...]:
@@ -360,7 +457,7 @@ def _freeze_value(value: Any) -> Any:
 
 
 def _normalize_key(value: str) -> str:
-    return value.strip().lower().replace("-", "_")
+    return "_".join(value.strip().lower().split("-"))
 
 
 def _is_sequence(value: Any) -> bool:
