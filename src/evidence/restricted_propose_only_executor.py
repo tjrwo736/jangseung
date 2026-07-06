@@ -30,6 +30,9 @@ REQUEST_RISK_CLASSIFICATION_FIXTURE_ID = (
     "restricted_stub_request_risk_classification_v0"
 )
 PROPOSE_PATCH_FIXTURE_ID = "restricted_stub_propose_patch_v0"
+README_TYPO_PROPOSE_PATCH_FIXTURE_ID = (
+    "restricted_stub_readme_typo_propose_patch_v0"
+)
 
 ALLOWED_STUB_ACTION_CANDIDATES = (
     NOOP,
@@ -42,6 +45,7 @@ ALLOWED_STUB_FIXTURE_IDS = (
     REQUEST_EXPLANATION_FIXTURE_ID,
     REQUEST_RISK_CLASSIFICATION_FIXTURE_ID,
     PROPOSE_PATCH_FIXTURE_ID,
+    README_TYPO_PROPOSE_PATCH_FIXTURE_ID,
 )
 
 _FIXTURE_OUTPUTS: dict[str, dict[str, Any]] = {
@@ -101,6 +105,33 @@ _FIXTURE_OUTPUTS: dict[str, dict[str, Any]] = {
                 "+++ b/docs/example_proposal.md\n"
                 "@@\n"
                 "+Review-only proposal text.\n"
+            ),
+        },
+    },
+    README_TYPO_PROPOSE_PATCH_FIXTURE_ID: {
+        "action_type": PROPOSE_PATCH,
+        "action_id": "restricted-stub-readme-typo-propose-patch-001",
+        "declared_intent": "Propose an inert README typo fix as data.",
+        "declared_risk": "LOW",
+        "capability_requirements": ["propose_patch"],
+        "target_scope": {
+            "repo_relative": True,
+            "paths": ["README.md"],
+        },
+        "payload": {
+            "target_files": ["README.md"],
+            "patch_summary": "Fix a README typo as review-only proposal data.",
+            "patch_plan": [
+                "Review the README typo proposal.",
+                "Apply only through a future separately authorized path.",
+            ],
+            "patch_diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@\n"
+                "-Aegis demo typoo line.\n"
+                "+Aegis demo typo line.\n"
             ),
         },
     },
@@ -181,6 +212,7 @@ __all__ = [
     "FIXTURE_INPUT_FIELD",
     "NOOP_FIXTURE_ID",
     "PROPOSE_PATCH_FIXTURE_ID",
+    "README_TYPO_PROPOSE_PATCH_FIXTURE_ID",
     "REQUEST_EXPLANATION_FIXTURE_ID",
     "REQUEST_RISK_CLASSIFICATION_FIXTURE_ID",
     "RESTRICTED_PROPOSE_ONLY_STUB_EXECUTOR_VERSION",
