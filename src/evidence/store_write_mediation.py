@@ -48,6 +48,10 @@ from src.contracts import (
     STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
     STORE_WRITE_TRUSTED_CONTEXT_REQUIRED,
 )
+from src.evidence.store_adjacent_runtime_seal import (
+    build_store_adjacent_runtime_seal_metadata,
+    verify_store_adjacent_runtime_seal_metadata,
+)
 
 STORE_WRITE_MEDIATION_VERIFICATION_ACCEPTED = "VERIFY_REPLAY_ACCEPTED"
 STORE_WRITE_MEDIATION_VERIFICATION_REJECTED = "VERIFY_REPLAY_REJECTED"
@@ -115,6 +119,14 @@ def build_store_write_mediation_metadata(
         trusted_allowed_events=trusted_allowed_events,
         fallback_events=fallback_events,
     )
+    store_adjacent_runtime_seal = build_store_adjacent_runtime_seal_metadata(
+        raw_store_sink_bypass_rejected=bool(blocked_write_json_events),
+        direct_write_json_bypass_created_files_count=blocked_created_count,
+        direct_ledger_bypass_appended_count=blocked_ledger_appended_count,
+        trusted_runtime_write_preserved=bool(trusted_write_json_events),
+        trusted_runtime_ledger_preserved=bool(trusted_ledger_events),
+        fallback_to_unwired=bool(fallback_events),
+    )
     record = {
         "store_write_mediation_version": STORE_WRITE_MEDIATION_V0,
         "store_write_mediation_enabled": True,
@@ -173,8 +185,10 @@ def build_store_write_mediation_metadata(
             else STORE_WRITE_KNOWN_GAP_AEG_DIRECT_TRAVERSAL_NO_ATTEMPT
         ),
         "known_gap_non_aeg_status": STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED,
+        **store_adjacent_runtime_seal,
         "live_executor_authority": LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
         "phase11b_live_executor_status": PHASE11B_LIVE_EXECUTOR_NOT_STARTED,
+        "safe_default": SAFE_DEFAULT,
         "store_write_mediation_events": normalized_events,
     }
     record["store_write_mediation_metadata_hash"] = expected_store_write_mediation_metadata_hash(record)
@@ -278,6 +292,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     _expect(reasons, payload, "known_gap_non_aeg_status", STORE_WRITE_KNOWN_GAP_NON_AEG_UNCHANGED)
     _expect(reasons, payload, "live_executor_authority", LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
     _expect(reasons, payload, "phase11b_live_executor_status", PHASE11B_LIVE_EXECUTOR_NOT_STARTED)
+    _expect(reasons, payload, "safe_default", SAFE_DEFAULT)
 
     for field in (
         "store_write_mediation_enabled",
@@ -303,6 +318,36 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         "rollback_used",
         "fallback_to_unwired",
         "fallback_evidence_recorded",
+        "store_adjacent_runtime_seal_enabled",
+        "runtime_build_packet_only_enforced",
+        "direct_packet_submission_rejected",
+        "executor_built_packet_rejected",
+        "created_by_text_ownership_rejected",
+        "packet_id_text_ownership_rejected",
+        "capability_gate_result_self_report_rejected",
+        "execution_self_report_rejected",
+        "mutation_self_report_rejected",
+        "write_authority_self_report_rejected",
+        "store_routing_self_report_rejected",
+        "store_path_self_report_rejected",
+        "live_executor_self_report_rejected",
+        "authority_promotion_rejected",
+        "raw_store_adjacent_path_rejected",
+        "unvalidated_store_adjacent_path_rejected",
+        "denied_store_adjacent_path_rejected",
+        "reported_only_store_adjacent_path_rejected",
+        "accepted_store_adjacent_candidate_metadata_only",
+        "accepted_store_adjacent_candidate_store_routing_allowed",
+        "accepted_store_adjacent_candidate_store_path_reachable",
+        "accepted_store_adjacent_candidate_execution_allowed",
+        "accepted_store_adjacent_candidate_mutation_allowed",
+        "accepted_store_adjacent_candidate_write_authority_granted",
+        "raw_store_sink_bypass_rejected",
+        "trusted_runtime_write_preserved",
+        "trusted_runtime_ledger_preserved",
+        "sealing_failed",
+        "sealing_pass_claimed",
+        "fallback_success_claimed",
     ):
         if not isinstance(payload.get(field), bool):
             reasons.append(f"{field} must be boolean")
@@ -337,12 +382,16 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
     created_count = payload.get("blocked_write_created_files_count")
     direct_created_count = payload.get("executor_direct_sink_write_created_files_count")
     direct_ledger_appended_count = payload.get("executor_direct_ledger_entries_appended_count")
+    seal_direct_created_count = payload.get("direct_write_json_bypass_created_files_count")
+    seal_direct_ledger_appended_count = payload.get("direct_ledger_bypass_appended_count")
     attempt_count = payload.get("store_write_attempt_count")
     for field, value in (
         ("blocked_write_target_count", blocked_count),
         ("blocked_write_created_files_count", created_count),
         ("executor_direct_sink_write_created_files_count", direct_created_count),
         ("executor_direct_ledger_entries_appended_count", direct_ledger_appended_count),
+        ("direct_write_json_bypass_created_files_count", seal_direct_created_count),
+        ("direct_ledger_bypass_appended_count", seal_direct_ledger_appended_count),
         ("store_write_attempt_count", attempt_count),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -416,6 +465,18 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         and direct_ledger_appended_count != ledger_appended_from_events
     ):
         reasons.append("executor_direct_ledger_entries_appended_count mismatch")
+    if (
+        isinstance(seal_direct_created_count, int)
+        and not isinstance(seal_direct_created_count, bool)
+        and seal_direct_created_count != created_from_events
+    ):
+        reasons.append("direct_write_json_bypass_created_files_count mismatch")
+    if (
+        isinstance(seal_direct_ledger_appended_count, int)
+        and not isinstance(seal_direct_ledger_appended_count, bool)
+        and seal_direct_ledger_appended_count != ledger_appended_from_events
+    ):
+        reasons.append("direct_ledger_bypass_appended_count mismatch")
     if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) and attempt_count != len(normalized_events):
         reasons.append("store_write_attempt_count mismatch")
     if payload.get("write_mediation_result") == STORE_WRITE_MEDIATION_RESULT_BLOCKED and created_count != 0:
@@ -426,6 +487,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         reasons.append("executor direct ledger BLOCKED claim rejected because forged entry appended")
     if blocked_write_json_events:
         _expect(reasons, payload, "executor_direct_sink_write_result", STORE_WRITE_MEDIATION_RESULT_BLOCKED)
+        _expect(reasons, payload, "raw_store_sink_bypass_rejected", True)
     else:
         _expect(
             reasons,
@@ -433,6 +495,7 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
             "executor_direct_sink_write_result",
             STORE_WRITE_MEDIATION_RESULT_NO_EXECUTOR_ATTEMPT,
         )
+        _expect(reasons, payload, "raw_store_sink_bypass_rejected", False)
     if blocked_ledger_events:
         _expect(reasons, payload, "executor_direct_ledger_append_result", STORE_WRITE_MEDIATION_RESULT_BLOCKED)
     else:
@@ -455,6 +518,10 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         reasons.append("trusted runtime write was not allowed")
     if not trusted_ledger_events:
         reasons.append("trusted runtime ledger append was not allowed")
+    if payload.get("trusted_runtime_write_preserved") is not bool(trusted_write_json_events):
+        reasons.append("trusted_runtime_write_preserved mismatch")
+    if payload.get("trusted_runtime_ledger_preserved") is not bool(trusted_ledger_events):
+        reasons.append("trusted_runtime_ledger_preserved mismatch")
     if payload.get("rollback_used") is not bool(fallback_events):
         reasons.append("rollback_used mismatch")
     if payload.get("fallback_to_unwired") is not bool(fallback_events):
@@ -470,6 +537,12 @@ def verify_store_write_mediation_metadata(payload: Mapping[str, Any]) -> dict[st
         reasons.append("executor_omitted_declaration_rejected mismatch")
 
     reasons.extend(_event_rejection_reasons(normalized_events))
+    seal_verify = verify_store_adjacent_runtime_seal_metadata(payload)
+    if seal_verify.get("accepted") is not True:
+        reasons.extend(
+            f"store-adjacent runtime seal rejected: {reason}"
+            for reason in seal_verify.get("rejection_reasons", [])
+        )
 
     metadata_hash = payload.get("store_write_mediation_metadata_hash")
     expected_hash = expected_store_write_mediation_metadata_hash(payload)
