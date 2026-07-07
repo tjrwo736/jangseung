@@ -86,6 +86,27 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         cases = (
             ("Read", {"file_path": ".env"}, READ_REPO),
             ("Read", {"file_path": ".env.local"}, READ_REPO),
+            ("Write", {"file_path": ".github/workflows/ci.yml", "content": "data"}, WRITE_FILE),
+            ("Write", {"file_path": "Dockerfile", "content": "data"}, WRITE_FILE),
+            (
+                "Edit",
+                {
+                    "file_path": "pyproject.toml",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+                EDIT_FILE,
+            ),
+            ("Write", {"file_path": "deploy/prod.yml", "content": "data"}, WRITE_FILE),
+            (
+                "Edit",
+                {
+                    "file_path": "src/law/policy.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+                EDIT_FILE,
+            ),
             ("Write", {"file_path": ".aeg/state.json", "content": "data"}, WRITE_FILE),
             (
                 "Edit",
@@ -96,7 +117,6 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 },
                 EDIT_FILE,
             ),
-            ("Write", {"file_path": "protected/config.json", "content": "data"}, WRITE_FILE),
             ("Read", {"file_path": "/tmp/outside.txt"}, READ_REPO),
             ("Read", {"file_path": "../outside.txt"}, READ_REPO),
         )
@@ -115,6 +135,8 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
     def test_bash_dangerous_commands_map_to_run_command_deny_candidates(self):
         commands = (
             "rm -rf build",
+            "git reset --hard",
+            "git clean -fd",
             "git push origin main",
             "npm run deploy",
             "curl https://example.invalid",
@@ -251,6 +273,16 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 "Bash": RUN_COMMAND,
             },
         )
+        self.assertEqual(
+            evidence["protected_path_policy_source"],
+            "src.classify.is_protected_path",
+        )
+        self.assertEqual(evidence["state_dir_boundary_source"], "src.contracts.STATE_DIR")
+        self.assertTrue(evidence["absolute_or_traversal_path_deny_candidate"])
+        self.assertTrue(evidence["git_reset_hard_is_dangerous"])
+        self.assertTrue(evidence["git_clean_force_delete_is_dangerous"])
+        self.assertNotIn("protected_path_segments", evidence)
+        self.assertNotIn("protected_path_filenames", evidence)
         self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
         self.assertEqual(
             evidence["live_executor_authority"],
@@ -339,6 +371,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             "mapping output != patch application",
             "mapping output preserves tool_use_id provenance",
             "hook input remains untrusted raw executor output",
+            "src.classify.is_protected_path",
             "unsupported/unknown/NOT_CHECKED != PASS",
             "safe default = hold_current_state",
             "live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD",
@@ -352,10 +385,16 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
 
         for marker in (
             ".env target -> DENY_CANDIDATE",
-            ".aeg path segment -> DENY_CANDIDATE",
-            "secret path segment -> DENY_CANDIDATE",
-            "protected path segment -> DENY_CANDIDATE",
+            ".env.* target -> DENY_CANDIDATE",
+            ".aeg state dir target -> DENY_CANDIDATE",
+            ".github/workflows/ci.yml -> DENY_CANDIDATE",
+            "Dockerfile -> DENY_CANDIDATE",
+            "pyproject.toml -> DENY_CANDIDATE",
+            "deploy/prod.yml -> DENY_CANDIDATE",
+            "src/law/policy.py -> DENY_CANDIDATE",
             "rm -rf",
+            "git reset --hard",
+            "git clean -fd",
             "git push",
             "deploy",
             "curl",

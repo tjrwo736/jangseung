@@ -120,6 +120,22 @@ authority.
 
 ## Protected Path Handling
 
+The mapping does not maintain a hook-local protected path taxonomy.
+Repository protected path classification is delegated to:
+
+```text
+src.classify.is_protected_path
+```
+
+The only extra path checks here are boundary checks needed to keep the
+candidate fail-closed before later engine gates:
+
+```text
+.aeg state dir target -> DENY_CANDIDATE
+absolute path -> DENY_CANDIDATE
+parent traversal path -> DENY_CANDIDATE
+```
+
 Normal repo path handling:
 
 ```text
@@ -133,10 +149,12 @@ Protected path handling:
 ```text
 .env target -> DENY_CANDIDATE
 .env.* target -> DENY_CANDIDATE
-.aeg path segment -> DENY_CANDIDATE
-secret path segment -> DENY_CANDIDATE
-secrets path segment -> DENY_CANDIDATE
-protected path segment -> DENY_CANDIDATE
+.github/workflows/ci.yml -> DENY_CANDIDATE
+Dockerfile -> DENY_CANDIDATE
+pyproject.toml -> DENY_CANDIDATE
+deploy/prod.yml -> DENY_CANDIDATE
+src/law/policy.py -> DENY_CANDIDATE
+.aeg state dir target -> DENY_CANDIDATE
 absolute path -> DENY_CANDIDATE
 parent traversal path -> DENY_CANDIDATE
 ```
@@ -150,6 +168,8 @@ Dangerous Bash examples map to `RUN_COMMAND` with `DENY_CANDIDATE` posture:
 
 ```text
 rm -rf
+git reset --hard
+git clean -fd
 git push
 deploy
 curl
