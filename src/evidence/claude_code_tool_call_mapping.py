@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from src.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT
+from src.classify import is_protected_path
+from src.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT, STATE_DIR
 from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 from src.evidence.claude_code_pretooluse_input_contract import (
     ClaudeCodePreToolUseInput,
@@ -55,8 +56,6 @@ SUPPORTED_TOOL_TO_CANDIDATE_ACTION = MappingProxyType(
     }
 )
 
-PROTECTED_PATH_SEGMENTS = frozenset({".aeg", "secret", "secrets", "protected"})
-PROTECTED_PATH_FILENAMES = frozenset({".env"})
 DANGEROUS_BASH_TOKENS = frozenset(
     {
         "curl",
@@ -155,10 +154,13 @@ def build_tool_call_mapping_contract_evidence() -> dict[str, Any]:
         "completion_label": PHASE11C_2_COMPLETE_LABEL,
         "source_contract_version": PHASE11C_1_PRETOOLUSE_INPUT_CONTRACT_VERSION,
         "supported_tool_mappings": dict(SUPPORTED_TOOL_TO_CANDIDATE_ACTION),
-        "protected_path_segments": tuple(sorted(PROTECTED_PATH_SEGMENTS)),
-        "protected_path_filenames": tuple(sorted(PROTECTED_PATH_FILENAMES)),
+        "protected_path_policy_source": "src.classify.is_protected_path",
+        "state_dir_boundary_source": "src.contracts.STATE_DIR",
+        "absolute_or_traversal_path_deny_candidate": True,
         "dangerous_bash_tokens": tuple(sorted(DANGEROUS_BASH_TOKENS)),
         "rm_recursive_force_is_dangerous": True,
+        "git_reset_hard_is_dangerous": True,
+        "git_clean_force_delete_is_dangerous": True,
         "git_push_is_dangerous": True,
         "deploy_token_is_dangerous": True,
         "mapping_output_is_structured_action_candidate_only": True,
@@ -340,11 +342,12 @@ def _invalid_tool_input_candidate(
 
 
 def _path_candidate_posture(path_value: str) -> tuple[str, str, str]:
-    if _is_protected_path(path_value):
+    denial_reason = _path_denial_reason(path_value)
+    if denial_reason is not None:
         return (
             DENY_CANDIDATE,
             PROTECTED_PATH,
-            f"protected_path_maps_to_deny_candidate:{path_value}",
+            denial_reason,
         )
     return (
         STRUCTURED_ACTION_CANDIDATE,
@@ -353,21 +356,20 @@ def _path_candidate_posture(path_value: str) -> tuple[str, str, str]:
     )
 
 
-def _is_protected_path(path_value: str) -> bool:
+def _path_denial_reason(path_value: str) -> str | None:
     stripped = path_value.strip()
     if not stripped:
-        return True
+        return "empty_path_maps_to_deny_candidate"
     if stripped.startswith("/") or _looks_like_windows_absolute_path(stripped):
-        return True
+        return f"absolute_path_maps_to_deny_candidate:{path_value}"
     parts = _path_parts(stripped)
     if any(part == ".." for part in parts):
-        return True
-    if any(part in PROTECTED_PATH_SEGMENTS for part in parts):
-        return True
-    return any(
-        part in PROTECTED_PATH_FILENAMES or part.startswith(".env.")
-        for part in parts
-    )
+        return f"parent_traversal_path_maps_to_deny_candidate:{path_value}"
+    if _contains_state_dir_path(parts):
+        return f"state_dir_path_maps_to_deny_candidate:{path_value}"
+    if is_protected_path(stripped):
+        return f"src.classify.is_protected_path_maps_to_deny_candidate:{path_value}"
+    return None
 
 
 def _bash_risk(command: str) -> tuple[str, tuple[str, ...]]:
@@ -388,6 +390,10 @@ def _bash_risk(command: str) -> tuple[str, tuple[str, ...]]:
 
     if _rm_recursive_force(tokens):
         return (BASH_DANGEROUS, ("dangerous_bash_rm_recursive_force",))
+    if _git_reset_hard(tokens):
+        return (BASH_DANGEROUS, ("dangerous_bash_git_reset_hard",))
+    if _git_clean_force_delete(tokens):
+        return (BASH_DANGEROUS, ("dangerous_bash_git_clean_force_delete",))
     if _git_push(tokens):
         return (BASH_DANGEROUS, ("dangerous_bash_git_push",))
     if _deploy_token(tokens):
@@ -437,6 +443,40 @@ def _git_push(tokens: tuple[str, ...]) -> bool:
         token == "git" and index + 1 < len(tokens) and tokens[index + 1] == "push"
         for index, token in enumerate(tokens)
     )
+
+
+def _git_reset_hard(tokens: tuple[str, ...]) -> bool:
+    return any(
+        token == "git"
+        and index + 2 < len(tokens)
+        and tokens[index + 1] == "reset"
+        and "--hard" in tokens[index + 2 :]
+        for index, token in enumerate(tokens)
+    )
+
+
+def _git_clean_force_delete(tokens: tuple[str, ...]) -> bool:
+    for index, token in enumerate(tokens):
+        if token != "git" or index + 1 >= len(tokens) or tokens[index + 1] != "clean":
+            continue
+        following = tokens[index + 2 :]
+        has_force = False
+        has_delete_dir = False
+        for flag in following:
+            if flag == "--":
+                break
+            if not flag.startswith("-"):
+                continue
+            if flag == "--force":
+                has_force = True
+            if flag in ("--dir", "--directory"):
+                has_delete_dir = True
+            if flag.startswith("-") and not flag.startswith("--"):
+                has_force = has_force or "f" in flag
+                has_delete_dir = has_delete_dir or "d" in flag
+        if has_force and has_delete_dir:
+            return True
+    return False
 
 
 def _deploy_token(tokens: tuple[str, ...]) -> bool:
@@ -511,6 +551,10 @@ def _path_parts(path_value: str) -> tuple[str, ...]:
     if current:
         normalized_parts.append("".join(current))
     return tuple(part for part in normalized_parts if part and part != ".")
+
+
+def _contains_state_dir_path(parts: tuple[str, ...]) -> bool:
+    return any(part == STATE_DIR for part in parts)
 
 
 def _looks_like_windows_absolute_path(path_value: str) -> bool:
