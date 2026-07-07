@@ -48,12 +48,23 @@ Baseline source:
 
 ```text
 repo = /mnt/d/Codex/Aegis
-base main = 2cf5dfabdceb2ec038bdf7be932fb38b7d92bb4d
+source_of_truth = GitHub metadata / merged main
+current main SHA = d004e02f01852b59ac6ae9137a8200f6e6b81c7b
+base main = d004e02f01852b59ac6ae9137a8200f6e6b81c7b
+PR #100 = MERGED
+PR #100 merge commit = d004e02f01852b59ac6ae9137a8200f6e6b81c7b
+PR #100 merged_at = 2026-07-07T03:11:47Z
 PR #97 = MERGED
 PR #98 = MERGED
 PR #99 = MERGED
 PR #99 post-merge smoke = PASS_PHASE11B_4_2_PROVIDER_BOUNDARY_SCOPE_DESIGN_GATE_MAIN_SMOKE_NOT_PROVIDER
+stale local pre-merge snapshot SHA = 2cf5dfabdceb2ec038bdf7be932fb38b7d92bb4d
+stale local pre-merge snapshot SHA != current main SHA
 ```
+
+The stale local pre-merge snapshot SHA is retained only as historical context
+from before PR #100 was merged. It is not the current merged main SHA and is not
+the source of truth for this refreshed baseline.
 
 Phase 11-B-4 component status:
 
@@ -221,5 +232,9 @@ do not add tools, action execution, write authority, store routing, patch applic
 Main merge:
 
 ```text
+Phase 11-B-4 PR #100 main merge = PERFORMED
+Phase 11-B-4 PR #100 merge commit = d004e02f01852b59ac6ae9137a8200f6e6b81c7b
+Phase 11-B-4 PR #100 merged_at = 2026-07-07T03:11:47Z
+Phase 11-B-4-A main merge = NOT_PERFORMED
 main merge = NOT_PERFORMED
 ```

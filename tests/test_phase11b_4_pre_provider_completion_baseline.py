@@ -30,6 +30,17 @@ REQUIRED_PHASE_STATUS = (
     "Phase 11-B-4 pre-provider line = COMPLETE_AS_PRE_PROVIDER_NO_TOOL_RAW_OUTPUT_BASELINE",
 )
 
+REQUIRED_PROVENANCE_MARKERS = (
+    "source_of_truth = GitHub metadata / merged main",
+    "current main SHA = d004e02f01852b59ac6ae9137a8200f6e6b81c7b",
+    "base main = d004e02f01852b59ac6ae9137a8200f6e6b81c7b",
+    "PR #100 = MERGED",
+    "PR #100 merge commit = d004e02f01852b59ac6ae9137a8200f6e6b81c7b",
+    "PR #100 merged_at = 2026-07-07T03:11:47Z",
+    "stale local pre-merge snapshot SHA = 2cf5dfabdceb2ec038bdf7be932fb38b7d92bb4d",
+    "stale local pre-merge snapshot SHA != current main SHA",
+)
+
 REQUIRED_AUTHORITY_STATUS = (
     "provider/model/network = NOT_STARTED / NOT_GRANTED",
     "actual provider adapter = NOT_STARTED",
@@ -127,6 +138,9 @@ class Phase11B4PreProviderCompletionBaselineTests(unittest.TestCase):
             with self.subTest(limit=limit):
                 self.assertIn(limit, doc)
         for marker in REQUIRED_PHASE_STATUS:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, doc)
+        for marker in REQUIRED_PROVENANCE_MARKERS:
             with self.subTest(marker=marker):
                 self.assertIn(marker, doc)
 
