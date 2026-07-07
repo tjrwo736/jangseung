@@ -12,6 +12,13 @@ Canonical positioning:
 Aegis = PreToolUse hook-backed evidence-first governance harness for coding-agent tool calls
 ```
 
+Technical positioning:
+
+```text
+Aegis is a PreToolUse hook-backed governance harness that treats AI tool calls as untrusted input, maps them into structured actions, applies capability/risk gates, records evidence, and returns deterministic allow/deny/ask/defer decisions.
+Aegis는 AI tool call을 신뢰하지 않는 입력으로 보고, structured action으로 변환한 뒤, capability/risk gate와 evidence/verify를 통해 allow/deny/ask/defer를 결정하는 PreToolUse hook-backed governance harness입니다.
+```
+
 This is a docs-only direction lock. It does not implement provider,
 model, network, hook command, hook installation, Claude Code execution, Codex
 hook behavior, action execution, write authority, tool runtime, store routing,
@@ -35,11 +42,17 @@ live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 Required Phase 11-C-0 status:
 
 ```text
+direction pivot = accepted in substance
+Phase 11-C = OPEN
+11-C-0 = GO_DOCS_ONLY_DIRECTION_LOCK
 Phase 11-C = SUBSTRATE_HOOK_GOVERNANCE_LINE_STARTED_AS_DIRECTION_LOCK
 Aegis role = PRETOOLUSE_HOOK_BACKED_GOVERNANCE_LAYER
+Claude Code PreToolUse = PRIMARY_SUBSTRATE_TARGET
 Claude Code hook target = PRIMARY_SUBSTRATE_TARGET
+direct provider line = PARKED
 Codex hook target = FUTURE_SUBSTRATE_TARGET_PENDING_COVERAGE_VERIFICATION
 provider direct target = PARKED / FUTURE_OPTIONAL
+provider/model/network = NOT_STARTED / NOT_GRANTED
 direct provider/model/network implementation = PARKED
 actual provider adapter = NOT_STARTED
 API key/env/secret loading = NOT_STARTED
@@ -251,6 +264,32 @@ The substrate owns model execution. Aegis does not trust substrate claims about
 safety, coverage, permissions, read/write status, command effects, or
 verification. Hook input is candidate material only.
 
+## Context Ingestion Boundary Limitation
+
+This direction lock does not claim universal prompt-injection prevention.
+Aegis governs tool-call execution boundaries.
+
+Required boundary statements:
+
+```text
+Aegis does not claim universal prompt-injection prevention.
+Aegis governs tool-call execution boundaries.
+PreToolUse hook is a tool-call boundary, not a universal context boundary.
+Context that enters the model without a tool call, including @ file references or substrate-level prompt context insertion, is outside the initial PreToolUse governance boundary.
+@ file reference / prompt context insertion may not trigger Read tool calls.
+Hidden instructions inside files referenced as context can enter the model without passing through Aegis PreToolUse governance.
+This is not a minor caveat; it is a core injection-defense limitation.
+```
+
+Future required work, not implemented in Phase 11-C-0:
+
+```text
+Read deny rule
+context-ingestion policy
+prompt context provenance
+@ reference coverage measurement
+```
+
 ## New Output Boundary
 
 New output boundary:
@@ -315,6 +354,40 @@ hook install location / project-local vs user-local settings must be documented 
 
 This direction lock does not perform actual Claude Code execution and does not
 install a Claude Code hook.
+
+## Subprocess Boundary Limitation
+
+Aegis PreToolUse governance catches the tool call before execution. It does not
+govern every action performed by a subprocess after the tool call is allowed.
+
+Required boundary statements:
+
+```text
+Aegis PreToolUse governance catches the tool call before execution.
+It does not govern every action performed by a subprocess after the tool call is allowed.
+Bash("python script.py") is governed as a Bash tool call.
+Once that Bash command is allowed, behavior inside script.py is outside the PreToolUse hook boundary unless separately sandboxed or instrumented.
+Tool call governance != subprocess behavior governance.
+Bash deny/allow decision != sandbox.
+PreToolUse hook != process/OS isolation.
+Allowed Bash command != all child-process actions verified.
+```
+
+Initial conservative Bash policy:
+
+```text
+dangerous Bash = deny or defer
+unknown Bash = deny or defer
+NOT_CHECKED Bash = deny or defer
+```
+
+Forbidden subprocess overclaims:
+
+```text
+Aegis does not claim to prevent all effects of scripts launched by allowed Bash.
+Aegis does not provide sandbox/process isolation in Phase 11-C-0.
+Aegis does not make Bash safe.
+```
 
 ## Codex Future Target
 
@@ -410,6 +483,14 @@ substrate permission status is not Aegis authority
 provider/model/network output is not Aegis authority
 ```
 
+Initial conservative Bash handling:
+
+```text
+dangerous Bash = deny or defer
+unknown Bash = deny or defer
+NOT_CHECKED Bash = deny or defer
+```
+
 ## Non-Goals
 
 Phase 11-C-0 does not implement or authorize:
@@ -458,6 +539,9 @@ public release material
 live_executor_authority change
 safe default change
 direct main push
+universal prompt-injection prevention claim
+sandbox/process isolation claim
+Bash-safe claim
 bypass-impossible claim
 tamper-proof claim
 live-ready claim
@@ -485,15 +569,37 @@ explicitly changed by a later gate.
 
 ## Public Positioning
 
-Aegis is an evidence-first governance harness for AI coding-agent tool calls.
+This section splits public positioning into user-facing and technical layers.
+It is positioning text only. It is not public release material.
 
-One-line pitch:
+User-facing positioning:
 
 ```text
-Aegis sits behind Claude Code/Codex tool calls and turns risky agent actions into governed, evidence-bound decisions.
+Aegis helps Claude Code stop risky actions before they run, records what the AI tried to do, and blocks dangerous tool calls from becoming trusted truth.
+Aegis는 Claude Code가 위험한 작업을 실행하기 전에 멈추고, AI가 무엇을 하려 했는지 기록하며, 위험한 tool call이 신뢰된 사실이 되는 것을 막습니다.
 ```
 
-This is positioning text only. It is not public release material.
+User-facing values:
+
+```text
+1. Claude Code가 위험한 걸 하기 전에 잡아준다.
+2. AI가 무엇을 하려 했는지 evidence로 남긴다.
+3. 외부 코드/instruction injection이 위험한 tool call로 이어지는 것을 tool-call boundary에서 막는다.
+```
+
+Boundary qualifier for the third value:
+
+```text
+tool-call boundary에서 막는다.
+모든 prompt/context injection을 전부 막는다는 뜻은 아니다.
+```
+
+Technical positioning:
+
+```text
+Aegis is a PreToolUse hook-backed governance harness that treats AI tool calls as untrusted input, maps them into structured actions, applies capability/risk gates, records evidence, and returns deterministic allow/deny/ask/defer decisions.
+Aegis는 AI tool call을 신뢰하지 않는 입력으로 보고, structured action으로 변환한 뒤, capability/risk gate와 evidence/verify를 통해 allow/deny/ask/defer를 결정하는 PreToolUse hook-backed governance harness입니다.
+```
 
 ## Transition Recommendation
 
