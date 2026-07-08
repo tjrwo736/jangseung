@@ -1,5 +1,5 @@
 """``aeg install`` / ``aeg uninstall`` — register/remove the Aegis PreToolUse
-hook in a project-local ``.claude/settings.json``.
+hook in a project-local substrate config.
 
 Safety model:
   * project-local only (``--global`` is deliberately unsupported here);
@@ -7,10 +7,11 @@ Safety model:
     (``--yes`` skips the prompt);
   * always back up an existing settings file before writing;
   * merge into existing settings, preserving every other hook and field;
-  * abort (do not write) on invalid JSON or an unexpected settings structure.
+  * abort (do not write) on invalid Claude Code JSON or an unexpected hook
+    structure.
 
-This module writes only ``.claude/settings.json`` (outside the ``.aeg/`` store);
-it does not run tools, call providers, or write Aegis state.
+This module writes only substrate hook config files (outside the ``.aeg/``
+store); it does not run tools, call providers, or write Aegis state.
 """
 
 from __future__ import annotations
@@ -25,24 +26,32 @@ from pathlib import Path
 from typing import Any, TextIO
 
 AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read"
+CODEX_AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read|apply_patch"
 HOOK_RUN_MARKER = "hook-run"
 HOOK_EVENT_NAME = "PreToolUse"
 BACKUP_SUFFIX_PREFIX = "aegis-backup"
+TARGET_CLAUDE_CODE = "claude-code"
+TARGET_CODEX = "codex"
+INSTALL_TARGETS = (TARGET_CLAUDE_CODE, TARGET_CODEX)
 
 
 class InstallStructureError(Exception):
     """Raised when the existing settings has a structure we will not modify."""
 
 
-def resolve_hook_command() -> str:
-    """Return the command string Claude Code should run for the hook, using the
-    installed ``aeg`` console script if available (absolute path, no PYTHONPATH
-    needed), else the current interpreter's module invocation."""
+def resolve_hook_command(*, substrate: str | None = None) -> str:
+    """Return the command string the substrate should run for the hook, using
+    the installed ``aeg`` console script if available (absolute path, no
+    PYTHONPATH needed), else the current interpreter's module invocation."""
 
     aeg_path = shutil.which("aeg")
     if aeg_path:
-        return f"{aeg_path} hook-run"
-    return f"{sys.executable} -m src.cli hook-run"
+        command = f"{aeg_path} hook-run"
+    else:
+        command = f"{sys.executable} -m src.cli hook-run"
+    if substrate:
+        command = f"{command} --substrate {substrate}"
+    return command
 
 
 def is_aegis_hook_command(command: Any) -> bool:
@@ -58,6 +67,10 @@ def is_aegis_hook_command(command: Any) -> bool:
 
 def settings_path(base_dir: str | Path) -> Path:
     return Path(base_dir) / ".claude" / "settings.json"
+
+
+def codex_config_path(base_dir: str | Path) -> Path:
+    return Path(base_dir) / ".codex" / "config.toml"
 
 
 def load_settings(path: Path) -> tuple[dict[str, Any] | None, bool, str | None]:
@@ -150,23 +163,88 @@ def build_uninstalled_settings(
     return (new_data, removed)
 
 
+def normalize_install_target(target: str) -> str:
+    if target in INSTALL_TARGETS:
+        return target
+    raise ValueError(
+        f"unsupported target {target!r}; expected one of: {', '.join(INSTALL_TARGETS)}"
+    )
+
+
+def build_installed_codex_config_text(
+    current_text: str,
+    command: str,
+) -> tuple[str, bool]:
+    """Return (new_config_text, already_installed) for project-local Codex TOML.
+
+    The Codex config format is TOML and often hand-edited, so this function
+    appends a small Aegis hook block instead of reserializing the whole file.
+    """
+
+    aegis_commands = tuple(_codex_aegis_hook_commands(current_text))
+    if any(_command_has_codex_substrate(command_text) for command_text in aegis_commands):
+        return (_ensure_trailing_newline(current_text), True)
+    if aegis_commands:
+        raise InstallStructureError(
+            "existing Aegis hook command in .codex/config.toml does not include "
+            "--substrate codex"
+        )
+
+    block = _codex_hook_block(command)
+    if not current_text.strip():
+        return (block, False)
+    return (_ensure_trailing_newline(current_text) + "\n" + block, False)
+
+
 def cmd_install(
     base_dir: str | Path,
     *,
     assume_yes: bool = False,
     global_requested: bool = False,
+    target: str = TARGET_CLAUDE_CODE,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
     out = output_stream if output_stream is not None else sys.stdout
+    try:
+        normalized_target = normalize_install_target(target)
+    except ValueError as exc:
+        _write(out, f"aeg install: aborted — {exc}")
+        return 2
+
     if global_requested:
         _write(
             out,
-            "aeg install: global (~/.claude) install is not supported in this "
-            "version.\nOnly project-local install is supported: run 'aeg install' "
-            "inside your project directory (writes ./.claude/settings.json).",
+            "aeg install: global install is not supported in this version.\n"
+            "Only project-local install is supported: run 'aeg install' inside "
+            "your project directory.",
         )
         return 2
+
+    if normalized_target == TARGET_CODEX:
+        return _cmd_install_codex(
+            base_dir,
+            assume_yes=assume_yes,
+            input_stream=input_stream,
+            output_stream=out,
+        )
+
+    return _cmd_install_claude_code(
+        base_dir,
+        assume_yes=assume_yes,
+        input_stream=input_stream,
+        output_stream=out,
+    )
+
+
+def _cmd_install_claude_code(
+    base_dir: str | Path,
+    *,
+    assume_yes: bool,
+    input_stream: TextIO | None,
+    output_stream: TextIO,
+) -> int:
+    out = output_stream
 
     path = settings_path(base_dir)
     data, existed, error = load_settings(path)
@@ -207,6 +285,56 @@ def cmd_install(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(after_text, encoding="utf-8")
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
+    return 0
+
+
+def _cmd_install_codex(
+    base_dir: str | Path,
+    *,
+    assume_yes: bool,
+    input_stream: TextIO | None,
+    output_stream: TextIO,
+) -> int:
+    out = output_stream
+    path = codex_config_path(base_dir)
+    before_text, existed, error = _load_text_file(path)
+    if error is not None:
+        _write(out, f"aeg install: aborted — {error}")
+        _write(out, "Please fix or remove the file manually, then retry.")
+        return 1
+
+    command = resolve_hook_command(substrate=TARGET_CODEX)
+    try:
+        after_text, already = build_installed_codex_config_text(before_text, command)
+    except InstallStructureError as exc:
+        _write(out, f"aeg install: aborted — unexpected Codex config structure: {exc}")
+        _write(out, "Please adjust .codex/config.toml manually, then retry.")
+        return 1
+
+    if already:
+        _write(out, "aeg install: an Aegis Codex PreToolUse hook is already installed; no changes.")
+        return 0
+
+    preview_before = before_text if existed else "(no .codex/config.toml yet)\n"
+    _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
+    _write(out, f"  target:       {TARGET_CODEX}")
+    _write(out, f"  hook command: {command}")
+    _write(out, f"  matcher:      {CODEX_AEGIS_HOOK_MATCHER}")
+    _write(out, "")
+    _write_diff(out, preview_before, after_text, path)
+
+    if not assume_yes and not _confirm(input_stream, out):
+        _write(out, "aeg install: cancelled; no changes written.")
+        return 0
+
+    if existed:
+        backup = _backup_file(path)
+        _write(out, f"aeg install: backed up existing config to {backup}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(after_text, encoding="utf-8")
+    _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
+    _write(out, "aeg install: note: Codex hook trust/review is handled by Codex itself.")
     return 0
 
 
@@ -264,6 +392,80 @@ def _find_aegis_hook(pretooluse: list[Any]) -> bool:
     return False
 
 
+def _load_text_file(path: Path) -> tuple[str, bool, str | None]:
+    if not path.exists():
+        return ("", False, None)
+    try:
+        return (path.read_text(encoding="utf-8"), True, None)
+    except OSError as exc:
+        return ("", True, f"cannot read {path}: {exc}")
+
+
+def _codex_hook_block(command: str) -> str:
+    return (
+        "# Aegis PreToolUse hook for Codex. Managed by `aeg install --target codex`.\n"
+        "[[hooks.PreToolUse]]\n"
+        f"matcher = {_toml_string(CODEX_AEGIS_HOOK_MATCHER)}\n"
+        "\n"
+        "[[hooks.PreToolUse.hooks]]\n"
+        "type = \"command\"\n"
+        f"command = {_toml_string(command)}\n"
+    )
+
+
+def _codex_aegis_hook_commands(text: str) -> list[str]:
+    commands: list[str] = []
+    current_array_table: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[[") and stripped.endswith("]]"):
+            current_array_table = stripped[2:-2].strip()
+            continue
+        if current_array_table != "hooks.PreToolUse.hooks":
+            continue
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() != "command":
+            continue
+        parsed = _parse_simple_toml_string(value.strip())
+        if parsed is not None and is_aegis_hook_command(parsed):
+            commands.append(parsed)
+    return commands
+
+
+def _command_has_codex_substrate(command: str) -> bool:
+    parts = command.split()
+    return any(
+        part == "--substrate"
+        and index + 1 < len(parts)
+        and parts[index + 1] == TARGET_CODEX
+        for index, part in enumerate(parts)
+    )
+
+
+def _parse_simple_toml_string(value: str) -> str | None:
+    if len(value) < 2:
+        return None
+    if value[0] == "'" and value[-1] == "'":
+        return value[1:-1]
+    if value[0] != '"' or value[-1] != '"':
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, str) else None
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def _ensure_trailing_newline(text: str) -> str:
+    return text if not text or text.endswith("\n") else text + "\n"
+
+
 def _json_text(data: dict[str, Any]) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
@@ -314,15 +516,22 @@ def _write(out: TextIO, line: str) -> None:
 
 __all__ = [
     "AEGIS_HOOK_MATCHER",
+    "CODEX_AEGIS_HOOK_MATCHER",
     "HOOK_EVENT_NAME",
     "HOOK_RUN_MARKER",
+    "INSTALL_TARGETS",
     "InstallStructureError",
+    "TARGET_CLAUDE_CODE",
+    "TARGET_CODEX",
+    "build_installed_codex_config_text",
     "build_installed_settings",
     "build_uninstalled_settings",
     "cmd_install",
     "cmd_uninstall",
+    "codex_config_path",
     "is_aegis_hook_command",
     "load_settings",
+    "normalize_install_target",
     "resolve_hook_command",
     "settings_path",
 ]

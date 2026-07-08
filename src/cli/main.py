@@ -16,8 +16,8 @@ from src.contracts import (
     NOT_CHECKED_SOURCE,
     SAFE_DEFAULT,
 )
-from src.cli.hook_run import run_aeg_hook_run
-from src.cli.install import cmd_install, cmd_uninstall
+from src.cli.hook_run import SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX, run_aeg_hook_run
+from src.cli.install import INSTALL_TARGETS, TARGET_CLAUDE_CODE, cmd_install, cmd_uninstall
 from src.evidence import build_evidence_packet, verify_latest
 from src.evidence.mutation_boundary import (
     build_mutation_boundary,
@@ -49,22 +49,40 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("task", help="task text to classify and gate")
     subparsers.add_parser("verify", help="verify latest evidence with deterministic replay")
-    subparsers.add_parser(
+    hook_run_parser = subparsers.add_parser(
         "hook-run",
         help=(
-            "read a Claude Code PreToolUse hook JSON from stdin, judge it with the "
+            "read a PreToolUse hook JSON from stdin, judge it with the "
             "existing Aegis engine, and write a permissionDecision to stdout (fail-closed)"
+        ),
+    )
+    hook_run_parser.add_argument(
+        "--substrate",
+        choices=(SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX),
+        default=None,
+        help=(
+            "explicit hook substrate; omitted defaults to claude-code behavior. "
+            "Use codex only for hooks installed into Codex."
         ),
     )
     install_parser = subparsers.add_parser(
         "install",
-        help="register the Aegis PreToolUse hook in project-local .claude/settings.json",
+        help="register the Aegis PreToolUse hook in a project-local substrate config",
     )
     install_parser.add_argument(
         "--path", default=None, help="project directory to install into (default: cwd)"
     )
     install_parser.add_argument(
         "--yes", action="store_true", help="skip the confirmation prompt"
+    )
+    install_parser.add_argument(
+        "--target",
+        choices=INSTALL_TARGETS,
+        default=TARGET_CLAUDE_CODE,
+        help=(
+            "hook substrate to install for: claude-code writes .claude/settings.json "
+            "(default), codex writes .codex/config.toml"
+        ),
     )
     install_parser.add_argument(
         "--global",
@@ -103,12 +121,14 @@ def main(argv: list[str] | None = None) -> int:
             stdout=sys.stdout,
             stderr=sys.stderr,
             repo_root=Path.cwd(),
+            substrate=args.substrate,
         )
     if args.command == "install":
         return cmd_install(
             Path(args.path) if args.path else Path.cwd(),
             assume_yes=args.yes,
             global_requested=args.global_install,
+            target=args.target,
         )
     if args.command == "uninstall":
         return cmd_uninstall(
