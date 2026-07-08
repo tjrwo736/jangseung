@@ -2,7 +2,9 @@
 
 Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막습니다.
 
-<!-- DEMO: 데모 GIF/스크린샷 자리 -->
+[![asciicast](https://asciinema.org/a/6B2AARAZCOKB9snJ.svg)](https://asciinema.org/a/6B2AARAZCOKB9snJ)
+
+실제 Claude Code 세션에서 Aegis가 위험한 작업을 막고 정상 작업은 통과시키는 데모
 
 ## 핵심 3가지
 
@@ -102,4 +104,4 @@ Aegis는 Claude Code의 PreToolUse hook으로 동작합니다. AI가 파일을 �
 
 ## 라이선스
 
-TBD
+이 프로젝트는 MIT 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
