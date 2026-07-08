@@ -49,12 +49,19 @@ PHASE11D_2_COMPLETE_LABEL = (
 
 CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE = "PreToolUse"
 
-# Claude Code PreToolUse permissionDecision values. There is no native
-# "defer" value, so the judgment brain's ``defer`` (an uncertain / not-checked
-# hold) collapses to a blocking ``deny`` at this boundary -- fail-closed.
+# PreToolUse permissionDecision values used by the supported hook substrates.
+# There is no native "defer" value. The default Claude Code path maps the
+# judgment brain's ``defer`` to ``ask``; the explicit Codex substrate path
+# upgrades ``ask``/``defer`` to ``deny`` because Codex does not enforce ask.
 PERMISSION_ALLOW = "allow"
 PERMISSION_DENY = "deny"
 PERMISSION_ASK = "ask"
+
+SUBSTRATE_CLAUDE_CODE = "claude-code"
+SUBSTRATE_CODEX = "codex"
+CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON = (
+    "codex_substrate_ask_not_enforced_upgraded_to_deny"
+)
 
 # Exit codes. allow/ask carry their decision in the stdout JSON with exit 0.
 # deny additionally exits with the Claude Code blocking exit code so the tool
@@ -90,12 +97,19 @@ class HookRunResult:
     reason: str
 
 
-def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookRunResult:
+def render_hook_response(
+    raw_stdin_text: str,
+    *,
+    repo_root: str | Path,
+    substrate: str | None = None,
+) -> HookRunResult:
     """Render a Claude Code PreToolUse hook response from untrusted stdin text.
 
     Pure and side-effect free: performs no stream or filesystem I/O so it can be
     exercised directly in tests. Every failure mode returns a blocking ``deny``.
     """
+
+    effective_substrate = _normalize_substrate(substrate)
 
     try:
         payload = json.loads(raw_stdin_text)
@@ -104,6 +118,7 @@ def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookR
             "invalid_json_stdin_fail_closed_deny",
             hook_decision=None,
             fail_closed=True,
+            substrate=effective_substrate,
         )
 
     if not isinstance(payload, Mapping):
@@ -111,6 +126,7 @@ def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookR
             "non_object_json_stdin_fail_closed_deny",
             hook_decision=None,
             fail_closed=True,
+            substrate=effective_substrate,
         )
 
     # Wiring-level shape validation. Invalid / missing-field / unsupported-tool
@@ -126,6 +142,7 @@ def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookR
             "input_validation_error_fail_closed_deny",
             hook_decision=None,
             fail_closed=True,
+            substrate=effective_substrate,
         )
     if not validation.valid or validation.hook_input is None:
         return _deny_result(
@@ -133,6 +150,7 @@ def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookR
             hook_decision=None,
             fail_closed=True,
             extra_reason_codes=tuple(validation.reasons),
+            substrate=effective_substrate,
         )
 
     try:
@@ -145,22 +163,25 @@ def render_hook_response(raw_stdin_text: str, *, repo_root: str | Path) -> HookR
             "internal_judgment_error_fail_closed_deny",
             hook_decision=None,
             fail_closed=True,
+            substrate=effective_substrate,
         )
 
-    mapping = _DECISION_TO_PERMISSION_AND_EXIT.get(hook_decision)
+    mapping = _permission_mapping_for_substrate(hook_decision, effective_substrate)
     if mapping is None:
         return _deny_result(
             f"unmapped_hook_decision_fail_closed_deny:{hook_decision}",
             hook_decision=hook_decision,
             fail_closed=True,
+            substrate=effective_substrate,
         )
 
-    permission_decision, exit_code = mapping
+    permission_decision, exit_code, substrate_reason_codes = mapping
     reason = _reason_string(
         permission_decision=permission_decision,
         hook_decision=hook_decision,
         tool_name=tool_name,
-        decision_reasons=decision_reasons,
+        decision_reasons=(*decision_reasons, *substrate_reason_codes),
+        substrate=effective_substrate,
     )
     stdout_json = _permission_decision_json(permission_decision, reason)
     stderr_text = reason if exit_code == EXIT_BLOCK else ""
@@ -181,6 +202,7 @@ def run_aeg_hook_run(
     stdout: TextIO,
     stderr: TextIO,
     repo_root: str | Path,
+    substrate: str | None = None,
 ) -> int:
     """Read PreToolUse JSON from ``stdin``, judge it, write the Claude Code
     hook response to ``stdout``/``stderr``, and return the exit code.
@@ -193,14 +215,22 @@ def run_aeg_hook_run(
     except Exception:  # noqa: BLE001 - unreadable stdin must fail closed.
         raw_stdin_text = ""
 
-    result = render_hook_response(raw_stdin_text, repo_root=repo_root)
+    result = render_hook_response(
+        raw_stdin_text,
+        repo_root=repo_root,
+        substrate=substrate,
+    )
     stdout.write(result.stdout_json + "\n")
     if result.stderr_text:
         stderr.write(result.stderr_text + "\n")
     return result.exit_code
 
 
-def run_aeg_hook_run_from_process(repo_root: str | Path | None = None) -> int:
+def run_aeg_hook_run_from_process(
+    repo_root: str | Path | None = None,
+    *,
+    substrate: str | None = None,
+) -> int:
     """Entry point used by the ``aeg hook-run`` CLI subcommand, bound to the
     real process streams."""
 
@@ -210,6 +240,7 @@ def run_aeg_hook_run_from_process(repo_root: str | Path | None = None) -> int:
         stdout=sys.stdout,
         stderr=sys.stderr,
         repo_root=resolved_root,
+        substrate=substrate,
     )
 
 
@@ -231,6 +262,12 @@ def build_aeg_hook_run_contract_evidence() -> dict[str, Any]:
         "codex_apply_patch_tool_call_supported": True,
         "apply_patch_normal_target_maps_to_allow": True,
         "apply_patch_risky_or_malformed_target_maps_to_deny": True,
+        "substrate_selection_source": "explicit_hook_run_substrate_argument",
+        "tool_name_used_for_substrate_detection": False,
+        "default_substrate": SUBSTRATE_CLAUDE_CODE,
+        "missing_or_unknown_substrate_defaults_to_claude_code": True,
+        "codex_substrate_ask_defer_upgraded_to_deny": True,
+        "codex_substrate_upgrade_reason_code": CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
         "decision_to_permission_and_exit": {
             decision: {"permissionDecision": permission, "exit_code": exit_code}
             for decision, (permission, exit_code) in _DECISION_TO_PERMISSION_AND_EXIT.items()
@@ -260,12 +297,14 @@ def _deny_result(
     hook_decision: str | None,
     fail_closed: bool,
     extra_reason_codes: tuple[str, ...] = (),
+    substrate: str = SUBSTRATE_CLAUDE_CODE,
 ) -> HookRunResult:
     reason = _reason_string(
         permission_decision=PERMISSION_DENY,
         hook_decision=hook_decision,
         tool_name=None,
         decision_reasons=(reason_code, *extra_reason_codes),
+        substrate=substrate,
     )
     return HookRunResult(
         stdout_json=_permission_decision_json(PERMISSION_DENY, reason),
@@ -284,6 +323,7 @@ def _reason_string(
     hook_decision: str | None,
     tool_name: Any,
     decision_reasons: tuple[str, ...],
+    substrate: str,
 ) -> str:
     # Deliberately excludes raw tool_input so secrets in tool input are never
     # echoed. tool_name is a low-risk enum-like label (Write/Edit/Bash/Read).
@@ -292,6 +332,7 @@ def _reason_string(
     return (
         f"aegis_pretooluse permissionDecision={permission_decision};"
         f" hook_decision={hook_decision if hook_decision is not None else 'none'};"
+        f" substrate={substrate};"
         f" tool_name={safe_tool_name};"
         f" reason_codes={codes};"
         f" safe_default={SAFE_DEFAULT}"
@@ -309,8 +350,32 @@ def _permission_decision_json(permission_decision: str, reason: str) -> str:
     return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+def _normalize_substrate(substrate: str | None) -> str:
+    if substrate == SUBSTRATE_CODEX:
+        return SUBSTRATE_CODEX
+    return SUBSTRATE_CLAUDE_CODE
+
+
+def _permission_mapping_for_substrate(
+    hook_decision: str,
+    substrate: str,
+) -> tuple[str, int, tuple[str, ...]] | None:
+    mapping = _DECISION_TO_PERMISSION_AND_EXIT.get(hook_decision)
+    if mapping is None:
+        return None
+    if substrate == SUBSTRATE_CODEX and hook_decision in {ASK, DEFER}:
+        return (
+            PERMISSION_DENY,
+            EXIT_BLOCK,
+            (CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,),
+        )
+    permission_decision, exit_code = mapping
+    return (permission_decision, exit_code, tuple())
+
+
 __all__ = [
     "CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE",
+    "CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON",
     "EXIT_ALLOW_OR_ASK",
     "EXIT_BLOCK",
     "PERMISSION_ALLOW",
@@ -318,6 +383,8 @@ __all__ = [
     "PERMISSION_DENY",
     "PHASE11D_2_AEG_HOOK_RUN_VERSION",
     "PHASE11D_2_COMPLETE_LABEL",
+    "SUBSTRATE_CLAUDE_CODE",
+    "SUBSTRATE_CODEX",
     "HookRunResult",
     "build_aeg_hook_run_contract_evidence",
     "render_hook_response",

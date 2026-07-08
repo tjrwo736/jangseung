@@ -11,12 +11,15 @@ from pathlib import Path
 
 from src.cli.hook_run import (
     CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
+    CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
     EXIT_ALLOW_OR_ASK,
     EXIT_BLOCK,
     PERMISSION_ALLOW,
     PERMISSION_ASK,
     PERMISSION_DENY,
     PHASE11D_2_COMPLETE_LABEL,
+    SUBSTRATE_CLAUDE_CODE,
+    SUBSTRATE_CODEX,
     build_aeg_hook_run_contract_evidence,
     render_hook_response,
 )
@@ -31,6 +34,14 @@ def _render(payload_or_text, repo_root):
     else:
         raw = json.dumps(payload_or_text)
     return render_hook_response(raw, repo_root=repo_root)
+
+
+def _render_for_substrate(payload_or_text, repo_root, substrate):
+    if isinstance(payload_or_text, str):
+        raw = payload_or_text
+    else:
+        raw = json.dumps(payload_or_text)
+    return render_hook_response(raw, repo_root=repo_root, substrate=substrate)
 
 
 def _permission_from_stdout(stdout_json: str) -> str:
@@ -93,6 +104,62 @@ class RenderHookResponseTests(unittest.TestCase):
         )
         self.assertIn(result.permission_decision, (PERMISSION_ALLOW, PERMISSION_ASK))
         self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+
+    def test_unclassified_bash_default_substrate_maps_to_ask(self):
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "dd if=/dev/zero of=tmp.bin bs=1 count=1"},
+            "tool_use_id": "t-bash",
+        }
+
+        result = _render(payload, self.repo_root)
+
+        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertIn("substrate=claude-code", result.reason)
+        self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
+
+    def test_unclassified_bash_claude_code_substrate_still_maps_to_ask(self):
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "dd if=/dev/zero of=tmp.bin bs=1 count=1"},
+            "tool_use_id": "t-bash",
+        }
+
+        result = _render_for_substrate(payload, self.repo_root, SUBSTRATE_CLAUDE_CODE)
+
+        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
+
+    def test_unclassified_bash_codex_substrate_upgrades_ask_defer_to_deny(self):
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "dd if=/dev/zero of=tmp.bin bs=1 count=1"},
+            "tool_use_id": "t-bash",
+        }
+
+        result = _render_for_substrate(payload, self.repo_root, SUBSTRATE_CODEX)
+
+        self.assertEqual(result.permission_decision, PERMISSION_DENY)
+        self.assertEqual(result.exit_code, EXIT_BLOCK)
+        self.assertEqual(result.hook_decision, "defer")
+        self.assertIn("substrate=codex", result.reason)
+        self.assertIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
+
+    def test_unknown_substrate_defaults_to_claude_code_ask_behavior(self):
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "dd if=/dev/zero of=tmp.bin bs=1 count=1"},
+            "tool_use_id": "t-bash",
+        }
+
+        result = _render_for_substrate(payload, self.repo_root, "unknown")
+
+        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertIn("substrate=claude-code", result.reason)
+        self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
 
     # --- dangerous (must deny + block) ----------------------------------
 
@@ -158,6 +225,33 @@ class RenderHookResponseTests(unittest.TestCase):
                 )
                 self.assertEqual(result.permission_decision, PERMISSION_DENY)
                 self.assertEqual(result.exit_code, EXIT_BLOCK)
+
+    def test_codex_substrate_does_not_change_clear_deny_or_allow(self):
+        deny = _render_for_substrate(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "rm -rf /"},
+                "tool_use_id": "t-deny",
+            },
+            self.repo_root,
+            SUBSTRATE_CODEX,
+        )
+        allow = _render_for_substrate(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": "README.md"},
+                "tool_use_id": "t-allow",
+            },
+            self.repo_root,
+            SUBSTRATE_CODEX,
+        )
+
+        self.assertEqual(deny.permission_decision, PERMISSION_DENY)
+        self.assertEqual(deny.exit_code, EXIT_BLOCK)
+        self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, deny.reason)
+        self.assertEqual(allow.permission_decision, PERMISSION_ALLOW)
+        self.assertEqual(allow.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, allow.reason)
 
     def test_protected_write_with_missing_tool_use_id_still_denies(self):
         # Downgrade guard: an invalid input must not skip path judgment and
@@ -270,6 +364,18 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertFalse(evidence["judgment_brain_modified"])
         self.assertFalse(evidence["failure_ever_maps_to_allow"])
         self.assertFalse(evidence["raw_tool_input_echoed_in_reason"])
+        self.assertEqual(
+            evidence["substrate_selection_source"],
+            "explicit_hook_run_substrate_argument",
+        )
+        self.assertFalse(evidence["tool_name_used_for_substrate_detection"])
+        self.assertEqual(evidence["default_substrate"], SUBSTRATE_CLAUDE_CODE)
+        self.assertTrue(evidence["missing_or_unknown_substrate_defaults_to_claude_code"])
+        self.assertTrue(evidence["codex_substrate_ask_defer_upgraded_to_deny"])
+        self.assertEqual(
+            evidence["codex_substrate_upgrade_reason_code"],
+            CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
+        )
         self.assertFalse(evidence["settings_json_modified"])
         self.assertFalse(evidence["hook_installed"])
         self.assertFalse(evidence["claude_code_execution_performed"])
@@ -282,11 +388,13 @@ class RenderHookResponseTests(unittest.TestCase):
 class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
     """Proves the real stdin -> stdout -> exit-code path via an actual process."""
 
-    def _invoke(self, stdin_text: str):
+    def _invoke(self, stdin_text: str, extra_args: list[str] | None = None):
         with tempfile.TemporaryDirectory() as tmp:
             env = {"PYTHONPATH": str(REPO_ROOT), "PATH": __import__("os").environ.get("PATH", "")}
+            command = [sys.executable, "-m", "src.cli", "hook-run"]
+            command.extend(extra_args or [])
             proc = subprocess.run(
-                [sys.executable, "-m", "src.cli", "hook-run"],
+                command,
                 input=stdin_text,
                 capture_output=True,
                 text=True,
@@ -301,6 +409,22 @@ class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, EXIT_BLOCK)
         self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_DENY)
+
+    def test_subprocess_unclassified_bash_default_substrate_asks_exit_0(self):
+        proc = self._invoke(
+            '{"tool_name":"Bash","tool_input":{"command":"dd if=/dev/zero of=tmp.bin bs=1 count=1"},"tool_use_id":"t"}'
+        )
+        self.assertEqual(proc.returncode, EXIT_ALLOW_OR_ASK)
+        self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_ASK)
+
+    def test_subprocess_unclassified_bash_codex_substrate_denies_exit_2(self):
+        proc = self._invoke(
+            '{"tool_name":"Bash","tool_input":{"command":"dd if=/dev/zero of=tmp.bin bs=1 count=1"},"tool_use_id":"t"}',
+            ["--substrate", "codex"],
+        )
+        self.assertEqual(proc.returncode, EXIT_BLOCK)
+        self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_DENY)
+        self.assertIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, proc.stdout)
 
     def test_subprocess_normal_write_allows_exit_0(self):
         proc = self._invoke(
