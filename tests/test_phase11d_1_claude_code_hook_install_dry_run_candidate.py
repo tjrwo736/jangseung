@@ -117,18 +117,22 @@ class Phase11D1HookInstallDryRunCandidateTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertIn("command_does_not_reference_aeg_entrypoint", result.reasons)
 
-    def test_stdin_stdout_exit_wiring_honestly_absent(self):
+    def test_stdin_stdout_exit_wiring_now_present(self):
+        # As of Phase 11-D-2 the aeg hook-run stdin/stdout/exit-code wiring
+        # exists; the diagnostic honestly reports it. (Prior to 11-D-2 this
+        # asserted the wiring was absent -- that pre-wiring state is now
+        # historical.)
         diagnosis = diagnose_hook_entrypoint_stdin_stdout_wiring()
-        self.assertFalse(diagnosis.entrypoint_stdin_stdout_exit_wired)
-        self.assertEqual(diagnosis.files_with_stdin_stdout_exit_io, tuple())
+        self.assertTrue(diagnosis.entrypoint_stdin_stdout_exit_wired)
+        self.assertIn("src/cli/hook_run.py", diagnosis.files_with_stdin_stdout_exit_io)
         self.assertEqual(
             diagnosis.diagnosis,
-            "stdin_stdout_exit_wiring_not_present_anywhere_in_src_entrypoint_is_memory_candidate_only",
+            "stdin_stdout_exit_wiring_present_somewhere_in_src",
         )
 
-    def test_hook_run_subcommand_does_not_exist_yet(self):
+    def test_hook_run_subcommand_now_exists(self):
         diagnosis = diagnose_hook_entrypoint_stdin_stdout_wiring()
-        self.assertFalse(diagnosis.hook_run_subcommand_exists)
+        self.assertTrue(diagnosis.hook_run_subcommand_exists)
 
     def test_diagnostic_module_source_excludes_itself_from_scan_without_false_positive(self):
         # The diagnostic module's own source contains the token fragments
@@ -157,7 +161,9 @@ class Phase11D1HookInstallDryRunCandidateTests(unittest.TestCase):
         self.assertIn("settings_candidate_validation", evidence)
         self.assertTrue(evidence["settings_candidate_validation"]["valid"])
         self.assertIn("entrypoint_stdin_stdout_diagnosis", evidence)
-        self.assertFalse(
+        # The dry-run evidence still records no install/execution/mutation; the
+        # stdin/stdout wiring itself now exists as of Phase 11-D-2.
+        self.assertTrue(
             evidence["entrypoint_stdin_stdout_diagnosis"]["entrypoint_stdin_stdout_exit_wired"]
         )
 
