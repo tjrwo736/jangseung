@@ -697,6 +697,10 @@ class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
                 "*** Begin Patch\n*** Update File: src/app.py\n@@\n+x\n*** End Patch",
                 ("src/app.py",),
             ),
+            (
+                "*** Begin Patch\n*** Add File: 'README.md'\n+new line\n*** End Patch",
+                ("README.md",),
+            ),
         ):
             with self.subTest(command=command):
                 decision = self._judge_apply_patch(command)
@@ -715,6 +719,10 @@ class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
         cases = (
             (
                 "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+                ".env",
+            ),
+            (
+                "*** Begin Patch\n*** Add File: \".env\"\n+API_KEY=x\n*** End Patch",
                 ".env",
             ),
             (
@@ -772,6 +780,8 @@ class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
             "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
             "*** Begin Patch\nREADME.md\n*** End Patch",
             "*** Begin Patch\n*** Add File: README.md\nnot-added\n*** End Patch",
+            "*** Begin Patch\n*** Add File: \".env\n+K=v\n*** End Patch",
+            "*** Begin Patch\n*** Add File: READ\"ME.md\n+x\n*** End Patch",
         ):
             with self.subTest(command=command):
                 decision = self._judge_apply_patch(command)
