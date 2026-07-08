@@ -41,6 +41,7 @@ hook command implementation = NOT_STARTED
 hook installation = NOT_STARTED
 actual Claude Code execution = NOT_STARTED
 Codex implementation = NOT_STARTED
+Codex apply_patch tool-call recognition = IMPLEMENTED (no Codex execution/runtime)
 provider/model/network = NOT_STARTED / NOT_GRANTED
 OpenAI/Ollama/LLM call = NOT_STARTED / NOT_GRANTED
 API key/env/secret loading = NOT_STARTED / NOT_GRANTED
@@ -108,11 +109,16 @@ Bash
 Write
 Edit
 Read
+apply_patch
 ```
 
 The target list means Aegis v0 can recognize these tool names as
 contract-shaped input candidates. It does not mean the tools are safe, covered,
 allowed, denied, executed, or sandboxed.
+
+`apply_patch` is recognized for Codex-style PreToolUse-shaped input where
+`tool_input.command` contains a patch text. Recognition only lets later gates
+parse target paths; it does not apply the patch or grant write authority.
 
 Tool support rules:
 
@@ -190,6 +196,7 @@ hook command implementation
 actual hook installation
 actual Claude Code execution
 Codex implementation
+Codex execution/runtime integration
 provider/model/network implementation
 OpenAI/Ollama/LLM call
 API key/env/secret loading

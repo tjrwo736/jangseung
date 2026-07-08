@@ -40,6 +40,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     READ_REPO,
     STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
+    extract_apply_patch_targets,
     extract_bash_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
 )
@@ -114,6 +115,7 @@ _SELF_EXECUTION_CAPABILITY_ACTION_TYPES_NOT_HOOK_JUDGMENT_BASIS = frozenset(
     {MAPPING_WRITE_FILE, EDIT_FILE, MAPPING_RUN_COMMAND}
 )
 _WRITE_LIKE_CANDIDATE_ACTION_TYPES = frozenset({MAPPING_WRITE_FILE, EDIT_FILE})
+_WRITE_LIKE_TOOL_NAMES = frozenset({"Write", "Edit", "apply_patch"})
 
 # Read/Write/Edit of a repo-internal, non-protected file that the existing
 # engine classified as a definite LOW or MEDIUM change is "clearly safe normal
@@ -370,6 +372,11 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
             "truncate",
             "ln",
         ),
+        "apply_patch_tool_supported": True,
+        "apply_patch_maps_to_write_file_judgment": True,
+        "apply_patch_targets_reuse_existing_path_gates": True,
+        "apply_patch_target_parsing_is_structural_directive_parse": True,
+        "apply_patch_unparseable_maps_to_deny": True,
         "clearly_safe_normal_file_operation_maps_to_allow": True,
         "clearly_safe_requires_definite_low_or_medium_impact_classification": True,
         "clearly_safe_file_action_types": tuple(sorted(_CLEARLY_SAFE_FILE_ACTION_TYPES)),
@@ -529,6 +536,12 @@ def _target_paths(hook_input: ClaudeCodePreToolUseInput | None) -> tuple[str, ..
         file_path = hook_input.tool_input.get("file_path")
         if isinstance(file_path, str) and file_path.strip():
             return (file_path,)
+    if hook_input.tool_name == "apply_patch":
+        command = hook_input.tool_input.get("command")
+        if isinstance(command, str) and command.strip():
+            extraction = extract_apply_patch_targets(command)
+            if not extraction.parse_ambiguous:
+                return extraction.target_paths
     return tuple()
 
 
@@ -547,6 +560,8 @@ def _classify_hook_target(
     intent_text = "update documentation"
     if hook_input.tool_name == "Read":
         intent_text = "read documentation"
+    elif hook_input.tool_name == "apply_patch":
+        intent_text = "apply patch file update"
     return classify_task(
         intent_text,
         changed_files=target_paths,
@@ -563,7 +578,7 @@ def _engine_action_for_hook_input(
     if hook_input.tool_name == "Read":
         action_type = REQUEST_REPO_READ
         capabilities = ["read_repo"]
-    elif hook_input.tool_name in {"Write", "Edit"}:
+    elif hook_input.tool_name in _WRITE_LIKE_TOOL_NAMES:
         action_type = WRITE_FILE
         capabilities = ["write_file"]
     elif hook_input.tool_name == "Bash":

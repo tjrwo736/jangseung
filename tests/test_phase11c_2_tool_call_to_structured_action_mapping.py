@@ -19,6 +19,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     EDIT_FILE,
     HOLD_CURRENT_STATE,
     HOLD_CURRENT_STATE_CANDIDATE,
+    INVALID_TOOL_INPUT,
     NORMAL_REPO_PATH,
     PHASE11C_2_COMPLETE_LABEL,
     PROTECTED_PATH,
@@ -28,6 +29,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     UNKNOWN_TOOL,
     WRITE_FILE,
     build_tool_call_mapping_contract_evidence,
+    extract_apply_patch_targets,
     map_pretooluse_input_to_structured_action_candidate,
 )
 
@@ -183,6 +185,104 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 self.assertEqual(candidate.decision, SAFE_DEFAULT)
                 self._assert_candidate_only_no_authority(candidate)
 
+    def test_apply_patch_normal_targets_map_to_write_file_candidate(self):
+        command = (
+            "*** Begin Patch\n"
+            "*** Update File: README.md\n"
+            "@@\n"
+            "+new line\n"
+            "*** Update File: src/app.py\n"
+            "@@\n"
+            "+print('x')\n"
+            "*** End Patch"
+        )
+
+        candidate = self._candidate(
+            "apply_patch",
+            {"command": command},
+            "toolu-apply-patch-normal",
+        )
+
+        self.assertEqual(candidate.candidate_action_type, WRITE_FILE)
+        self.assertEqual(candidate.candidate_status, STRUCTURED_ACTION_CANDIDATE)
+        self.assertEqual(candidate.risk_status, NORMAL_REPO_PATH)
+        self.assertEqual(candidate.target_scope["paths"], ("README.md", "src/app.py"))
+        self.assertEqual(candidate.payload["target_paths"], ("README.md", "src/app.py"))
+        self.assertIn(
+            "apply_patch_targets_extracted_from_structural_directives",
+            candidate.reasons,
+        )
+        self._assert_candidate_only_no_authority(candidate)
+
+    def test_apply_patch_protected_and_out_of_scope_targets_map_to_deny_candidate(self):
+        cases = (
+            (
+                "add_env",
+                "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+                ".env",
+            ),
+            (
+                "workflow",
+                "*** Begin Patch\n*** Add File: .github/workflows/x.yml\n+name: x\n*** End Patch",
+                ".github/workflows/x.yml",
+            ),
+            (
+                "delete_env",
+                "*** Begin Patch\n*** Delete File: .env\n*** End Patch",
+                ".env",
+            ),
+            (
+                "absolute",
+                "*** Begin Patch\n*** Update File: /etc/passwd\n@@\n+x\n*** End Patch",
+                "/etc/passwd",
+            ),
+            (
+                "mixed",
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+x\n*** Add File: .env\n+K=v\n*** End Patch",
+                ".env",
+            ),
+        )
+
+        for label, command, expected_path in cases:
+            with self.subTest(label=label):
+                candidate = self._candidate(
+                    "apply_patch",
+                    {"command": command},
+                    f"toolu-apply-patch-{label}",
+                )
+
+                self.assertEqual(candidate.candidate_action_type, WRITE_FILE)
+                self.assertEqual(candidate.candidate_status, DENY_CANDIDATE)
+                self.assertEqual(candidate.declared_risk, HIGH)
+                self.assertEqual(candidate.risk_status, PROTECTED_PATH)
+                self.assertIn(expected_path, candidate.target_scope["paths"])
+                self._assert_candidate_only_no_authority(candidate)
+
+    def test_apply_patch_malformed_command_maps_to_deny_candidate(self):
+        cases = (
+            {"command": "*** Begin Patch\n*** Update File: README.md\n@@\n+x"},
+            {"command": "*** Begin Patch\nREADME.md\n*** End Patch"},
+            {"command": ""},
+            {},
+        )
+
+        for tool_input in cases:
+            with self.subTest(tool_input=tool_input):
+                candidate = self._candidate(
+                    "apply_patch",
+                    tool_input,
+                    "toolu-apply-patch-invalid",
+                )
+
+                self.assertEqual(candidate.candidate_action_type, WRITE_FILE)
+                self.assertEqual(candidate.candidate_status, DENY_CANDIDATE)
+                self.assertEqual(candidate.risk_status, INVALID_TOOL_INPUT)
+                self.assertIn(
+                    "apply_patch_unparseable_or_invalid_maps_to_deny_candidate",
+                    candidate.reasons,
+                )
+                self._assert_candidate_only_no_authority(candidate)
+
     def test_unknown_tool_maps_to_hold_current_state_not_pass(self):
         hook_input = ClaudeCodePreToolUseInput(
             tool_name="Task",
@@ -271,6 +371,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 "Write": WRITE_FILE,
                 "Edit": EDIT_FILE,
                 "Bash": RUN_COMMAND,
+                "apply_patch": WRITE_FILE,
             },
         )
         self.assertEqual(
@@ -279,6 +380,11 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         )
         self.assertEqual(evidence["state_dir_boundary_source"], "src.contracts.STATE_DIR")
         self.assertTrue(evidence["absolute_or_traversal_path_deny_candidate"])
+        self.assertTrue(evidence["apply_patch_tool_supported"])
+        self.assertTrue(evidence["codex_apply_patch_tool_call_supported"])
+        self.assertTrue(evidence["apply_patch_maps_to_write_file_candidate"])
+        self.assertTrue(evidence["apply_patch_target_parsing_is_structural_directive_parse"])
+        self.assertTrue(evidence["apply_patch_unparseable_maps_to_deny_candidate"])
         self.assertTrue(evidence["git_reset_hard_is_dangerous"])
         self.assertTrue(evidence["git_clean_force_delete_is_dangerous"])
         self.assertNotIn("protected_path_segments", evidence)
@@ -530,6 +636,72 @@ class BashTargetExtractionTests(unittest.TestCase):
                 extraction = self._extract(command)
                 self.assertFalse(extraction.parse_ambiguous)
                 self.assertEqual(extraction.write_delete_targets, tuple())
+
+
+class ApplyPatchTargetExtractionTests(unittest.TestCase):
+    def test_add_update_delete_and_move_targets_are_extracted_from_directives(self):
+        command = (
+            "*** Begin Patch\n"
+            "*** Add File: docs/new.md\n"
+            "+hello\n"
+            "*** Update File: README.md\n"
+            "@@\n"
+            "+new\n"
+            "*** Delete File: old.txt\n"
+            "*** Update File: src/old.py\n"
+            "*** Move to: src/new.py\n"
+            "@@\n"
+            "-old\n"
+            "+new\n"
+            "*** End Patch"
+        )
+
+        extraction = extract_apply_patch_targets(command)
+
+        self.assertFalse(extraction.parse_ambiguous)
+        self.assertEqual(
+            extraction.target_paths,
+            ("docs/new.md", "README.md", "old.txt", "src/old.py", "src/new.py"),
+        )
+        self.assertEqual(
+            extraction.target_operations,
+            (
+                ("write", "docs/new.md"),
+                ("write", "README.md"),
+                ("delete", "old.txt"),
+                ("delete", "src/old.py"),
+                ("write", "src/new.py"),
+            ),
+        )
+
+    def test_content_mentions_do_not_create_targets(self):
+        command = (
+            "*** Begin Patch\n"
+            "*** Update File: README.md\n"
+            "@@\n"
+            "+document .env and .github/workflows/x.yml examples\n"
+            "*** End Patch"
+        )
+
+        extraction = extract_apply_patch_targets(command)
+
+        self.assertFalse(extraction.parse_ambiguous)
+        self.assertEqual(extraction.target_paths, ("README.md",))
+
+    def test_malformed_apply_patch_is_ambiguous(self):
+        cases = (
+            "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
+            "*** Begin Patch\n*** Move to: x\n*** End Patch",
+            "*** Begin Patch\n*** Add File: x\nnot-added-line\n*** End Patch",
+            "*** Begin Patch\n*** Delete File: x\n-body\n*** End Patch",
+            "*** Begin Patch\n*** End Patch",
+        )
+
+        for command in cases:
+            with self.subTest(command=command):
+                extraction = extract_apply_patch_targets(command)
+                self.assertTrue(extraction.parse_ambiguous)
+                self.assertEqual(extraction.target_paths, tuple())
 
 
 if __name__ == "__main__":
