@@ -74,30 +74,47 @@ cd /path/to/your-project
 aeg install
 ```
 
-`aeg install`은 다음을 확인하고 진행합니다.
+기본값은 Claude Code 대상입니다. 명시적으로 쓰면 다음과 같습니다.
+
+```bash
+aeg install --target claude-code
+```
+
+Claude Code 대상 `aeg install`은 다음을 확인하고 진행합니다.
 
 - 프로젝트 폴더의 `.claude/settings.json`에 Aegis PreToolUse hook을 등록합니다. **project-local만 지원합니다** — 글로벌(`~/.claude`) 설치는 이 버전에서 지원하지 않습니다.
 - 기존 `.claude/settings.json`이 있으면 병합합니다. 기존에 등록된 다른 hook과 설정은 그대로 남고, Aegis hook만 추가됩니다.
 - 쓰기 전에 변경 내용을 diff로 보여주고 확인(`y/N`)을 받습니다. 이미 승인한 자동화 환경이라면 `--yes`로 확인을 건너뛸 수 있습니다.
 - 쓰기 전에 기존 파일을 `settings.json.aegis-backup-<timestamp>`로 백업합니다.
 
-제거는 반대로:
+Codex 대상은 명시적으로 설치해야 합니다.
+
+```bash
+aeg install --target codex
+```
+
+Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.PreToolUse]]` command hook을 추가하고, hook command에 `aeg hook-run --substrate codex`를 기록합니다. 이 명시적 substrate 값이 있을 때만 Aegis는 내부 판정이 `ask`/`defer`인 경계 사례를 `deny`로 격상합니다. `allow`와 기존 `deny` 판정은 바꾸지 않습니다.
+
+주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
+
+Claude Code 제거는 반대로:
 
 ```bash
 aeg uninstall
 ```
 
-`aeg uninstall`은 Aegis가 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
+`aeg uninstall`은 `.claude/settings.json`에서 Aegis가 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
 
 ## 어떻게 작동하나
 
-Aegis는 Claude Code의 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령을 실행하는 tool call을 하려는 순간, 실행되기 직전에 그 요청이 Aegis로 전달됩니다. Aegis는 요청을 판정해서 위험하면 막고, 정상이면 통과시키고, 애매하면 확인을 요청합니다.
+Aegis는 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령을 실행하는 tool call을 하려는 순간, 실행되기 직전에 그 요청이 Aegis로 전달됩니다. Aegis는 요청을 판정해서 위험하면 막고, 정상이면 통과시키고, 애매하면 확인을 요청합니다. 단, `--target codex`로 설치된 hook은 Codex가 `ask`를 강제 차단하지 않는 것으로 확인되어 애매한 `ask`/`defer` 판정을 `deny`로 응답합니다.
 
 판정은 결정론적입니다 — 같은 입력에는 항상 같은 결과가 나옵니다. 그리고 판정 근거가 불확실할 때는 안전한 쪽(막거나 확인 요청)으로 실패합니다(fail-closed).
 
 ## 요구사항 / 현재 상태
 
-- **Claude Code에서 검증됨**: 실제 Claude Code 세션에서 PreToolUse hook으로 정상 작동을 확인했습니다. Codex 등 다른 코딩 에이전트는 향후 지원 대상이지만 아직 검증되지 않았습니다.
+- **Claude Code에서 검증됨**: 실제 Claude Code 세션에서 PreToolUse hook으로 정상 작동을 확인했습니다.
+- **Codex는 제한적 보완 상태입니다.** `--target codex`는 `.codex/config.toml` 설치와 `ask`/`defer` → `deny` 격상만 제공합니다. 전체 Codex 지원을 의미하지 않으며 추가 실물 검증이 필요합니다.
 - **정책은 현재 하드코딩되어 있습니다.** 사용자가 위험 기준을 직접 조정하는 기능은 아직 없습니다 (로드맵 예정).
 - **비밀(secret) 판정은 경로와 의도 기반입니다.** `.env` 같은 파일에 쓰는 시도 자체는 막지만, 파일 내용에서 실제 API 키/비밀번호 값을 스캔하는 기능은 아직 없습니다 (로드맵 예정).
 - Python 3.10 이상이 필요합니다.
