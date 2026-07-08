@@ -17,6 +17,7 @@ from src.contracts import (
     SAFE_DEFAULT,
 )
 from src.cli.hook_run import run_aeg_hook_run
+from src.cli.install import cmd_install, cmd_uninstall
 from src.evidence import build_evidence_packet, verify_latest
 from src.evidence.mutation_boundary import (
     build_mutation_boundary,
@@ -55,6 +56,32 @@ def main(argv: list[str] | None = None) -> int:
             "existing Aegis engine, and write a permissionDecision to stdout (fail-closed)"
         ),
     )
+    install_parser = subparsers.add_parser(
+        "install",
+        help="register the Aegis PreToolUse hook in project-local .claude/settings.json",
+    )
+    install_parser.add_argument(
+        "--path", default=None, help="project directory to install into (default: cwd)"
+    )
+    install_parser.add_argument(
+        "--yes", action="store_true", help="skip the confirmation prompt"
+    )
+    install_parser.add_argument(
+        "--global",
+        dest="global_install",
+        action="store_true",
+        help="(unsupported) global ~/.claude install; project-local only in this version",
+    )
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="remove the Aegis PreToolUse hook from project-local .claude/settings.json",
+    )
+    uninstall_parser.add_argument(
+        "--path", default=None, help="project directory to uninstall from (default: cwd)"
+    )
+    uninstall_parser.add_argument(
+        "--yes", action="store_true", help="skip the confirmation prompt"
+    )
 
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -76,6 +103,17 @@ def main(argv: list[str] | None = None) -> int:
             stdout=sys.stdout,
             stderr=sys.stderr,
             repo_root=Path.cwd(),
+        )
+    if args.command == "install":
+        return cmd_install(
+            Path(args.path) if args.path else Path.cwd(),
+            assume_yes=args.yes,
+            global_requested=args.global_install,
+        )
+    if args.command == "uninstall":
+        return cmd_uninstall(
+            Path(args.path) if args.path else Path.cwd(),
+            assume_yes=args.yes,
         )
     parser.error(f"unknown command: {args.command}")
     return 2

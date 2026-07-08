@@ -188,6 +188,44 @@ task was actually executed.
 If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a
 problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.
 
+## Claude Code Hook Install (aeg install / aeg uninstall)
+
+After installing the package, register the Aegis PreToolUse governance hook in
+a project with one command instead of hand-editing settings:
+
+```bash
+cd /path/to/your/project
+aeg install       # shows a diff preview and asks y/N before writing
+aeg uninstall     # removes only the Aegis hook, keeps your other settings
+```
+
+What `aeg install` does, and its safety model:
+
+- Writes only project-local `./.claude/settings.json`. Global (`~/.claude`)
+  install is **not supported** in this version; run `aeg install` inside the
+  project directory instead.
+- Merges into an existing `settings.json`: your other hooks and fields are
+  preserved; only one Aegis `PreToolUse` entry (matcher `Write|Edit|Bash|Read`)
+  is added.
+- Always shows a unified diff of the proposed change and asks for `y/N`
+  confirmation before writing. Use `--yes` to skip the prompt in automation.
+- Backs up an existing `settings.json` to
+  `settings.json.aegis-backup-<timestamp>` before writing.
+- Aborts without writing if the existing `settings.json` is invalid JSON or has
+  an unexpected structure — it will not overwrite content it cannot safely
+  merge.
+- Is idempotent: running it again reports "already installed" and makes no
+  change.
+
+The generated hook `command` uses the installed `aeg` executable (or the
+current interpreter's module invocation) so no manual `PYTHONPATH` is needed.
+`aeg uninstall` removes only the Aegis hook (identified by its `hook-run`
+command), preserving every other hook, and also backs up first; if no Aegis
+hook is present it exits quietly.
+
+This is the hook-install convenience layer only. It does not perform a public
+release and does not run Claude Code for you.
+
 ## Core Non-Dependencies
 
 Aegis core must not require the following as runtime dependencies:
