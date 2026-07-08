@@ -65,6 +65,27 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
         self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
 
+    def test_normal_apply_patch_maps_to_allow_exit_zero(self):
+        result = _render(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Update File: README.md\n"
+                        "@@\n"
+                        "+new line\n"
+                        "*** End Patch"
+                    )
+                },
+                "tool_use_id": "t-apply-patch",
+            },
+            self.repo_root,
+        )
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertNotIn("unsupported_or_unknown_tool_name:apply_patch", result.reason)
+
     def test_read_never_denies_and_never_hard_blocks(self):
         result = _render(
             {"tool_name": "Read", "tool_input": {"file_path": "app.py"}, "tool_use_id": "t3"},
@@ -85,6 +106,48 @@ class RenderHookResponseTests(unittest.TestCase):
                 self.assertEqual(result.permission_decision, PERMISSION_DENY)
                 self.assertEqual(result.exit_code, EXIT_BLOCK)
                 self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_DENY)
+
+    def test_apply_patch_risky_or_malformed_targets_deny_and_block(self):
+        cases = (
+            (
+                "env_add",
+                "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+            ),
+            (
+                "workflow_add",
+                "*** Begin Patch\n*** Add File: .github/workflows/x.yml\n+name: x\n*** End Patch",
+            ),
+            (
+                "env_delete",
+                "*** Begin Patch\n*** Delete File: .env\n*** End Patch",
+            ),
+            (
+                "repo_external",
+                "*** Begin Patch\n*** Update File: /etc/passwd\n@@\n+x\n*** End Patch",
+            ),
+            (
+                "mixed",
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+x\n*** Add File: .env\n+K=v\n*** End Patch",
+            ),
+            (
+                "malformed",
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
+            ),
+        )
+
+        for label, command in cases:
+            with self.subTest(label=label):
+                result = _render(
+                    {
+                        "tool_name": "apply_patch",
+                        "tool_input": {"command": command},
+                        "tool_use_id": "t",
+                    },
+                    self.repo_root,
+                )
+                self.assertEqual(result.permission_decision, PERMISSION_DENY)
+                self.assertEqual(result.exit_code, EXIT_BLOCK)
+                self.assertNotIn("unsupported_or_unknown_tool_name:apply_patch", result.reason)
 
     def test_dangerous_bash_denies_and_blocks(self):
         for command in ("rm -rf /", "git reset --hard HEAD~3", "git clean -fd"):
