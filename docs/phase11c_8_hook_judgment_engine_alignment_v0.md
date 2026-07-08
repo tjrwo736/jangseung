@@ -117,8 +117,29 @@ Write .aeg/state.json -> deny via capability gate and .aeg integrity guard
 ../outside.txt -> deny via repo-boundary gate
 /absolute/path.txt -> deny via repo-boundary gate
 normal low-risk Read -> allow only with clean law and limited read capability
-normal low-risk Edit -> deny because write capability is denied
+normal low-risk Edit -> allow as clearly safe normal work; self-execution write capability remains denied
 ```
+
+## Codex apply_patch Target-Aware Handling
+
+`apply_patch` is a supported PreToolUse-shaped tool name. The adapter extracts
+target paths from structural patch directives and then reuses the same existing
+path gates as Write/Edit:
+
+```text
+apply_patch Update File: README.md -> allow when classified as normal non-protected in-repo work
+apply_patch Update File: src/app.py -> allow when classified as normal non-protected in-repo work
+apply_patch Add File: .env -> deny via protected path gate
+apply_patch Add File: .github/workflows/x.yml -> deny via protected path gate
+apply_patch Delete File: .env -> deny via protected path gate
+apply_patch Update File: /etc/passwd -> deny via repo-boundary gate
+apply_patch mixed normal + protected targets -> deny
+apply_patch malformed/unparseable command -> deny fail-closed
+```
+
+The apply_patch denial basis is target-aware. A protected target denial must
+show the protected/repo-boundary gate basis, not an unsupported-tool basis.
+Patch application is not performed.
 
 ## Bash Safety Net
 

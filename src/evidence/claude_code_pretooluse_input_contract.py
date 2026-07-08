@@ -34,7 +34,7 @@ OPTIONAL_HOOK_METADATA_FIELDS = (
     "project_root",
     "timestamp",
 )
-SUPPORTED_INITIAL_TARGET_TOOLS = ("Bash", "Write", "Edit", "Read")
+SUPPORTED_INITIAL_TARGET_TOOLS = ("Bash", "Write", "Edit", "Read", "apply_patch")
 
 VALID_PRETOOLUSE_INPUT_CONTRACT = "VALID_PRETOOLUSE_INPUT_CONTRACT"
 INVALID_PRETOOLUSE_INPUT_CONTRACT = "INVALID_PRETOOLUSE_INPUT_CONTRACT"
@@ -251,6 +251,7 @@ def build_claude_code_pretooluse_input_contract_evidence() -> dict[str, Any]:
         "required_fields": REQUIRED_HOOK_INPUT_FIELDS,
         "optional_metadata_fields": OPTIONAL_HOOK_METADATA_FIELDS,
         "supported_initial_tools": SUPPORTED_INITIAL_TARGET_TOOLS,
+        "codex_apply_patch_tool_call_supported": True,
         "hook_input_trust_boundary": UNTRUSTED_RAW_EXECUTOR_OUTPUT,
         "hook_input_trusted_as_decision": False,
         "hook_input_trusted_as_capability_grant": False,

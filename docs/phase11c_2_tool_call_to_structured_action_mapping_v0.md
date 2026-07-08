@@ -48,6 +48,7 @@ hook command implementation = NOT_STARTED
 hook installation = NOT_STARTED
 actual Claude Code execution = NOT_STARTED
 Codex implementation = NOT_STARTED
+Codex apply_patch tool-call recognition = IMPLEMENTED (no Codex execution/runtime)
 provider/model/network = NOT_STARTED / NOT_GRANTED
 OpenAI/Ollama/LLM call = NOT_STARTED / NOT_GRANTED
 API key/env/secret loading = NOT_STARTED / NOT_GRANTED
@@ -112,6 +113,9 @@ Edit(file_path, old_string, new_string)
 
 Bash(command)
   -> RUN_COMMAND candidate
+
+apply_patch(command)
+  -> WRITE_FILE candidate with target paths extracted from patch directives
 ```
 
 These are candidate intents only. They do not execute, apply patches, write
@@ -142,6 +146,7 @@ Normal repo path handling:
 Read normal repo path = READ_REPO candidate only, no authority
 Write normal repo path = WRITE_FILE candidate only, no execution, no authority
 Edit normal repo path = EDIT_FILE candidate only, no patch application, no authority
+apply_patch normal repo targets = WRITE_FILE candidate only, no patch application, no authority
 ```
 
 Protected path handling:
@@ -158,6 +163,27 @@ src/law/policy.py -> DENY_CANDIDATE
 absolute path -> DENY_CANDIDATE
 parent traversal path -> DENY_CANDIDATE
 ```
+
+## apply_patch Handling
+
+Codex-style `apply_patch` input is parsed structurally. Target paths are taken
+only from exact patch directives:
+
+```text
+*** Add File: <path>
+*** Update File: <path>
+*** Delete File: <path>
+*** Move to: <path>
+```
+
+Multiple file directives in one patch are all extracted. Add/Update targets are
+treated as writes, Delete targets as deletes, and Move as delete of the updated
+source plus write of the destination. If any extracted target is protected,
+absolute, or traversal-escaping, the mapping returns `DENY_CANDIDATE`.
+
+Malformed or ambiguous patch text maps to `DENY_CANDIDATE` fail-closed. Patch
+content is not searched for protected-path strings; only structural directives
+declare targets.
 
 `DENY_CANDIDATE` is a mapping posture, not a hook response and not a final
 permission decision.
@@ -237,6 +263,7 @@ hook command implementation
 actual hook installation
 actual Claude Code execution
 Codex implementation
+Codex execution/runtime integration
 provider/model/network implementation
 OpenAI/Ollama/LLM call
 API key/env/secret loading

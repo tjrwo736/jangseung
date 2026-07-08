@@ -53,6 +53,7 @@ SUPPORTED_TOOL_TO_CANDIDATE_ACTION = MappingProxyType(
         "Write": WRITE_FILE,
         "Edit": EDIT_FILE,
         "Bash": RUN_COMMAND,
+        "apply_patch": WRITE_FILE,
     }
 )
 
@@ -131,6 +132,8 @@ def map_pretooluse_input_to_structured_action_candidate(
         return _map_edit(hook_input)
     if hook_input.tool_name == "Bash":
         return _map_bash(hook_input)
+    if hook_input.tool_name == "apply_patch":
+        return _map_apply_patch(hook_input)
 
     return _build_candidate(
         hook_input,
@@ -157,6 +160,17 @@ def build_tool_call_mapping_contract_evidence() -> dict[str, Any]:
         "protected_path_policy_source": "src.classify.is_protected_path",
         "state_dir_boundary_source": "src.contracts.STATE_DIR",
         "absolute_or_traversal_path_deny_candidate": True,
+        "apply_patch_tool_supported": True,
+        "codex_apply_patch_tool_call_supported": True,
+        "apply_patch_maps_to_write_file_candidate": True,
+        "apply_patch_target_parsing_is_structural_directive_parse": True,
+        "apply_patch_unparseable_maps_to_deny_candidate": True,
+        "apply_patch_target_directives": (
+            "*** Add File: ",
+            "*** Update File: ",
+            "*** Delete File: ",
+            "*** Move to: ",
+        ),
         "dangerous_bash_tokens": tuple(sorted(DANGEROUS_BASH_TOKENS)),
         "rm_recursive_force_is_dangerous": True,
         "git_reset_hard_is_dangerous": True,
@@ -323,6 +337,69 @@ def _map_bash(
     )
 
 
+def _map_apply_patch(
+    hook_input: ClaudeCodePreToolUseInput,
+) -> ToolCallStructuredActionCandidate:
+    command = hook_input.tool_input.get("command")
+    if not _is_non_empty_string(command):
+        return _invalid_apply_patch_candidate(
+            hook_input,
+            "missing_or_invalid_tool_input:command",
+        )
+
+    extraction = extract_apply_patch_targets(command)
+    if extraction.parse_ambiguous:
+        return _invalid_apply_patch_candidate(
+            hook_input,
+            f"apply_patch_parse_failed:{extraction.reason}",
+        )
+
+    denial_reasons = tuple(
+        reason
+        for path in extraction.target_paths
+        for reason in (_path_denial_reason(path),)
+        if reason is not None
+    )
+    if denial_reasons:
+        candidate_status = DENY_CANDIDATE
+        declared_risk = HIGH
+        risk_status = PROTECTED_PATH
+        reasons = (
+            *denial_reasons,
+            "apply_patch_target_path_maps_to_deny_candidate",
+        )
+    else:
+        candidate_status = STRUCTURED_ACTION_CANDIDATE
+        declared_risk = LOW
+        risk_status = NORMAL_REPO_PATH
+        reasons = (
+            "normal_repo_paths_map_to_apply_patch_candidate",
+            "apply_patch_targets_extracted_from_structural_directives",
+        )
+
+    return _build_candidate(
+        hook_input,
+        candidate_action_type=WRITE_FILE,
+        candidate_status=candidate_status,
+        reasons=(
+            *reasons,
+            "apply_patch_candidate_only_no_patch_application_or_authority",
+        ),
+        declared_risk=declared_risk,
+        risk_status=risk_status,
+        capability_requirements=("write_file",),
+        target_scope={
+            "repo_relative": risk_status == NORMAL_REPO_PATH,
+            "paths": extraction.target_paths,
+        },
+        payload={
+            "command": command,
+            "target_paths": extraction.target_paths,
+            "target_operations": extraction.target_operations,
+        },
+    )
+
+
 def _invalid_tool_input_candidate(
     hook_input: ClaudeCodePreToolUseInput,
     candidate_action_type: str,
@@ -336,6 +413,23 @@ def _invalid_tool_input_candidate(
         declared_risk=NOT_CHECKED,
         risk_status=INVALID_TOOL_INPUT,
         capability_requirements=("noop",),
+        target_scope={"repo_relative": False, "paths": tuple()},
+        payload={},
+    )
+
+
+def _invalid_apply_patch_candidate(
+    hook_input: ClaudeCodePreToolUseInput,
+    reason: str,
+) -> ToolCallStructuredActionCandidate:
+    return _build_candidate(
+        hook_input,
+        candidate_action_type=WRITE_FILE,
+        candidate_status=DENY_CANDIDATE,
+        reasons=(reason, "apply_patch_unparseable_or_invalid_maps_to_deny_candidate"),
+        declared_risk=HIGH,
+        risk_status=INVALID_TOOL_INPUT,
+        capability_requirements=("write_file",),
         target_scope={"repo_relative": False, "paths": tuple()},
         payload={},
     )
@@ -467,6 +561,16 @@ class BashTargetExtraction:
     reason: str
 
 
+@dataclass(frozen=True)
+class ApplyPatchTargetExtraction:
+    """Structurally-parsed file targets from a Codex ``apply_patch`` command."""
+
+    target_paths: tuple[str, ...]
+    target_operations: tuple[tuple[str, str], ...]
+    parse_ambiguous: bool
+    reason: str
+
+
 def extract_bash_write_delete_targets(command: str) -> BashTargetExtraction:
     """Parse a Bash command with shlex (not string matching) and extract the
     file paths it would write to or delete via redirection, tee, cp, mv, rm,
@@ -504,6 +608,172 @@ def extract_bash_write_delete_targets(command: str) -> BashTargetExtraction:
         False,
         "bash_write_delete_targets_extracted" if unique else "no_write_delete_target",
     )
+
+
+_APPLY_PATCH_BEGIN = "*** Begin Patch"
+_APPLY_PATCH_END = "*** End Patch"
+_APPLY_PATCH_END_OF_FILE = "*** End of File"
+_APPLY_PATCH_ADD_FILE = "*** Add File: "
+_APPLY_PATCH_UPDATE_FILE = "*** Update File: "
+_APPLY_PATCH_DELETE_FILE = "*** Delete File: "
+_APPLY_PATCH_MOVE_TO = "*** Move to: "
+
+
+def extract_apply_patch_targets(command: str) -> ApplyPatchTargetExtraction:
+    """Parse Codex ``apply_patch`` text and extract directive-declared targets.
+
+    Only exact patch directives declare targets. File content that merely
+    mentions a protected path is ignored; malformed structure is ambiguous and
+    must be denied by the caller.
+    """
+
+    if not isinstance(command, str) or not command.strip():
+        return ApplyPatchTargetExtraction(
+            tuple(),
+            tuple(),
+            True,
+            "empty_apply_patch_command",
+        )
+
+    lines = command.splitlines()
+    if len(lines) < 3:
+        return ApplyPatchTargetExtraction(
+            tuple(),
+            tuple(),
+            True,
+            "apply_patch_too_short",
+        )
+    if lines[0] != _APPLY_PATCH_BEGIN or lines[-1] != _APPLY_PATCH_END:
+        return ApplyPatchTargetExtraction(
+            tuple(),
+            tuple(),
+            True,
+            "apply_patch_missing_exact_begin_or_end",
+        )
+
+    operations: list[tuple[str, str]] = []
+    current_hunk_type: str | None = None
+    current_hunk_has_body = False
+    current_hunk_move_seen = False
+    current_update_operation_index: int | None = None
+
+    def fail(reason: str) -> ApplyPatchTargetExtraction:
+        return ApplyPatchTargetExtraction(tuple(), tuple(), True, reason)
+
+    def finish_hunk() -> str | None:
+        if current_hunk_type == "Add" and not current_hunk_has_body:
+            return "apply_patch_add_file_missing_added_lines"
+        if (
+            current_hunk_type == "Update"
+            and not current_hunk_has_body
+            and not current_hunk_move_seen
+        ):
+            return "apply_patch_update_file_missing_change"
+        return None
+
+    for line in lines[1:-1]:
+        path = _apply_patch_directive_path(line, _APPLY_PATCH_ADD_FILE)
+        if path is not None:
+            reason = finish_hunk()
+            if reason is not None:
+                return fail(reason)
+            operations.append(("write", path))
+            current_hunk_type = "Add"
+            current_hunk_has_body = False
+            current_hunk_move_seen = False
+            current_update_operation_index = None
+            continue
+
+        path = _apply_patch_directive_path(line, _APPLY_PATCH_UPDATE_FILE)
+        if path is not None:
+            reason = finish_hunk()
+            if reason is not None:
+                return fail(reason)
+            operations.append(("write", path))
+            current_hunk_type = "Update"
+            current_hunk_has_body = False
+            current_hunk_move_seen = False
+            current_update_operation_index = len(operations) - 1
+            continue
+
+        path = _apply_patch_directive_path(line, _APPLY_PATCH_DELETE_FILE)
+        if path is not None:
+            reason = finish_hunk()
+            if reason is not None:
+                return fail(reason)
+            operations.append(("delete", path))
+            current_hunk_type = "Delete"
+            current_hunk_has_body = False
+            current_hunk_move_seen = False
+            current_update_operation_index = None
+            continue
+
+        path = _apply_patch_directive_path(line, _APPLY_PATCH_MOVE_TO)
+        if path is not None:
+            if (
+                current_hunk_type != "Update"
+                or current_hunk_has_body
+                or current_hunk_move_seen
+                or current_update_operation_index is None
+            ):
+                return fail("apply_patch_move_to_not_first_in_update_hunk")
+            old_operation, old_path = operations[current_update_operation_index]
+            if old_operation != "write":
+                return fail("apply_patch_move_to_source_operation_invalid")
+            operations[current_update_operation_index] = ("delete", old_path)
+            operations.append(("write", path))
+            current_hunk_move_seen = True
+            continue
+
+        if line.startswith("*** "):
+            if line == _APPLY_PATCH_END_OF_FILE and current_hunk_type == "Update":
+                current_hunk_has_body = True
+                continue
+            return fail("apply_patch_unknown_directive")
+
+        if current_hunk_type is None:
+            return fail("apply_patch_content_before_file_directive")
+        if current_hunk_type == "Delete":
+            return fail("apply_patch_delete_file_has_unexpected_body")
+        if current_hunk_type == "Add":
+            if not line.startswith("+"):
+                return fail("apply_patch_add_file_line_without_plus")
+            current_hunk_has_body = True
+            continue
+        if current_hunk_type == "Update":
+            if not (
+                line.startswith("@@")
+                or line.startswith("+")
+                or line.startswith("-")
+                or line.startswith(" ")
+            ):
+                return fail("apply_patch_update_file_unrecognized_change_line")
+            current_hunk_has_body = True
+            continue
+        return fail("apply_patch_internal_parser_state_invalid")
+
+    reason = finish_hunk()
+    if reason is not None:
+        return fail(reason)
+    if not operations:
+        return fail("apply_patch_no_file_directives")
+
+    target_paths = tuple(dict.fromkeys(path for _, path in operations))
+    return ApplyPatchTargetExtraction(
+        target_paths,
+        tuple(operations),
+        False,
+        "apply_patch_targets_extracted",
+    )
+
+
+def _apply_patch_directive_path(line: str, prefix: str) -> str | None:
+    if not line.startswith(prefix):
+        return None
+    path = line[len(prefix) :]
+    if not path or path != path.strip() or "\x00" in path:
+        return None
+    return path
 
 
 def _split_bash_segments(tokens: list[str]) -> list[list[str]]:
