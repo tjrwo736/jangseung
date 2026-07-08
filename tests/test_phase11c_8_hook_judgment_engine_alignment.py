@@ -629,5 +629,88 @@ class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
         self.assertFalse(evidence["ambiguous_input_maps_to_allow"])
 
 
+class Phase11C8BashTargetPathGateTests(unittest.TestCase):
+    """Bash commands that write/delete a protected or out-of-repo path deny;
+    safe Bash stays ask; bypass/complex Bash never allows (fail-closed)."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name) / "repo"
+        (self.repo_root / "src").mkdir(parents=True)
+        (self.repo_root / ".github" / "workflows").mkdir(parents=True)
+        (self.repo_root / "README.md").write_text("# r", encoding="utf-8")
+        (self.repo_root / "src" / "app.py").write_text("x", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _judge_bash(self, command):
+        return judge_pretooluse_with_aeg_engine(
+            {"tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "t"},
+            repo_root=str(self.repo_root),
+        )
+
+    def test_protected_path_bash_write_delete_denies(self):
+        for command in (
+            'echo "K=v" > .env',
+            "echo x >> .env",
+            "echo x | tee .env",
+            "cp src/app.py .env",
+            "mv src/app.py .env",
+            "rm .env",
+            "rm -rf .aeg",
+            "echo x > .github/workflows/ci.yml",
+            "dd of=.env if=/dev/zero",
+            'echo x > .en"v"',  # obfuscation resolved by shlex
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._judge_bash(command).hook_decision, DENY)
+
+    def test_repo_external_bash_target_denies(self):
+        for command in ("echo x > /tmp/other/.env", "echo x > /etc/cron.d/x"):
+            with self.subTest(command=command):
+                self.assertEqual(self._judge_bash(command).hook_decision, DENY)
+
+    def test_safe_bash_stays_ask_no_false_positive(self):
+        for command in ("pwd", "ls -la", "git status", "cat README.md", "echo x > src/app.py"):
+            with self.subTest(command=command):
+                decision = self._judge_bash(command)
+                self.assertEqual(decision.hook_decision, DEFER)
+                self.assertNotEqual(decision.hook_decision, ALLOW)
+
+    def test_bypass_and_complex_bash_never_allow(self):
+        # Unparseable target => ask/defer, never allow, and NOT falsely denied.
+        for command in (
+            "bash -c 'echo x > .env'",
+            "E=.env; echo x > $E",
+            "echo x > $(echo .env)",
+            "echo x > `echo .env`",
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_bash(command)
+                self.assertNotEqual(decision.hook_decision, ALLOW)
+                self.assertEqual(decision.hook_decision, DEFER)
+                gate = decision.engine_decision_basis["bash_target_gate"]
+                self.assertTrue(gate["parse_ambiguous"])
+                self.assertFalse(gate["deny"])
+
+    def test_existing_dangerous_bash_still_denies(self):
+        for command in ("rm -rf /", "git reset --hard", "git clean -fd", "sudo rm .env"):
+            with self.subTest(command=command):
+                self.assertEqual(self._judge_bash(command).hook_decision, DENY)
+
+    def test_evidence_records_bash_target_gate(self):
+        evidence = build_hook_judgment_engine_alignment_evidence()
+        self.assertTrue(
+            evidence["bash_write_delete_target_protected_or_out_of_scope_maps_to_deny"]
+        )
+        self.assertTrue(evidence["bash_target_parsing_is_structural_shlex_not_string_match"])
+        self.assertTrue(
+            evidence["bash_unparseable_target_maps_to_ask_defer_not_deny_not_allow"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
