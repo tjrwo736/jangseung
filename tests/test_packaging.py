@@ -32,51 +32,38 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertEqual(pyproject["project"]["requires-python"], ">=3.10")
         self.assertGreaterEqual(sys.version_info, (3, 10))
 
-    def test_readme_sandbox_quickstart_preseeds_runtime_ignores(self):
+    def test_readme_documents_hook_install_flow_and_honest_scope(self):
+        # README.md was rewritten as the user-facing product README (Korean,
+        # PreToolUse-hook framing). This locks in the actual install commands
+        # and the honest-scope disclaimers so they cannot silently regress.
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn('printf ".aeg/\\n.env\\n.env.*\\n" > .gitignore', readme)
-        self.assertIn('git add README.md .gitignore', readme)
-        self.assertIn('git commit -m "init sandbox repo"', readme)
-        self.assertIn("python3 -m pip install -e .", readme)
-        self.assertIn(
-            "For a disposable local test, you may install inside a temporary virtual\n"
-            "environment instead of your system Python.",
-            readme,
-        )
-        self.assertIn(
-            "Aegis writes\n"
-            "folder-local runtime state under `.aeg/`; the target repository must\n"
-            "git-ignore `.aeg/` before running Aegis.",
-            readme,
-        )
-        self.assertIn(
-            "`.aeg/` is local runtime state. Keep it in the\n"
-            "target repo folder, but do not commit it.",
-            readme,
-        )
-        self.assertIn(
-            "If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a\n"
-            "problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.",
-            readme,
-        )
-        self.assertIn(
-            "`REPLAY_CONSISTENT` means Aegis replayed the recorded evidence and binding\n"
-            "deterministically. It is not an external oracle and does not mean the requested\n"
-            "task was actually executed.",
-            readme,
-        )
+        # real, verified install flow
+        self.assertIn("git clone https://github.com/tjrwo736/aegis.git", readme)
+        self.assertIn("python -m pip install -e .", readme)
+        self.assertIn("aeg install", readme)
+        self.assertIn("aeg uninstall", readme)
 
-        self.assertIn(
-            "aeg doctor\n"
-            "aeg init\n"
-            "aeg doctor\n"
-            'aeg run "fix typo in README"\n'
-            "aeg verify\n"
-            'aeg run "merge to main and deploy"\n'
-            "aeg verify",
-            readme,
-        )
+        # install safety properties must stay documented
+        self.assertIn("project-local만 지원", readme)
+        self.assertIn("병합", readme)
+        self.assertIn("백업", readme)
+        self.assertIn("y/N", readme)
+
+        # honest current-scope disclaimers must stay documented
+        self.assertIn("PyPI", readme)
+        self.assertIn("Claude Code에서 검증됨", readme)
+        self.assertIn("Codex", readme)
+        self.assertIn("하드코딩", readme)
+        self.assertIn("스캔하는 기능은 아직 없습니다", readme)
+        self.assertIn("fail-closed", readme)
+        self.assertIn("3.10", readme)
+
+        # what-it-blocks / does-not-block / limitations sections must stay present
+        self.assertIn(".env", readme)
+        self.assertIn(".github/workflows", readme)
+        self.assertIn("rm -rf", readme)
+        self.assertIn("완벽하게 안전", readme)
 
 
 if __name__ == "__main__":
