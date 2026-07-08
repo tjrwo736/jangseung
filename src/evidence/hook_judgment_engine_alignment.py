@@ -40,6 +40,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     READ_REPO,
     STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
+    extract_bash_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
 )
 from src.evidence.claude_code_tool_call_mapping import RUN_COMMAND as MAPPING_RUN_COMMAND
@@ -270,6 +271,7 @@ def judge_pretooluse_with_aeg_engine(
     aeg_guard_records = _aeg_guard_records(repo_root, request.target_paths)
     repo_boundary_records = _repo_boundary_records(repo_root, request.target_paths)
     protected_path_gate = _protected_path_gate(request.target_paths)
+    bash_target_gate = _bash_write_delete_target_gate(hook_input, repo_root)
     dangerous_bash_gate = {
         "risk_status": action_candidate.risk_status,
         "dangerous_bash": action_candidate.risk_status == BASH_DANGEROUS,
@@ -296,6 +298,7 @@ def judge_pretooluse_with_aeg_engine(
         "aeg_guard": aeg_guard_records,
         "repo_boundary_gate": repo_boundary_records,
         "path_normalization": path_normalization,
+        "bash_target_gate": bash_target_gate,
         "dangerous_bash_gate": dangerous_bash_gate,
         "ignored_reported_only_fields": ignored_reported_only_fields,
         "reported_only_trusted_as_judgment_basis": False,
@@ -313,6 +316,7 @@ def judge_pretooluse_with_aeg_engine(
         aeg_guard_records=aeg_guard_records,
         repo_boundary_records=repo_boundary_records,
         classification=classification,
+        bash_target_gate=bash_target_gate,
     )
     hook_decision = engine_decision
     return _build_decision(
@@ -353,6 +357,19 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
         "read_capability_gate_used_as_hook_judgment_basis": True,
         "aegis_self_write_file_capability_unchanged_and_denied": True,
         "aegis_self_run_command_capability_unchanged_and_denied": True,
+        "bash_write_delete_target_protected_or_out_of_scope_maps_to_deny": True,
+        "bash_target_parsing_is_structural_shlex_not_string_match": True,
+        "bash_unparseable_target_maps_to_ask_defer_not_deny_not_allow": True,
+        "bash_target_gate_covers": (
+            "redirect",
+            "tee",
+            "cp",
+            "mv",
+            "rm",
+            "dd_of",
+            "truncate",
+            "ln",
+        ),
         "clearly_safe_normal_file_operation_maps_to_allow": True,
         "clearly_safe_requires_definite_low_or_medium_impact_classification": True,
         "clearly_safe_file_action_types": tuple(sorted(_CLEARLY_SAFE_FILE_ACTION_TYPES)),
@@ -573,6 +590,100 @@ def _engine_action_for_hook_input(
     }
 
 
+def _bash_write_delete_target_gate(
+    hook_input: ClaudeCodePreToolUseInput,
+    repo_root: str | Path,
+) -> dict[str, Any]:
+    """Deny a Bash command whose structurally-parsed write/delete target is a
+    protected path or outside the repo. Fail-closed: if the command is not
+    precisely parseable (substitution, nested shell, ...), no target is
+    claimed and the decision is left to the existing ask/defer path -- never
+    promoted to allow, and never falsely claimed as denied."""
+
+    if hook_input.tool_name != "Bash":
+        return {
+            "applicable": False,
+            "deny": False,
+            "parse_ambiguous": False,
+            "targets": tuple(),
+            "deny_targets": tuple(),
+            "reason": "not_a_bash_tool_call",
+        }
+
+    command = hook_input.tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return {
+            "applicable": True,
+            "deny": False,
+            "parse_ambiguous": True,
+            "targets": tuple(),
+            "deny_targets": tuple(),
+            "reason": "missing_or_empty_command",
+        }
+
+    extraction = extract_bash_write_delete_targets(command)
+    if extraction.parse_ambiguous:
+        return {
+            "applicable": True,
+            "deny": False,
+            "parse_ambiguous": True,
+            "targets": tuple(),
+            "deny_targets": tuple(),
+            "reason": (
+                "bash_target_unparseable_maps_to_ask_defer_not_allow_not_falsely_denied:"
+                f"{extraction.reason}"
+            ),
+        }
+
+    deny_targets: list[dict[str, str]] = []
+    for target in extraction.write_delete_targets:
+        kind = _classify_bash_target(target, repo_root)
+        if kind in ("out_of_scope", "protected_path", "protected_state_dir"):
+            deny_targets.append({"target": target, "kind": kind})
+
+    return {
+        "applicable": True,
+        "deny": bool(deny_targets),
+        "parse_ambiguous": False,
+        "targets": extraction.write_delete_targets,
+        "deny_targets": tuple(deny_targets),
+        "protected_path_policy_source": "src.classify.is_protected_path",
+        "repo_boundary_policy_source": (
+            "src.evidence.mediated_repo_boundary_write_path.resolve_repo_boundary_path"
+        ),
+        "reason": extraction.reason,
+    }
+
+
+def _classify_bash_target(target: str, repo_root: str | Path) -> str:
+    try:
+        resolution = resolve_repo_boundary_path(repo_root=repo_root, submitted_target=target)
+    except Exception:  # noqa: BLE001 - unresolvable target -> do not deny, leave to ask/defer.
+        return "unresolvable_ambiguous"
+
+    if resolution.target_outside_repo:
+        return "out_of_scope"
+
+    try:
+        relative = Path(resolution.canonical_target).relative_to(
+            Path(resolution.repo_root)
+        ).as_posix()
+    except Exception:  # noqa: BLE001 - keep fail-closed to ask/defer, not a claimed deny.
+        return "unresolvable_ambiguous"
+
+    if is_protected_path(relative):
+        return "protected_path"
+
+    try:
+        guard = decide_b1_aeg_integrity_guard(repo_root=repo_root, submitted_path=target)
+    except Exception:  # noqa: BLE001
+        return "unresolvable_ambiguous"
+    if getattr(guard, "protected_target", False):
+        return "protected_state_dir"
+
+    return "safe_in_repo"
+
+
 def _is_clearly_safe_normal_file_operation(
     *,
     candidate_action_type: str,
@@ -615,6 +726,7 @@ def _collapse_engine_decision(
     aeg_guard_records: tuple[Mapping[str, Any], ...],
     repo_boundary_records: tuple[Mapping[str, Any], ...],
     classification: Classification,
+    bash_target_gate: Mapping[str, Any],
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -625,6 +737,8 @@ def _collapse_engine_decision(
         reasons.append("tool_call_mapping_deny_candidate")
     if action_risk_status == BASH_DANGEROUS:
         reasons.append("dangerous_bash_gate_denies_command")
+    if bash_target_gate.get("deny") is True:
+        reasons.append("bash_write_delete_target_protected_or_out_of_scope")
 
     # WRITE_FILE/RUN_COMMAND capability status reflects Aegis's own
     # propose-only self-execution policy (11-B), not the risk of the

@@ -473,5 +473,64 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         self.assertEqual(candidate.live_executor_authority, LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
 
 
+class BashTargetExtractionTests(unittest.TestCase):
+    def _extract(self, command):
+        from src.evidence.claude_code_tool_call_mapping import (
+            extract_bash_write_delete_targets,
+        )
+
+        return extract_bash_write_delete_targets(command)
+
+    def test_redirect_tee_cp_mv_rm_dd_truncate_targets_extracted(self):
+        cases = {
+            'echo "K=v" > .env': [".env"],
+            "echo x >> .env": [".env"],
+            "echo x | tee .env": [".env"],
+            "cp src/a.py .env": [".env"],
+            "mv src/a.py .env": [".env"],
+            "rm .env": [".env"],
+            "dd of=.env if=/dev/zero": [".env"],
+            "truncate -s 0 .env": [".env"],
+            "echo x > .github/workflows/ci.yml": [".github/workflows/ci.yml"],
+            "echo hi > out.txt && rm .env": ["out.txt", ".env"],
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertFalse(extraction.parse_ambiguous)
+                self.assertEqual(list(extraction.write_delete_targets), expected)
+
+    def test_shlex_defeats_quote_splitting_obfuscation(self):
+        extraction = self._extract('echo x > .en"v"')
+        self.assertFalse(extraction.parse_ambiguous)
+        self.assertEqual(list(extraction.write_delete_targets), [".env"])
+
+    def test_fd_duplication_not_treated_as_target(self):
+        extraction = self._extract("echo x 2>&1 > .env")
+        self.assertEqual(list(extraction.write_delete_targets), [".env"])
+
+    def test_substitution_and_nested_shell_are_ambiguous(self):
+        for command in (
+            "E=.env; echo x > $E",
+            "echo x > $(echo .env)",
+            "echo x > `echo .env`",
+            "bash -c 'echo x > .env'",
+            "sh -c 'rm .env'",
+            "echo x | xargs rm",
+            "find . -name '*.env' -delete",
+        ):
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertTrue(extraction.parse_ambiguous)
+                self.assertEqual(extraction.write_delete_targets, tuple())
+
+    def test_safe_commands_have_no_targets(self):
+        for command in ("pwd", "ls -la", "git status", "cat README.md", "grep foo x.txt"):
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertFalse(extraction.parse_ambiguous)
+                self.assertEqual(extraction.write_delete_targets, tuple())
+
+
 if __name__ == "__main__":
     unittest.main()
