@@ -438,6 +438,161 @@ def _rm_recursive_force(tokens: tuple[str, ...]) -> bool:
     return False
 
 
+_SHELL_INTERPRETER_TOKENS = frozenset(
+    {"bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "exec", "source", "."}
+)
+_NESTED_EXEC_TOKENS = frozenset({"xargs"})
+_BASH_CONTROL_OPERATORS = frozenset({";", "&&", "||", "|", "&", "|&", ";;"})
+# Ordered longest/most-specific first so ">>" is matched before ">", etc.
+_BASH_REDIRECT_OPS = ("&>>", "&>", "1>>", "1>", "2>>", "2>", ">>", ">|", ">")
+_BASH_AMBIGUITY_RAW_MARKERS = ("$", "`", "<(", ">(")
+_BASH_WRITE_DELETE_COMMANDS = frozenset(
+    {"tee", "cp", "mv", "install", "rm", "dd", "truncate", "ln"}
+)
+
+
+@dataclass(frozen=True)
+class BashTargetExtraction:
+    """Structurally-parsed file write/delete targets of a Bash command.
+
+    ``parse_ambiguous`` is True when the command uses variable/command/process
+    substitution, a nested shell, xargs/find -exec, or is otherwise not
+    precisely parseable; in that case ``write_delete_targets`` is empty and the
+    caller must NOT claim a precise target judgment (fail-closed: ask/defer,
+    never allow).
+    """
+
+    write_delete_targets: tuple[str, ...]
+    parse_ambiguous: bool
+    reason: str
+
+
+def extract_bash_write_delete_targets(command: str) -> BashTargetExtraction:
+    """Parse a Bash command with shlex (not string matching) and extract the
+    file paths it would write to or delete via redirection, tee, cp, mv, rm,
+    dd of=, truncate, or ln. Case-preserving. Obfuscation that shlex resolves
+    (e.g. ``.en"v"`` -> ``.env``) is handled structurally; anything relying on
+    substitution or a nested shell is reported as ambiguous."""
+
+    stripped = command.strip()
+    if not stripped:
+        return BashTargetExtraction((), False, "empty_command")
+    if any(marker in stripped for marker in _BASH_AMBIGUITY_RAW_MARKERS):
+        return BashTargetExtraction((), True, "bash_target_parse_ambiguous_substitution")
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return BashTargetExtraction((), True, "bash_target_parse_ambiguous_shlex_error")
+
+    lowered = [token.lower() for token in tokens]
+    if any(token in _SHELL_INTERPRETER_TOKENS for token in lowered):
+        return BashTargetExtraction((), True, "bash_target_parse_ambiguous_nested_shell")
+    if (
+        any(token in _NESTED_EXEC_TOKENS for token in lowered)
+        or "-exec" in lowered
+        or "-execdir" in lowered
+        or "-delete" in lowered
+    ):
+        return BashTargetExtraction((), True, "bash_target_parse_ambiguous_nested_exec")
+
+    targets: list[str] = []
+    for segment in _split_bash_segments(tokens):
+        targets.extend(_bash_segment_write_delete_targets(segment))
+    unique = tuple(dict.fromkeys(targets))
+    return BashTargetExtraction(
+        unique,
+        False,
+        "bash_write_delete_targets_extracted" if unique else "no_write_delete_target",
+    )
+
+
+def _split_bash_segments(tokens: list[str]) -> list[list[str]]:
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _BASH_CONTROL_OPERATORS:
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _bash_segment_write_delete_targets(segment: list[str]) -> list[str]:
+    targets: list[str] = []
+    clean: list[str] = []
+    index = 0
+    length = len(segment)
+    while index < length:
+        token = segment[index]
+        redirect = _bash_redirect_op(token)
+        if redirect is not None:
+            _, inline_target = redirect
+            target: str | None = None
+            if inline_target is not None:
+                target = inline_target
+            elif index + 1 < length:
+                target = segment[index + 1]
+                index += 1
+            if target is not None and not target.startswith("&"):
+                targets.append(target)
+            index += 1
+            continue
+        clean.append(token)
+        index += 1
+
+    command_index = 0
+    while command_index < len(clean) and _is_bash_assignment(clean[command_index]):
+        command_index += 1
+    if command_index >= len(clean):
+        return targets
+
+    command = _bash_basename(clean[command_index]).lower()
+    args = clean[command_index + 1 :]
+    non_flag = [arg for arg in args if not arg.startswith("-")]
+
+    if command not in _BASH_WRITE_DELETE_COMMANDS:
+        return targets
+    if command == "tee":
+        targets.extend(non_flag)
+    elif command in ("cp", "mv", "install"):
+        if len(non_flag) >= 2:
+            targets.append(non_flag[-1])
+    elif command == "rm":
+        targets.extend(non_flag)
+    elif command == "dd":
+        targets.extend(arg[len("of=") :] for arg in args if arg.startswith("of="))
+    elif command == "truncate":
+        targets.extend(arg for arg in non_flag if not arg.isdigit())
+    elif command == "ln":
+        if len(non_flag) >= 2:
+            targets.append(non_flag[-1])
+    return targets
+
+
+def _bash_redirect_op(token: str) -> tuple[str, str | None] | None:
+    for op in _BASH_REDIRECT_OPS:
+        if token == op:
+            return (op, None)
+        if token.startswith(op) and len(token) > len(op):
+            return (op, token[len(op) :])
+    return None
+
+
+def _is_bash_assignment(token: str) -> bool:
+    return "=" in token and token.split("=", 1)[0].isidentifier()
+
+
+def _bash_basename(token: str) -> str:
+    last = token
+    for separator in ("/", "\\"):
+        last = last.rsplit(separator, 1)[-1]
+    return last
+
+
 def _git_push(tokens: tuple[str, ...]) -> bool:
     return any(
         token == "git" and index + 1 < len(tokens) and tokens[index + 1] == "push"
