@@ -9,6 +9,10 @@ description = "Contract-first local runtime for the Aegis CLI, including the Cla
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 
 [project.scripts]
 aeg = "src.cli:main"

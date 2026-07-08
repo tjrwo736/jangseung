@@ -102,4 +102,4 @@ Aegis는 Claude Code의 PreToolUse hook으로 동작합니다. AI가 파일을 �
 
 ## 라이선스
 
-TBD
+이 프로젝트는 MIT 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
