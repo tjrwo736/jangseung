@@ -97,6 +97,26 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
         self.assertNotIn("unsupported_or_unknown_tool_name:apply_patch", result.reason)
 
+    def test_single_quoted_apply_patch_normal_path_maps_to_allow_exit_zero(self):
+        result = _render(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Add File: 'README.md'\n"
+                        "+new line\n"
+                        "*** End Patch"
+                    )
+                },
+                "tool_use_id": "t-apply-patch",
+            },
+            self.repo_root,
+        )
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertNotIn("unsupported_or_unknown_tool_name:apply_patch", result.reason)
+
     def test_read_never_denies_and_never_hard_blocks(self):
         result = _render(
             {"tool_name": "Read", "tool_input": {"file_path": "app.py"}, "tool_use_id": "t3"},
@@ -181,6 +201,10 @@ class RenderHookResponseTests(unittest.TestCase):
                 "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
             ),
             (
+                "quoted_env_add",
+                "*** Begin Patch\n*** Add File: \".env\"\n+API_KEY=x\n*** End Patch",
+            ),
+            (
                 "workflow_add",
                 "*** Begin Patch\n*** Add File: .github/workflows/x.yml\n+name: x\n*** End Patch",
             ),
@@ -199,6 +223,10 @@ class RenderHookResponseTests(unittest.TestCase):
             (
                 "malformed",
                 "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
+            ),
+            (
+                "malformed_quote",
+                "*** Begin Patch\n*** Add File: READ\"ME.md\n+x\n*** End Patch",
             ),
         )
 
