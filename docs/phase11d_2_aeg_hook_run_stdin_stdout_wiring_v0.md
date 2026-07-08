@@ -119,6 +119,8 @@ Write src/app.py , Edit app.py (normal)                                         
 Read app.py (normal)                                                                 -> ask,  exit 0
 Read docs/guide.md (safe docs read)                                                  -> allow, exit 0
 Bash "ls -la" (unclassified, non-dangerous)                                          -> ask,  exit 0
+apply_patch Update File: README.md / src/app.py (normal)                             -> allow, exit 0
+apply_patch Add/Delete .env , workflow, /etc/passwd, mixed, malformed                -> deny, exit 2
 ```
 
 Not one failure or dangerous case yields `allow`. The only `allow` observed is

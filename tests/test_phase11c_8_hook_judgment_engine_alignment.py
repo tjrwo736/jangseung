@@ -10,6 +10,10 @@ from src.contracts import (
     SAFE_DEFAULT,
 )
 from src.evidence import hook_judgment_engine_alignment
+from src.evidence.claude_code_tool_call_mapping import (
+    DENY_CANDIDATE,
+    STRUCTURED_ACTION_CANDIDATE,
+)
 from src.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
 from src.evidence.hook_judgment_engine_alignment import (
     ENGINE_BASIS_SOURCES,
@@ -580,6 +584,30 @@ class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
             ("Write", {"file_path": self._abs("src/app.py"), "content": "x"}),
             ("Write", {"file_path": self._abs("docs/guide.md"), "content": "z"}),
             ("Edit", {"file_path": self._abs("README.md"), "old_string": "a", "new_string": "b"}),
+            (
+                "apply_patch",
+                {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Update File: README.md\n"
+                        "@@\n"
+                        "+new line\n"
+                        "*** End Patch"
+                    )
+                },
+            ),
+            (
+                "apply_patch",
+                {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Update File: src/app.py\n"
+                        "@@\n"
+                        "+print('x')\n"
+                        "*** End Patch"
+                    )
+                },
+            ),
         ]
         for tool_name, tool_input in cases:
             with self.subTest(tool=tool_name, path=tool_input.get("file_path")):
@@ -627,6 +655,137 @@ class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
         self.assertFalse(evidence["not_checked_impact_maps_to_allow"])
         self.assertFalse(evidence["unclassified_bash_maps_to_allow"])
         self.assertFalse(evidence["ambiguous_input_maps_to_allow"])
+        self.assertTrue(evidence["apply_patch_tool_supported"])
+        self.assertTrue(evidence["apply_patch_targets_reuse_existing_path_gates"])
+        self.assertTrue(evidence["apply_patch_unparseable_maps_to_deny"])
+
+
+class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
+    """Codex apply_patch targets are parsed structurally and judged by the
+    existing path gates; normal targets allow, risky or malformed patches deny."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name) / "repo"
+        (self.repo_root / "src").mkdir(parents=True)
+        (self.repo_root / ".github" / "workflows").mkdir(parents=True)
+        (self.repo_root / "README.md").write_text("# r", encoding="utf-8")
+        (self.repo_root / "src" / "app.py").write_text("x", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _judge_apply_patch(self, command):
+        return judge_pretooluse_with_aeg_engine(
+            {
+                "tool_name": "apply_patch",
+                "tool_input": {"command": command},
+                "tool_use_id": "t",
+            },
+            repo_root=str(self.repo_root),
+        )
+
+    def test_normal_apply_patch_updates_allow_not_unsupported(self):
+        for command, expected_targets in (
+            (
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+x\n*** End Patch",
+                ("README.md",),
+            ),
+            (
+                "*** Begin Patch\n*** Update File: src/app.py\n@@\n+x\n*** End Patch",
+                ("src/app.py",),
+            ),
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_apply_patch(command)
+                basis = decision.engine_decision_basis
+
+                self.assertEqual(decision.hook_decision, ALLOW)
+                self.assertEqual(decision.request.target_paths, expected_targets)
+                self.assertTrue(basis["input_validation"]["valid"])
+                self.assertNotIn(
+                    "unsupported_or_unknown_tool_name:apply_patch",
+                    basis["input_validation"]["reasons"],
+                )
+                self.assertEqual(basis["tool_call_mapping"]["candidate_status"], STRUCTURED_ACTION_CANDIDATE)
+
+    def test_protected_apply_patch_targets_deny_with_target_aware_basis(self):
+        cases = (
+            (
+                "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+                ".env",
+            ),
+            (
+                "*** Begin Patch\n*** Add File: .github/workflows/x.yml\n+name: x\n*** End Patch",
+                ".github/workflows/x.yml",
+            ),
+            (
+                "*** Begin Patch\n*** Delete File: .env\n*** End Patch",
+                ".env",
+            ),
+            (
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+x\n*** Add File: .env\n+K=v\n*** End Patch",
+                ".env",
+            ),
+        )
+
+        for command, protected_path in cases:
+            with self.subTest(protected_path=protected_path):
+                decision = self._judge_apply_patch(command)
+                basis = decision.engine_decision_basis
+
+                self.assertEqual(decision.hook_decision, DENY)
+                self.assertTrue(basis["input_validation"]["valid"])
+                self.assertNotIn(
+                    "unsupported_or_unknown_tool_name:apply_patch",
+                    basis["input_validation"]["reasons"],
+                )
+                self.assertIn(protected_path, basis["protected_path_gate"]["protected_paths"])
+                self.assertTrue(basis["protected_path_gate"]["protected_path_detected"])
+                self.assertTrue(
+                    any(
+                        reason.startswith("src.classify.is_protected_path_maps_to_deny_candidate:")
+                        for reason in basis["tool_call_mapping"]["reasons"]
+                    )
+                )
+                self.assertIn("tool_call_mapping_deny_candidate", decision.decision_reasons)
+
+    def test_repo_external_apply_patch_target_denies(self):
+        decision = self._judge_apply_patch(
+            "*** Begin Patch\n*** Update File: /etc/passwd\n@@\n+x\n*** End Patch"
+        )
+
+        self.assertEqual(decision.hook_decision, DENY)
+        self.assertTrue(decision.engine_decision_basis["input_validation"]["valid"])
+        self.assertTrue(
+            decision.engine_decision_basis["repo_boundary_gate"][0]["target_outside_repo"]
+        )
+        self.assertIn(
+            "repo_boundary_gate_denies_outside_repo_target",
+            decision.decision_reasons,
+        )
+
+    def test_malformed_apply_patch_denies_fail_closed(self):
+        for command in (
+            "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
+            "*** Begin Patch\nREADME.md\n*** End Patch",
+            "*** Begin Patch\n*** Add File: README.md\nnot-added\n*** End Patch",
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_apply_patch(command)
+
+                self.assertEqual(decision.hook_decision, DENY)
+                self.assertEqual(decision.request.target_paths, tuple())
+                self.assertEqual(
+                    decision.engine_decision_basis["tool_call_mapping"]["candidate_status"],
+                    DENY_CANDIDATE,
+                )
+                self.assertIn(
+                    "apply_patch_unparseable_or_invalid_maps_to_deny_candidate",
+                    decision.engine_decision_basis["tool_call_mapping"]["reasons"],
+                )
 
 
 class Phase11C8BashTargetPathGateTests(unittest.TestCase):

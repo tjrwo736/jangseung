@@ -228,6 +228,9 @@ def build_aeg_hook_run_contract_evidence() -> dict[str, Any]:
         "judgment_brain_modified": False,
         "hook_event_name": CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
         "permission_decisions_emitted": (PERMISSION_ALLOW, PERMISSION_DENY, PERMISSION_ASK),
+        "codex_apply_patch_tool_call_supported": True,
+        "apply_patch_normal_target_maps_to_allow": True,
+        "apply_patch_risky_or_malformed_target_maps_to_deny": True,
         "decision_to_permission_and_exit": {
             decision: {"permissionDecision": permission, "exit_code": exit_code}
             for decision, (permission, exit_code) in _DECISION_TO_PERMISSION_AND_EXIT.items()
