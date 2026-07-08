@@ -163,7 +163,7 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         )
         self._assert_engine_parity(decision)
 
-    def test_normal_low_risk_edit_asks_via_target_path_risk_not_capability_gate(self):
+    def test_normal_low_risk_edit_allows_as_clearly_safe_normal_work(self):
         decision = self._judge(
             "Edit",
             {
@@ -173,13 +173,12 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
             },
         )
 
-        # Aegis's own WRITE_FILE/EDIT-shaped self-execution capability remains
-        # denied (11-B propose-only policy, unchanged) but that denial is not
-        # the hook judgment basis for a normal, non-protected Edit target: the
-        # hook judges by target-path risk instead, so a normal low-risk edit
-        # asks rather than being denied outright.
-        self.assertEqual(decision.hook_decision, ASK)
-        self.assertNotEqual(decision.hook_decision, DENY)
+        # A normal, non-protected, in-repo edit that the engine classifies as a
+        # definite LOW/MEDIUM change is clearly-safe normal work and is allowed
+        # so the hook does not obstruct ordinary operations. Aegis's own
+        # WRITE_FILE self-execution capability remains DENIED (11-B propose-only
+        # policy, unchanged); that denial is simply not the hook judgment basis.
+        self.assertEqual(decision.hook_decision, ALLOW)
         self.assertEqual(decision.engine_decision_basis["law"]["status"], CLEAN_CORE)
         self.assertEqual(
             decision.engine_decision_basis["capability_gate"]["gate_result"],
@@ -487,9 +486,9 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
         self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
         self.assertEqual(norm["normalized"], "README.md")
 
-    def test_repo_internal_absolute_write_is_ask_not_deny(self):
+    def test_repo_internal_absolute_write_is_allow_not_deny(self):
         decision = self._judge("Write", {"file_path": self._abs("src/app.py"), "content": "x"})
-        self.assertEqual(decision.hook_decision, ASK)
+        self.assertEqual(decision.hook_decision, ALLOW)
 
     def test_repo_internal_absolute_edit_is_not_deny(self):
         decision = self._judge(
@@ -546,6 +545,88 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
         self.assertIn(allow_or_ask.hook_decision, (ALLOW, ASK))
         deny = self._judge("Write", {"file_path": "../outside.txt", "content": "x"})
         self.assertEqual(deny.hook_decision, DENY)
+
+
+class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
+    """Clearly-safe normal work allows; ambiguous / not-checked never allows."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name)
+        (self.repo_root / "src").mkdir()
+        (self.repo_root / "docs").mkdir()
+        (self.repo_root / "README.md").write_text("# r", encoding="utf-8")
+        (self.repo_root / "src" / "app.py").write_text("x", encoding="utf-8")
+        (self.repo_root / "docs" / "guide.md").write_text("y", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _judge(self, tool_name, tool_input):
+        return judge_pretooluse_with_aeg_engine(
+            {"tool_name": tool_name, "tool_input": tool_input, "tool_use_id": "t"},
+            repo_root=str(self.repo_root),
+        )
+
+    def _abs(self, rel):
+        return str(self.repo_root / rel)
+
+    def test_normal_read_write_edit_allow(self):
+        cases = [
+            ("Read", {"file_path": self._abs("README.md")}),
+            ("Read", {"file_path": self._abs("src/app.py")}),  # MEDIUM impact, still allow
+            ("Write", {"file_path": self._abs("src/app.py"), "content": "x"}),
+            ("Write", {"file_path": self._abs("docs/guide.md"), "content": "z"}),
+            ("Edit", {"file_path": self._abs("README.md"), "old_string": "a", "new_string": "b"}),
+        ]
+        for tool_name, tool_input in cases:
+            with self.subTest(tool=tool_name, path=tool_input.get("file_path")):
+                decision = self._judge(tool_name, tool_input)
+                self.assertEqual(decision.hook_decision, ALLOW)
+
+    def test_medium_impact_normal_write_is_allowed_as_definite_classification(self):
+        decision = self._judge("Write", {"file_path": self._abs("src/app.py"), "content": "x"})
+        self.assertEqual(decision.hook_decision, ALLOW)
+        # allowed on a definite MEDIUM impact classification, not an ambiguous one
+        self.assertEqual(decision.engine_decision_basis["classification"]["impact_risk"], "MEDIUM")
+
+    def test_protected_and_dangerous_still_deny(self):
+        deny_cases = [
+            ("Write", {"file_path": self._abs(".env"), "content": "x"}),
+            ("Write", {"file_path": self._abs(".github/workflows/ci.yml"), "content": "x"}),
+            ("Write", {"file_path": self._abs(".aeg/x"), "content": "x"}),
+            ("Bash", {"command": "rm -rf /"}),
+            ("Bash", {"command": "git reset --hard"}),
+        ]
+        for tool_name, tool_input in deny_cases:
+            with self.subTest(tool=tool_name):
+                self.assertEqual(self._judge(tool_name, tool_input).hook_decision, DENY)
+
+    def test_ambiguous_and_unclassified_never_allow(self):
+        # Bash (unclassified) and out-of-scope inputs must never reach allow.
+        never_allow = [
+            ("Bash", {"command": "dd if=/dev/zero of=x"}),
+            ("Bash", {"command": "ls -la"}),
+            ("Bash", {"command": "some-unknown-tool --flag"}),
+            ("Read", {"file_path": "/etc/passwd"}),
+        ]
+        for tool_name, tool_input in never_allow:
+            with self.subTest(tool=tool_name, ti=tool_input):
+                decision = self._judge(tool_name, tool_input)
+                self.assertNotEqual(decision.hook_decision, ALLOW)
+
+    def test_unclassified_bash_is_defer_not_allow(self):
+        decision = self._judge("Bash", {"command": "dd if=/dev/zero of=x"})
+        self.assertEqual(decision.hook_decision, DEFER)
+
+    def test_evidence_records_clearly_safe_allow_policy(self):
+        evidence = build_hook_judgment_engine_alignment_evidence()
+        self.assertTrue(evidence["clearly_safe_normal_file_operation_maps_to_allow"])
+        self.assertFalse(evidence["not_checked_impact_maps_to_allow"])
+        self.assertFalse(evidence["unclassified_bash_maps_to_allow"])
+        self.assertFalse(evidence["ambiguous_input_maps_to_allow"])
 
 
 if __name__ == "__main__":
