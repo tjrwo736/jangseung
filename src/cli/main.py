@@ -16,6 +16,7 @@ from src.contracts import (
     NOT_CHECKED_SOURCE,
     SAFE_DEFAULT,
 )
+from src.cli.hook_run import run_aeg_hook_run
 from src.evidence import build_evidence_packet, verify_latest
 from src.evidence.mutation_boundary import (
     build_mutation_boundary,
@@ -47,6 +48,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("task", help="task text to classify and gate")
     subparsers.add_parser("verify", help="verify latest evidence with deterministic replay")
+    subparsers.add_parser(
+        "hook-run",
+        help=(
+            "read a Claude Code PreToolUse hook JSON from stdin, judge it with the "
+            "existing Aegis engine, and write a permissionDecision to stdout (fail-closed)"
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -62,6 +70,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "verify":
         return _cmd_verify(Path.cwd())
+    if args.command == "hook-run":
+        return run_aeg_hook_run(
+            stdin=sys.stdin,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            repo_root=Path.cwd(),
+        )
     parser.error(f"unknown command: {args.command}")
     return 2
 
