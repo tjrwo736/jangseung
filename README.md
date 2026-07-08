@@ -113,8 +113,7 @@ Aegis는 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령
 
 ## 요구사항 / 현재 상태
 
-- **Claude Code에서 검증됨**: 실제 Claude Code 세션에서 PreToolUse hook으로 정상 작동을 확인했습니다.
-- **Codex는 제한적 보완 상태입니다.** `--target codex`는 `.codex/config.toml` 설치와 `ask`/`defer` → `deny` 격상만 제공합니다. 전체 Codex 지원을 의미하지 않으며 추가 실물 검증이 필요합니다.
+- **Claude Code와 Codex에서 검증됨**: 실제 Claude Code 세션과 Codex CLI 세션 양쪽에서 PreToolUse hook으로 정상 작동을 확인했습니다. `aeg install --target claude-code`(기본값) 또는 `aeg install --target codex`로 각각 설치합니다. 두 substrate는 판정 방식이 일부 다릅니다 — Claude Code에서는 애매한 작업에 확인을 요청(ask)하지만, Codex에서는 그 확인 요청이 실행을 막는 안전망으로 동작하지 않는다는 것이 실측으로 확인되어, Codex에서는 애매한 경우 더 엄격하게 차단(deny)합니다.
 - **정책은 현재 하드코딩되어 있습니다.** 사용자가 위험 기준을 직접 조정하는 기능은 아직 없습니다 (로드맵 예정).
 - **비밀(secret) 판정은 경로와 의도 기반입니다.** `.env` 같은 파일에 쓰는 시도 자체는 막지만, 파일 내용에서 실제 API 키/비밀번호 값을 스캔하는 기능은 아직 없습니다 (로드맵 예정).
 - Python 3.10 이상이 필요합니다.
