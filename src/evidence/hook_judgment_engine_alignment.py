@@ -8,7 +8,7 @@ output, execute tools, read secrets, write state, or grant authority.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 from pathlib import Path
@@ -209,10 +209,10 @@ def judge_pretooluse_with_aeg_engine(
 
     validation = validate_claude_code_pretooluse_input(raw_hook_input)
     hook_input = validation.hook_input
-    request = _build_request(raw_hook_input, hook_input)
     ignored_reported_only_fields = _reported_only_fields(raw_hook_input)
 
     if not validation.valid or hook_input is None:
+        request = _build_request(raw_hook_input, hook_input)
         basis = {
             "input_validation": _validation_record(validation),
             "ignored_reported_only_fields": ignored_reported_only_fields,
@@ -231,6 +231,17 @@ def judge_pretooluse_with_aeg_engine(
             ),
             basis=basis,
         )
+
+    # Claude Code sends tool_input file paths as absolute paths. Normalize a
+    # repo-internal absolute path to its repo-relative form so the existing
+    # engine judges it correctly; a repo-external or traversal-escaping
+    # absolute path is left absolute so the existing scope defense still
+    # rejects it. This rewrites the input the engine sees; it does not change
+    # any engine logic.
+    hook_input, path_normalization = _normalize_hook_input_repo_paths(
+        hook_input, repo_root
+    )
+    request = _build_request(raw_hook_input, hook_input)
 
     action_candidate = map_pretooluse_input_to_structured_action_candidate(hook_input)
     classification = _classify_hook_target(hook_input, request.target_paths)
@@ -265,6 +276,7 @@ def judge_pretooluse_with_aeg_engine(
         "protected_path_gate": protected_path_gate,
         "aeg_guard": aeg_guard_records,
         "repo_boundary_gate": repo_boundary_records,
+        "path_normalization": path_normalization,
         "dangerous_bash_gate": dangerous_bash_gate,
         "ignored_reported_only_fields": ignored_reported_only_fields,
         "reported_only_trusted_as_judgment_basis": False,
@@ -340,6 +352,113 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
         "main_merge_performed": False,
         "safe_default": SAFE_DEFAULT,
         "live_executor_authority": LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
+    }
+
+
+# tool_input fields that carry a repo file path for Read/Write/Edit.
+_PATH_TOOL_INPUT_FIELDS = ("file_path",)
+
+
+def _normalize_hook_input_repo_paths(
+    hook_input: ClaudeCodePreToolUseInput,
+    repo_root: str | Path,
+) -> tuple[ClaudeCodePreToolUseInput, tuple[Mapping[str, Any], ...]]:
+    """Rewrite repo-internal absolute file paths in tool_input to repo-relative.
+
+    Repo-external, traversal-escaping, symlink-escaping, and Windows-style
+    absolute paths are left unchanged so the existing scope defense still
+    rejects them. Non-absolute paths are also left unchanged so existing
+    relative-path behaviour (including relative traversal rejection) is
+    preserved.
+    """
+
+    tool_input = dict(hook_input.tool_input)
+    records: list[Mapping[str, Any]] = []
+    changed = False
+    for field_name in _PATH_TOOL_INPUT_FIELDS:
+        value = tool_input.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        normalized, record = _normalize_repo_internal_absolute_path(value, repo_root)
+        records.append({"field": field_name, **record})
+        if normalized != value:
+            tool_input[field_name] = normalized
+            changed = True
+
+    if not changed:
+        return hook_input, tuple(records)
+    return replace(hook_input, tool_input=tool_input), tuple(records)
+
+
+def _normalize_repo_internal_absolute_path(
+    path_value: str,
+    repo_root: str | Path,
+) -> tuple[str, dict[str, Any]]:
+    stripped = path_value.strip()
+
+    if _looks_like_windows_absolute_path(stripped):
+        # Not resolvable as a repo-internal POSIX path here; leave it so the
+        # mapping's absolute-path deny-candidate rule rejects it.
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": True,
+            "in_repo": False,
+            "action": "windows_absolute_kept_for_scope_rejection",
+        }
+
+    if not stripped.startswith("/"):
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": False,
+            "in_repo": None,
+            "action": "non_absolute_unchanged",
+        }
+
+    try:
+        resolution = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=stripped,
+        )
+    except Exception:  # noqa: BLE001 - normalization failure keeps path absolute (fail-closed).
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": True,
+            "in_repo": None,
+            "action": "normalization_error_kept_absolute_fail_closed",
+        }
+
+    if not resolution.target_under_repo:
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": True,
+            "in_repo": False,
+            "action": "outside_repo_kept_absolute_for_scope_rejection",
+        }
+
+    try:
+        relative = Path(resolution.canonical_target).relative_to(
+            Path(resolution.repo_root)
+        )
+        normalized = relative.as_posix() or "."
+    except Exception:  # noqa: BLE001 - keep absolute on any relativization error.
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": True,
+            "in_repo": True,
+            "action": "relative_computation_error_kept_absolute_fail_closed",
+        }
+
+    return normalized, {
+        "original": path_value,
+        "normalized": normalized,
+        "was_absolute": True,
+        "in_repo": True,
+        "action": "repo_internal_absolute_normalized_to_relative",
     }
 
 
