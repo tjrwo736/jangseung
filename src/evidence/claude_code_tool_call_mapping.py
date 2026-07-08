@@ -771,7 +771,19 @@ def _apply_patch_directive_path(line: str, prefix: str) -> str | None:
     if not line.startswith(prefix):
         return None
     path = line[len(prefix) :]
+    return _normalize_apply_patch_directive_path(path)
+
+
+def _normalize_apply_patch_directive_path(path: str) -> str | None:
     if not path or path != path.strip() or "\x00" in path:
+        return None
+    if path[0] in ("'", '"') or path[-1] in ("'", '"'):
+        if len(path) < 2 or path[0] != path[-1] or path[0] not in ("'", '"'):
+            return None
+        path = path[1:-1]
+        if not path or path != path.strip() or "\x00" in path:
+            return None
+    if "'" in path or '"' in path:
         return None
     return path
 

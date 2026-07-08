@@ -688,6 +688,42 @@ class ApplyPatchTargetExtractionTests(unittest.TestCase):
         self.assertFalse(extraction.parse_ambiguous)
         self.assertEqual(extraction.target_paths, ("README.md",))
 
+    def test_quoted_directive_paths_are_normalized(self):
+        command = (
+            "*** Begin Patch\n"
+            "*** Add File: \".env\"\n"
+            "+API_KEY=x\n"
+            "*** Update File: 'README.md'\n"
+            "@@\n"
+            "+x\n"
+            "*** End Patch"
+        )
+
+        extraction = extract_apply_patch_targets(command)
+
+        self.assertFalse(extraction.parse_ambiguous)
+        self.assertEqual(extraction.target_paths, (".env", "README.md"))
+        self.assertEqual(
+            extraction.target_operations,
+            (
+                ("write", ".env"),
+                ("write", "README.md"),
+            ),
+        )
+
+    def test_ambiguous_quoted_directive_paths_fail_closed(self):
+        cases = (
+            "*** Begin Patch\n*** Add File: \".env\n+API_KEY=x\n*** End Patch",
+            "*** Begin Patch\n*** Add File: READ\"ME.md\n+x\n*** End Patch",
+            "*** Begin Patch\n*** Add File: \"\"\n+x\n*** End Patch",
+        )
+
+        for command in cases:
+            with self.subTest(command=command):
+                extraction = extract_apply_patch_targets(command)
+                self.assertTrue(extraction.parse_ambiguous)
+                self.assertEqual(extraction.target_paths, tuple())
+
     def test_malformed_apply_patch_is_ambiguous(self):
         cases = (
             "*** Begin Patch\n*** Update File: README.md\n@@\n+x",
