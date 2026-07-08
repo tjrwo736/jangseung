@@ -34,9 +34,13 @@ from src.evidence.claude_code_tool_call_mapping import (
     BASH_DANGEROUS,
     BASH_NOT_CHECKED,
     DENY_CANDIDATE,
+    EDIT_FILE,
+    STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
     map_pretooluse_input_to_structured_action_candidate,
 )
+from src.evidence.claude_code_tool_call_mapping import RUN_COMMAND as MAPPING_RUN_COMMAND
+from src.evidence.claude_code_tool_call_mapping import WRITE_FILE as MAPPING_WRITE_FILE
 from src.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
 from src.evidence.mediated_repo_boundary_write_path import resolve_repo_boundary_path
 from src.evidence.structured_action_capabilities import (
@@ -91,6 +95,21 @@ ENGINE_BASIS_SOURCES = (
     "src.evidence.b1_aeg_integrity_guard.decide_b1_aeg_integrity_guard",
     "src.evidence.mediated_repo_boundary_write_path.resolve_repo_boundary_path",
 )
+
+# WRITE_FILE/RUN_COMMAND capability policy answers "may Aegis itself execute
+# this action" (always denied under the 11-B propose-only executor model).
+# That is a different question from "should the hook allow this substrate
+# tool call", which must be judged by the target path/command risk
+# (is_protected_path, the .aeg state-dir guard, the dangerous-Bash gate, and
+# classify/law), not by reusing Aegis's own self-execution capability denial
+# as if it answered the hook question. These two action types are therefore
+# excluded from driving the hook decision via the capability gate; the
+# capability gate result is still computed and recorded in evidence for
+# transparency, but it is not treated as hook judgment basis for them.
+_SELF_EXECUTION_CAPABILITY_ACTION_TYPES_NOT_HOOK_JUDGMENT_BASIS = frozenset(
+    {MAPPING_WRITE_FILE, EDIT_FILE, MAPPING_RUN_COMMAND}
+)
+_WRITE_LIKE_CANDIDATE_ACTION_TYPES = frozenset({MAPPING_WRITE_FILE, EDIT_FILE})
 
 _REPORTED_ONLY_KEYS = frozenset(
     {
@@ -255,6 +274,7 @@ def judge_pretooluse_with_aeg_engine(
     }
 
     engine_decision, reasons = _collapse_engine_decision(
+        candidate_action_type=action_candidate.candidate_action_type,
         law_status=law_result.status,
         capability_gate_result=capability_result.gate_result,
         action_candidate_status=action_candidate.candidate_status,
@@ -294,6 +314,15 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
         "hook_policy_divergence_allowed": False,
         "dangerous_bash_safety_net_present": True,
         "unclassified_bash_is_allow": False,
+        "write_edit_judgment_basis": "target_path_risk_via_is_protected_path_aeg_guard_repo_boundary",
+        "run_command_judgment_basis": "dangerous_bash_gate_and_tool_call_mapping_deny_candidate",
+        "write_edit_capability_gate_used_as_hook_judgment_basis": False,
+        "run_command_capability_gate_used_as_hook_judgment_basis": False,
+        "read_capability_gate_used_as_hook_judgment_basis": True,
+        "aegis_self_write_file_capability_unchanged_and_denied": True,
+        "aegis_self_run_command_capability_unchanged_and_denied": True,
+        "normal_write_edit_target_path_maps_to_ask": True,
+        "normal_write_edit_target_path_maps_to_allow": False,
         "reported_only_trusted_as_judgment_basis": False,
         "not_checked_is_allow": False,
         "adapter_output_is_actual_hook_response": False,
@@ -402,6 +431,7 @@ def _engine_action_for_hook_input(
 
 def _collapse_engine_decision(
     *,
+    candidate_action_type: str,
     law_status: str,
     capability_gate_result: str,
     action_candidate_status: str,
@@ -418,7 +448,18 @@ def _collapse_engine_decision(
         reasons.append("tool_call_mapping_deny_candidate")
     if action_risk_status == BASH_DANGEROUS:
         reasons.append("dangerous_bash_gate_denies_command")
-    if capability_gate_result in ENGINE_DENY_CAPABILITY_RESULTS:
+
+    # WRITE_FILE/RUN_COMMAND capability status reflects Aegis's own
+    # propose-only self-execution policy (11-B), not the risk of the
+    # substrate's tool call target/command. It is excluded from hook
+    # judgment for those two action types; the target-path risk gates above
+    # (tool_call_mapping deny-candidate, aeg guard, repo boundary) and the
+    # dangerous-Bash gate already carry that judgment instead.
+    capability_gate_is_hook_judgment_basis = (
+        candidate_action_type
+        not in _SELF_EXECUTION_CAPABILITY_ACTION_TYPES_NOT_HOOK_JUDGMENT_BASIS
+    )
+    if capability_gate_is_hook_judgment_basis and capability_gate_result in ENGINE_DENY_CAPABILITY_RESULTS:
         reasons.append(f"capability_gate_denies:{capability_gate_result}")
     if law_status == NEEDS_USER_GATE:
         reasons.append("law_requires_user_gate_hook_uses_deny_safe_default")
@@ -427,12 +468,24 @@ def _collapse_engine_decision(
         return DENY, tuple((*reasons, "hook_decision_matches_or_is_stricter_than_engine"))
 
     if (
-        capability_gate_result in ENGINE_ALLOWED_CAPABILITY_RESULTS
+        capability_gate_is_hook_judgment_basis
+        and capability_gate_result in ENGINE_ALLOWED_CAPABILITY_RESULTS
         and law_status == CLEAN_CORE
     ):
         return ALLOW, (
             "classification_law_and_capability_gate_allow_read_only_candidate",
             "hook_decision_matches_engine_decision",
+        )
+
+    if (
+        candidate_action_type in _WRITE_LIKE_CANDIDATE_ACTION_TYPES
+        and action_candidate_status == STRUCTURED_ACTION_CANDIDATE
+    ):
+        return ASK, (
+            "write_or_edit_judgment_basis_is_target_path_risk_not_capability_gate",
+            "normal_target_path_maps_to_ask_candidate",
+            "aegis_self_write_file_capability_remains_denied_and_unrelated_to_hook_judgment",
+            "hook_decision_matches_or_is_stricter_than_engine",
         )
 
     if action_risk_status in {BASH_NOT_CHECKED, UNKNOWN_TOOL} or law_status == NOT_CHECKED:
