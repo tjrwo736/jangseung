@@ -444,5 +444,109 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         )
 
 
+class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
+    """Claude Code sends tool_input file paths as absolute paths; repo-internal
+    absolute paths must normalize to repo-relative and judge normally, while
+    repo-external / traversal / symlink-escape paths must still be rejected."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.outside_root = Path(self._tmp.name)
+        self.repo_root = self.outside_root / "repo"
+        (self.repo_root / "src").mkdir(parents=True)
+        (self.repo_root / "docs").mkdir(parents=True)
+        (self.repo_root / ".github" / "workflows").mkdir(parents=True)
+        (self.repo_root / "README.md").write_text("# r", encoding="utf-8")
+        (self.repo_root / "src" / "app.py").write_text("x", encoding="utf-8")
+        (self.repo_root / "docs" / "guide.md").write_text("y", encoding="utf-8")
+        # sibling dir that shares the repo-name prefix (prefix-bypass vector)
+        (self.outside_root / "repo-evil").mkdir()
+        (self.outside_root / "repo-evil" / "secret.txt").write_text("S", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _judge(self, tool_name, tool_input):
+        return judge_pretooluse_with_aeg_engine(
+            {"tool_name": tool_name, "tool_input": tool_input, "tool_use_id": "toolu-x"},
+            repo_root=str(self.repo_root),
+        )
+
+    def _abs(self, rel: str) -> str:
+        return str(self.repo_root / rel)
+
+    # --- repo-internal absolute normal: must NOT be scope-denied -----------
+
+    def test_repo_internal_absolute_read_is_not_denied(self):
+        decision = self._judge("Read", {"file_path": self._abs("README.md")})
+        self.assertIn(decision.hook_decision, (ALLOW, ASK))
+        self.assertNotEqual(decision.hook_decision, DENY)
+        norm = decision.engine_decision_basis["path_normalization"][0]
+        self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
+        self.assertEqual(norm["normalized"], "README.md")
+
+    def test_repo_internal_absolute_write_is_ask_not_deny(self):
+        decision = self._judge("Write", {"file_path": self._abs("src/app.py"), "content": "x"})
+        self.assertEqual(decision.hook_decision, ASK)
+
+    def test_repo_internal_absolute_edit_is_not_deny(self):
+        decision = self._judge(
+            "Edit", {"file_path": self._abs("README.md"), "old_string": "a", "new_string": "b"}
+        )
+        self.assertIn(decision.hook_decision, (ALLOW, ASK))
+
+    # --- repo-internal absolute protected: must STILL deny -----------------
+
+    def test_repo_internal_absolute_protected_paths_still_deny(self):
+        for rel in (".env", ".github/workflows/ci.yml", ".aeg/x"):
+            with self.subTest(rel=rel):
+                decision = self._judge("Write", {"file_path": self._abs(rel), "content": "x"})
+                self.assertEqual(decision.hook_decision, DENY)
+
+    # --- repo-external / traversal / symlink: must STILL deny -------------
+
+    def test_repo_external_absolute_paths_still_deny(self):
+        for path in ("/etc/passwd", "/root/.ssh/id_rsa", str(self.outside_root / "other" / "x")):
+            with self.subTest(path=path):
+                decision = self._judge("Read", {"file_path": path})
+                self.assertEqual(decision.hook_decision, DENY)
+                self.assertNotIn(decision.hook_decision, (ALLOW, ASK))
+
+    def test_sibling_prefix_directory_is_not_treated_as_in_repo(self):
+        # /tmp/x/repo-evil/secret.txt must NOT be considered under /tmp/x/repo.
+        decision = self._judge(
+            "Read", {"file_path": str(self.outside_root / "repo-evil" / "secret.txt")}
+        )
+        self.assertEqual(decision.hook_decision, DENY)
+        norm = decision.engine_decision_basis["path_normalization"][0]
+        self.assertFalse(norm["in_repo"])
+        self.assertEqual(norm["action"], "outside_repo_kept_absolute_for_scope_rejection")
+
+    def test_absolute_traversal_escaping_repo_still_denies(self):
+        decision = self._judge(
+            "Write", {"file_path": self._abs("../outside.txt"), "content": "x"}
+        )
+        self.assertEqual(decision.hook_decision, DENY)
+
+    def test_symlink_inside_repo_pointing_outside_still_denies(self):
+        link = self.repo_root / "link_to_passwd"
+        try:
+            link.symlink_to("/etc/passwd")
+        except OSError:
+            self.skipTest("symlinks not supported")
+        decision = self._judge("Read", {"file_path": str(link)})
+        self.assertEqual(decision.hook_decision, DENY)
+
+    # --- relative behaviour unchanged ------------------------------------
+
+    def test_relative_paths_unchanged(self):
+        allow_or_ask = self._judge("Read", {"file_path": "README.md"})
+        self.assertIn(allow_or_ask.hook_decision, (ALLOW, ASK))
+        deny = self._judge("Write", {"file_path": "../outside.txt", "content": "x"})
+        self.assertEqual(deny.hook_decision, DENY)
+
+
 if __name__ == "__main__":
     unittest.main()
