@@ -15,11 +15,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from src.classify import classify_task, is_protected_path
+from src.classify import Classification, classify_task, is_protected_path
 from src.contracts import (
     CLEAN_CORE,
     GIT_WORKING_TREE,
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
+    LOW,
+    MEDIUM,
     NEEDS_USER_GATE,
     NOT_CHECKED,
     NOT_CHECKED_SOURCE,
@@ -35,6 +37,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     BASH_NOT_CHECKED,
     DENY_CANDIDATE,
     EDIT_FILE,
+    READ_REPO,
     STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
     map_pretooluse_input_to_structured_action_candidate,
@@ -110,6 +113,22 @@ _SELF_EXECUTION_CAPABILITY_ACTION_TYPES_NOT_HOOK_JUDGMENT_BASIS = frozenset(
     {MAPPING_WRITE_FILE, EDIT_FILE, MAPPING_RUN_COMMAND}
 )
 _WRITE_LIKE_CANDIDATE_ACTION_TYPES = frozenset({MAPPING_WRITE_FILE, EDIT_FILE})
+
+# Read/Write/Edit of a repo-internal, non-protected file that the existing
+# engine classified as a definite LOW or MEDIUM change is "clearly safe normal
+# work" and is allowed so the hook does not obstruct ordinary safe operations.
+# Everything ambiguous is deliberately excluded from this set:
+#  - protected paths / dangerous Bash / repo-external / traversal already
+#    returned DENY before this check;
+#  - Bash maps to HOLD_CURRENT_STATE_CANDIDATE with impact NOT_CHECKED, so it is
+#    never a STRUCTURED_ACTION_CANDIDATE and never clearly-safe -> ask/defer;
+#  - a NOT_CHECKED / NOT_CHECKED_NO_MUTATION impact (unclassifiable / unknown
+#    source) is not in the safe impact set -> ask/defer.
+_CLEARLY_SAFE_FILE_ACTION_TYPES = frozenset(
+    {READ_REPO, MAPPING_WRITE_FILE, EDIT_FILE}
+)
+_CLEARLY_SAFE_IMPACT_RISKS = frozenset({LOW, MEDIUM})
+_CLEARLY_SAFE_RISK_LEVELS = frozenset({LOW, MEDIUM})
 
 _REPORTED_ONLY_KEYS = frozenset(
     {
@@ -293,6 +312,7 @@ def judge_pretooluse_with_aeg_engine(
         action_risk_status=action_candidate.risk_status,
         aeg_guard_records=aeg_guard_records,
         repo_boundary_records=repo_boundary_records,
+        classification=classification,
     )
     hook_decision = engine_decision
     return _build_decision(
@@ -333,8 +353,13 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
         "read_capability_gate_used_as_hook_judgment_basis": True,
         "aegis_self_write_file_capability_unchanged_and_denied": True,
         "aegis_self_run_command_capability_unchanged_and_denied": True,
-        "normal_write_edit_target_path_maps_to_ask": True,
-        "normal_write_edit_target_path_maps_to_allow": False,
+        "clearly_safe_normal_file_operation_maps_to_allow": True,
+        "clearly_safe_requires_definite_low_or_medium_impact_classification": True,
+        "clearly_safe_file_action_types": tuple(sorted(_CLEARLY_SAFE_FILE_ACTION_TYPES)),
+        "clearly_safe_impact_risks": tuple(sorted(_CLEARLY_SAFE_IMPACT_RISKS)),
+        "not_checked_impact_maps_to_allow": False,
+        "unclassified_bash_maps_to_allow": False,
+        "ambiguous_input_maps_to_allow": False,
         "reported_only_trusted_as_judgment_basis": False,
         "not_checked_is_allow": False,
         "adapter_output_is_actual_hook_response": False,
@@ -548,6 +573,38 @@ def _engine_action_for_hook_input(
     }
 
 
+def _is_clearly_safe_normal_file_operation(
+    *,
+    candidate_action_type: str,
+    action_candidate_status: str,
+    classification: Classification,
+    repo_boundary_records: tuple[Mapping[str, Any], ...],
+) -> bool:
+    """Return True only for a Read/Write/Edit of a repo-internal, non-protected
+    file that the existing engine classified as a definite LOW/MEDIUM change.
+
+    Fail-closed: anything ambiguous (Bash, NOT_CHECKED impact, non-candidate
+    mapping status, or any out-of-repo boundary record) returns False and is
+    left to the ask/defer/deny paths.
+    """
+
+    if candidate_action_type not in _CLEARLY_SAFE_FILE_ACTION_TYPES:
+        return False
+    if action_candidate_status != STRUCTURED_ACTION_CANDIDATE:
+        return False
+    if classification.risk_level not in _CLEARLY_SAFE_RISK_LEVELS:
+        return False
+    if classification.impact_risk not in _CLEARLY_SAFE_IMPACT_RISKS:
+        return False
+    if not repo_boundary_records:
+        return False
+    if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
+        return False
+    if not all(record.get("target_under_repo") is True for record in repo_boundary_records):
+        return False
+    return True
+
+
 def _collapse_engine_decision(
     *,
     candidate_action_type: str,
@@ -557,6 +614,7 @@ def _collapse_engine_decision(
     action_risk_status: str,
     aeg_guard_records: tuple[Mapping[str, Any], ...],
     repo_boundary_records: tuple[Mapping[str, Any], ...],
+    classification: Classification,
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -585,6 +643,26 @@ def _collapse_engine_decision(
 
     if reasons:
         return DENY, tuple((*reasons, "hook_decision_matches_or_is_stricter_than_engine"))
+
+    # Clearly-safe normal work: a repo-internal, non-protected Read/Write/Edit
+    # that the existing engine classified as a definite LOW/MEDIUM change is
+    # allowed so the hook does not obstruct ordinary safe operations. This
+    # promotion is based only on the existing engine's classification; it never
+    # applies to Bash, to ambiguous / NOT_CHECKED-impact inputs, or to anything
+    # that produced a deny reason above.
+    if _is_clearly_safe_normal_file_operation(
+        candidate_action_type=candidate_action_type,
+        action_candidate_status=action_candidate_status,
+        classification=classification,
+        repo_boundary_records=repo_boundary_records,
+    ):
+        return ALLOW, (
+            "engine_classified_normal_non_protected_in_repo_file_operation_as_safe",
+            f"clearly_safe_impact={classification.impact_risk}_risk={classification.risk_level}",
+            "clearly_safe_normal_work_maps_to_allow",
+            "ambiguous_not_checked_or_unclassified_never_reaches_this_branch",
+            "hook_decision_matches_engine_decision",
+        )
 
     if (
         capability_gate_is_hook_judgment_basis

@@ -48,21 +48,21 @@ class RenderHookResponseTests(unittest.TestCase):
 
     # --- normal (safe / non-blocking) -----------------------------------
 
-    def test_normal_write_maps_to_ask_exit_zero(self):
+    def test_normal_write_maps_to_allow_exit_zero(self):
         result = _render(
             {"tool_name": "Write", "tool_input": {"file_path": "src/app.py", "content": "x"}, "tool_use_id": "t1"},
             self.repo_root,
         )
-        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
         self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
-        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_ASK)
+        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_ALLOW)
 
-    def test_normal_edit_maps_to_ask_exit_zero(self):
+    def test_normal_edit_maps_to_allow_exit_zero(self):
         result = _render(
             {"tool_name": "Edit", "tool_input": {"file_path": "app.py", "old_string": "a", "new_string": "b"}, "tool_use_id": "t2"},
             self.repo_root,
         )
-        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
         self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
 
     def test_read_never_denies_and_never_hard_blocks(self):
@@ -239,12 +239,12 @@ class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
         self.assertEqual(proc.returncode, EXIT_BLOCK)
         self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_DENY)
 
-    def test_subprocess_normal_write_asks_exit_0(self):
+    def test_subprocess_normal_write_allows_exit_0(self):
         proc = self._invoke(
             '{"tool_name":"Write","tool_input":{"file_path":"src/app.py","content":"x"},"tool_use_id":"t"}'
         )
         self.assertEqual(proc.returncode, EXIT_ALLOW_OR_ASK)
-        self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_ASK)
+        self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_ALLOW)
 
     def test_subprocess_invalid_json_denies_exit_2(self):
         proc = self._invoke("this is not json {{{")
