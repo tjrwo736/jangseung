@@ -1,259 +1,105 @@
-# Aegis
+# Aegis — AI 코딩 에이전트를 위한 방패
 
-Aegis is a greenfield project for a portable governed coding-agent runtime.
-It carries the governance semantics of Agent Civitas into a standalone
-runtime shape, but it is not a copy of Agent Civitas, DRA, or Hermes.
-Aegis is a small civilization of coding agents governed by risk-proportionate law.
-Zero required external accounts.
+Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막습니다.
 
-Day-1 v0.1 status: contract-first runtime spine. This repository implements a
-minimal local CLI, deterministic risk classification, law gates, no-op
-execution, evidence packets, folder-local state, and deterministic verification.
-It does not implement providers, model execution, service integrations, release
-automation, deploy automation, or autonomous loops.
+<!-- DEMO: 데모 GIF/스크린샷 자리 -->
 
-## Identity
+## 핵심 3가지
 
-Aegis is built around six day-0 identity points:
+- **위험한 것만 막습니다**: `.env` 유출, 배포 설정 변경, `rm -rf` 같은 파괴 명령을 실행 전에 멈춥니다. 정상 작업은 방해하지 않습니다.
+- **조작할 수 없는 기록**: AI가 무엇을 하려 했는지, 무엇이 막혔는지 남깁니다.
+- **프롬프트 인젝션 방어**: 조작된 지시로 위험한 행동을 하려 해도 tool call 단계에서 걸러냅니다.
 
-- small civilization
-- risk-proportional governance
-- single CLI
-- folder-local state
-- evidence-first operation
-- zero required external accounts
+## Claude Code도 위험하면 물어보는데?
 
-One-line promise:
+맞아요. 근데 기본 승인은 세 가지가 아쉽습니다.
 
-The executor is not the source of truth.
+- 매번 다 물어봅니다. 그래서 결국 `--dangerously-skip-permissions`로 꺼버리게 되죠. 그러면 안전장치가 통째로 사라집니다.
+- AI가 뭘 했는지 조작할 수 없는 기록이 안 남습니다. "어제 얘가 뭘 건드렸지?"를 나중에 추적하기 어렵습니다.
+- 규칙이 흐트러지면 그냥 통과시킵니다(fail-open). 안전 도구인데 문제가 생기면 위험한 쪽으로 실패합니다.
 
-Safe default:
+Aegis는 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 작업은 방해하지 않습니다), 모든 판정을 조작 불가능한 기록으로 남기고, 문제가 생기면 안전한 쪽으로 멈춥니다(fail-closed).
 
-```text
-hold_current_state
-```
+## 무엇을 막나 (그리고 안 막나)
 
-## Source of Truth
+방패는 앞을 막지, 지나가는 사람까지 막지 않습니다. Aegis는 명확한 기준으로 위험한 것만 막습니다.
 
-The Aegis repository is the source of truth for Aegis runtime behavior,
-CLI contracts, local state contracts, tests, and verification results.
+막습니다 (사용자 승인 없이는 실행 안 됨):
 
-Agent Civitas remains governance, memory, evidence, and gate ledger context.
-DRA remains an execution worker and evidence return path. User approval remains
-the final authority for main merges and high-risk decisions.
+- 비밀 노출 위험: `.env`, 비밀키, 배포 설정 파일 수정
+- 공급망/빌드 위험: `.github/workflows`, `Dockerfile`, 배포 스크립트 수정
+- 되돌릴 수 없는 파괴: `rm -rf`, `git reset --hard`, `git clean -fd`
+- 감시 기록 조작: `.aeg` 디렉토리 쓰기
+- 범위 밖 접근: 프로젝트 폴더 바깥 경로 (`/etc`, `~/.ssh` 등)
 
-Executor reports are evidence, not truth by themselves. Completion claims must
-be checked against workspace state, Git state, changed files, validation
-results, secret scans, and forbidden-scope scans.
+이 판정은 파일을 직접 쓰는 경우(Write/Edit)뿐 아니라, Bash 명령으로 우회하려는 경우(`echo > .env` 같은)도 동일하게 적용됩니다.
 
-## Bootstrap Scope
+막지 않습니다 (그냥 통과):
 
-Repo Bootstrap v0 established:
+- 코드 읽기, 일반 파일 편집, README 수정
+- 위험하지 않은 정상 작업은 방해하지 않습니다.
 
-- canonical README
-- architecture v0 documentation
-- minimum source and test directory layout
-- ignore rules for local state, secrets, caches, logs, and editor files
-- Day-1 bootstrap boundary
+판단이 애매하면 (물어봅니다):
 
-Day-1 v0.1 establishes:
+- 분류되지 않은 명령, 확실하지 않은 작업은 그냥 통과시키지 않고 확인을 요청합니다.
 
-- `aeg init`
-- `aeg doctor`
-- `aeg run "<task>"`
-- `aeg verify`
-- deterministic LOW / MEDIUM / HIGH intent classification
-- deterministic law gates
-- contract-first no-op execution
-- evidence packets and ledger records under `.aeg/`
+## 우리가 못 막는 것
 
-This bootstrap intentionally does not establish provider implementations,
-model-backed execution, autonomous loops, external service automation, or
-release, publish, or deploy flows.
+Aegis는 "완벽하게 안전하다"고 말하지 않습니다. 지키는 선을 정확히 말합니다.
 
-Day-1 v0.1 keeps a single entry point, folder-local state under `.aeg/`, and
-zero required external accounts. Aegis does not copy Agent Civitas, DRA, or
-Hermes; it discards Slack, WSL, and multi-process plumbing as core
-requirements. OpenAI, Claude, and Gemini providers are not core dependencies.
+Aegis는 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용하려는 순간에 끼어들어 판단합니다. 그래서 도구를 거치지 않는 것들 — AI가 참조로 직접 읽어 들이는 파일 내용, 이미 허용된 명령이 내부에서 실행하는 다른 프로그램 — 은 이 선 바깥에 있습니다.
 
-## Project Layout
+또한 변수 치환이나 중첩 셸처럼 복잡하게 감춰진 명령은 대상을 정밀하게 판별하지 못해, 이 경우 자동 통과가 아니라 확인을 요청합니다.
 
-```text
-Aegis/
-  README.md
-  docs/
-    architecture.md
-  src/
-    cli/
-    classify/
-    law/
-    agents/
-    evidence/
-    state/
-  tests/
-  .gitignore
-```
+다르게 말하면, Aegis는 문 앞을 지키는 경비이지 집 안 모든 방을 감시하는 CCTV가 아닙니다.
 
-The Day-1 modules are standard-library Python and can be exercised through the
-repository-local `aeg` launcher or `python -m src.cli`.
+이 한계를 감추지 않는 것이 Aegis가 신뢰를 얻는 방식입니다.
+
+## 설치
+
+현재 PyPI에 공개 배포되어 있지 않습니다. 소스에서 설치합니다 (로컬 클론).
 
 ```bash
-./aeg init
-./aeg doctor
-./aeg run "fix typo in README"
-./aeg verify
-```
-
-## Packaging / Install Path v0 Quickstart
-
-This is not a PyPI/public release yet. Install path v0 is for a local checkout
-or a GitHub-accessible repository checkout. Provider/network access is not
-required for the core loop, and OpenAI/Claude/Gemini accounts are not required.
-
-Local editable install:
-
-```bash
-cd /path/to/Aegis
+git clone https://github.com/tjrwo736/aegis.git
+cd aegis
 python -m pip install -e .
-aeg --help
 ```
 
-If your environment does not provide `python`, use `python3` instead:
+설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
 ```bash
-python3 -m pip install -e .
+cd /path/to/your-project
+aeg install
 ```
 
-For a disposable local test, you may install inside a temporary virtual
-environment instead of your system Python.
+`aeg install`은 다음을 확인하고 진행합니다.
 
-Optional local `pipx` install, if `pipx` is available:
+- 프로젝트 폴더의 `.claude/settings.json`에 Aegis PreToolUse hook을 등록합니다. **project-local만 지원합니다** — 글로벌(`~/.claude`) 설치는 이 버전에서 지원하지 않습니다.
+- 기존 `.claude/settings.json`이 있으면 병합합니다. 기존에 등록된 다른 hook과 설정은 그대로 남고, Aegis hook만 추가됩니다.
+- 쓰기 전에 변경 내용을 diff로 보여주고 확인(`y/N`)을 받습니다. 이미 승인한 자동화 환경이라면 `--yes`로 확인을 건너뛸 수 있습니다.
+- 쓰기 전에 기존 파일을 `settings.json.aegis-backup-<timestamp>`로 백업합니다.
+
+제거는 반대로:
 
 ```bash
-cd /path/to/Aegis
-pipx install .
-aeg --help
+aeg uninstall
 ```
 
-Fallback local checkout launcher:
+`aeg uninstall`은 Aegis가 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
 
-```bash
-PATH="/path/to/Aegis:$PATH" aeg --help
-```
+## 어떻게 작동하나
 
-```bash
-/path/to/Aegis/aeg --help
-```
+Aegis는 Claude Code의 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령을 실행하는 tool call을 하려는 순간, 실행되기 직전에 그 요청이 Aegis로 전달됩니다. Aegis는 요청을 판정해서 위험하면 막고, 정상이면 통과시키고, 애매하면 확인을 요청합니다.
 
-Use a disposable sandbox repo for unaided run testing. Aegis writes
-folder-local runtime state under `.aeg/`; the target repository must
-git-ignore `.aeg/` before running Aegis. Target repositories should also
-ignore `.env` and `.env.*`. `.aeg/` is local runtime state. Keep it in the
-target repo folder, but do not commit it.
+판정은 결정론적입니다 — 같은 입력에는 항상 같은 결과가 나옵니다. 그리고 판정 근거가 불확실할 때는 안전한 쪽(막거나 확인 요청)으로 실패합니다(fail-closed).
 
-```bash
-mkdir -p /tmp/aegis-sandbox
-cd /tmp/aegis-sandbox
-git init
-printf "# Sandbox\n" > README.md
-printf ".aeg/\n.env\n.env.*\n" > .gitignore
-git add README.md .gitignore
-git commit -m "init sandbox repo"
-```
+## 요구사항 / 현재 상태
 
-Then run the installed `aeg` command in the sandbox repo:
+- **Claude Code에서 검증됨**: 실제 Claude Code 세션에서 PreToolUse hook으로 정상 작동을 확인했습니다. Codex 등 다른 코딩 에이전트는 향후 지원 대상이지만 아직 검증되지 않았습니다.
+- **정책은 현재 하드코딩되어 있습니다.** 사용자가 위험 기준을 직접 조정하는 기능은 아직 없습니다 (로드맵 예정).
+- **비밀(secret) 판정은 경로와 의도 기반입니다.** `.env` 같은 파일에 쓰는 시도 자체는 막지만, 파일 내용에서 실제 API 키/비밀번호 값을 스캔하는 기능은 아직 없습니다 (로드맵 예정).
+- Python 3.10 이상이 필요합니다.
 
-```bash
-aeg doctor
-aeg init
-aeg doctor
-aeg run "fix typo in README"
-aeg verify
-aeg run "merge to main and deploy"
-aeg verify
-```
+## 라이선스
 
-Expected contrast:
-
-- LOW task -> `CLEAN_CORE`
-- HIGH task -> `NEEDS_USER_GATE`
-- `aeg verify` -> `REPLAY_CONSISTENT`
-- `.aeg/` remains folder-local and git-ignored
-- provider/network access is not required
-
-`REPLAY_CONSISTENT` means Aegis replayed the recorded evidence and binding
-deterministically. It is not an external oracle and does not mean the requested
-task was actually executed.
-
-If `.aeg/` is not ignored in the target repo, `aeg doctor` will report a
-problem. This is expected; fix it by adding `.aeg/` to `.gitignore`.
-
-## Claude Code Hook Install (aeg install / aeg uninstall)
-
-After installing the package, register the Aegis PreToolUse governance hook in
-a project with one command instead of hand-editing settings:
-
-```bash
-cd /path/to/your/project
-aeg install       # shows a diff preview and asks y/N before writing
-aeg uninstall     # removes only the Aegis hook, keeps your other settings
-```
-
-What `aeg install` does, and its safety model:
-
-- Writes only project-local `./.claude/settings.json`. Global (`~/.claude`)
-  install is **not supported** in this version; run `aeg install` inside the
-  project directory instead.
-- Merges into an existing `settings.json`: your other hooks and fields are
-  preserved; only one Aegis `PreToolUse` entry (matcher `Write|Edit|Bash|Read`)
-  is added.
-- Always shows a unified diff of the proposed change and asks for `y/N`
-  confirmation before writing. Use `--yes` to skip the prompt in automation.
-- Backs up an existing `settings.json` to
-  `settings.json.aegis-backup-<timestamp>` before writing.
-- Aborts without writing if the existing `settings.json` is invalid JSON or has
-  an unexpected structure — it will not overwrite content it cannot safely
-  merge.
-- Is idempotent: running it again reports "already installed" and makes no
-  change.
-
-The generated hook `command` uses the installed `aeg` executable (or the
-current interpreter's module invocation) so no manual `PYTHONPATH` is needed.
-`aeg uninstall` removes only the Aegis hook (identified by its `hook-run`
-command), preserving every other hook, and also backs up first; if no Aegis
-hook is present it exits quietly.
-
-This is the hook-install convenience layer only. It does not perform a public
-release and does not run Claude Code for you.
-
-## Core Non-Dependencies
-
-Aegis core must not require the following as runtime dependencies:
-
-- Slack
-- WSL
-- multi-process runtime
-- mandatory PR-promotion flow
-- Agent Civitas copy
-- DRA copy
-- Hermes copy
-- GitHub API
-- OpenAI runtime
-- Claude runtime
-- Gemini runtime
-
-Provider integrations may be considered only in later, explicitly scoped work.
-They are not part of Day-1 v0.1 and are not core dependencies.
-
-## Local State Boundary
-
-Aegis uses folder-local `.aeg/` state for runtime records. The `.aeg/`
-directory is local runtime state and must not be committed. Day-1 state records
-include `config.json`, `ledger.jsonl`, and per-run `run.json` /
-`evidence.json` files under `.aeg/runs/<run_id>/`.
-
-## Day-1 Bootstrap Boundary
-
-The next safe work after Day-1 v0.1 is to broaden validation and impact-risk
-taxonomy before any mutating executor is introduced. The safe default remains
-`hold_current_state`.
+TBD
