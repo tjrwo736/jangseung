@@ -12,11 +12,16 @@ from pathlib import Path
 
 from src.cli.install import (
     AEGIS_HOOK_MATCHER,
+    CODEX_AEGIS_HOOK_MATCHER,
     HOOK_EVENT_NAME,
+    InstallStructureError,
+    TARGET_CODEX,
+    build_installed_codex_config_text,
     build_installed_settings,
     build_uninstalled_settings,
     cmd_install,
     cmd_uninstall,
+    codex_config_path,
     is_aegis_hook_command,
     load_settings,
     resolve_hook_command,
@@ -39,6 +44,13 @@ class BuildMergeLogicTests(unittest.TestCase):
     def test_resolve_hook_command_references_hook_run(self):
         command = resolve_hook_command()
         self.assertIn("hook-run", command)
+        self.assertNotIn("--substrate", command)
+        self.assertTrue(is_aegis_hook_command(command))
+
+    def test_resolve_hook_command_can_encode_codex_substrate(self):
+        command = resolve_hook_command(substrate=TARGET_CODEX)
+        self.assertIn("hook-run", command)
+        self.assertIn("--substrate codex", command)
         self.assertTrue(is_aegis_hook_command(command))
 
     def test_is_aegis_hook_command_does_not_match_user_hooks(self):
@@ -136,6 +148,62 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertEqual(removed, 0)
         self.assertEqual(new_data, data)
 
+    def test_codex_config_into_empty_creates_project_hook_block(self):
+        text, already = build_installed_codex_config_text(
+            "",
+            "aeg hook-run --substrate codex",
+        )
+
+        self.assertFalse(already)
+        self.assertIn("[[hooks.PreToolUse]]", text)
+        self.assertIn(f'matcher = "{CODEX_AEGIS_HOOK_MATCHER}"', text)
+        self.assertIn("[[hooks.PreToolUse.hooks]]", text)
+        self.assertIn('type = "command"', text)
+        self.assertIn('command = "aeg hook-run --substrate codex"', text)
+
+    def test_codex_config_preserves_existing_text_and_appends(self):
+        original = 'model = "gpt-5"\n\n[tool_suggest]\ndisabled_tools = []\n'
+
+        text, already = build_installed_codex_config_text(
+            original,
+            "aeg hook-run --substrate codex",
+        )
+
+        self.assertFalse(already)
+        self.assertTrue(text.startswith(original))
+        self.assertIn("[[hooks.PreToolUse]]", text)
+        self.assertIn('command = "aeg hook-run --substrate codex"', text)
+
+    def test_codex_config_is_idempotent_when_codex_hook_present(self):
+        text, _ = build_installed_codex_config_text(
+            "",
+            "aeg hook-run --substrate codex",
+        )
+
+        again, already = build_installed_codex_config_text(
+            text,
+            "aeg hook-run --substrate codex",
+        )
+
+        self.assertTrue(already)
+        self.assertEqual(again, text)
+        self.assertEqual(again.count("[[hooks.PreToolUse.hooks]]"), 1)
+
+    def test_codex_config_rejects_aegis_hook_without_codex_substrate(self):
+        existing = (
+            "[[hooks.PreToolUse]]\n"
+            'matcher = "Bash"\n\n'
+            "[[hooks.PreToolUse.hooks]]\n"
+            'type = "command"\n'
+            'command = "aeg hook-run"\n'
+        )
+
+        with self.assertRaises(InstallStructureError):
+            build_installed_codex_config_text(
+                existing,
+                "aeg hook-run --substrate codex",
+            )
+
 
 class LoadSettingsTests(unittest.TestCase):
     def test_absent_file_is_empty_not_error(self):
@@ -193,6 +261,38 @@ class CmdFlowTests(unittest.TestCase):
             backups = list(path.parent.glob("settings.json.aegis-backup-*"))
             self.assertEqual(len(backups), 1)  # backup created
 
+    def test_install_default_target_writes_claude_settings_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            rc = cmd_install(tmp, assume_yes=True, output_stream=out)
+
+            self.assertEqual(rc, 0)
+            self.assertTrue(settings_path(tmp).exists())
+            self.assertFalse(codex_config_path(tmp).exists())
+            written = json.loads(settings_path(tmp).read_text(encoding="utf-8"))
+            command = written["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            self.assertIn("hook-run", command)
+            self.assertNotIn("--substrate", command)
+
+    def test_install_target_codex_writes_codex_config_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            rc = cmd_install(
+                tmp,
+                assume_yes=True,
+                target=TARGET_CODEX,
+                output_stream=out,
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertFalse(settings_path(tmp).exists())
+            path = codex_config_path(tmp)
+            self.assertTrue(path.exists())
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("[[hooks.PreToolUse]]", text)
+            self.assertIn(f'matcher = "{CODEX_AEGIS_HOOK_MATCHER}"', text)
+            self.assertIn("--substrate codex", text)
+
     def test_install_global_unsupported(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = io.StringIO()
@@ -241,6 +341,31 @@ class SubprocessInstallTests(unittest.TestCase):
             written = json.loads(settings_path(tmp).read_text(encoding="utf-8"))
             command = written["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             self.assertIn("hook-run", command)
+            self.assertNotIn("--substrate", command)
+
+    def test_subprocess_install_target_codex_creates_codex_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "src.cli",
+                    "install",
+                    "--path",
+                    tmp,
+                    "--yes",
+                    "--target",
+                    "codex",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=tmp,
+                env=self._env(),
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = codex_config_path(tmp).read_text(encoding="utf-8")
+            self.assertIn("[[hooks.PreToolUse]]", text)
+            self.assertIn("--substrate codex", text)
 
 
 if __name__ == "__main__":
