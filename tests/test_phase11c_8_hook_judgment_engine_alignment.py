@@ -163,7 +163,7 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         )
         self._assert_engine_parity(decision)
 
-    def test_normal_low_risk_edit_denies_because_engine_capability_gate_denies_write(self):
+    def test_normal_low_risk_edit_asks_via_target_path_risk_not_capability_gate(self):
         decision = self._judge(
             "Edit",
             {
@@ -173,9 +173,13 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision.engine_decision, DENY)
-        self.assertEqual(decision.hook_decision, DENY)
-        self.assertNotIn(decision.hook_decision, (ALLOW, ASK))
+        # Aegis's own WRITE_FILE/EDIT-shaped self-execution capability remains
+        # denied (11-B propose-only policy, unchanged) but that denial is not
+        # the hook judgment basis for a normal, non-protected Edit target: the
+        # hook judges by target-path risk instead, so a normal low-risk edit
+        # asks rather than being denied outright.
+        self.assertEqual(decision.hook_decision, ASK)
+        self.assertNotEqual(decision.hook_decision, DENY)
         self.assertEqual(decision.engine_decision_basis["law"]["status"], CLEAN_CORE)
         self.assertEqual(
             decision.engine_decision_basis["capability_gate"]["gate_result"],
