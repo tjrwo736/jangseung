@@ -472,9 +472,12 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _judge(self, tool_name, tool_input):
+        return self._judge_with_repo_root(tool_name, tool_input, str(self.repo_root))
+
+    def _judge_with_repo_root(self, tool_name, tool_input, repo_root):
         return judge_pretooluse_with_aeg_engine(
             {"tool_name": tool_name, "tool_input": tool_input, "tool_use_id": "toolu-x"},
-            repo_root=str(self.repo_root),
+            repo_root=repo_root,
         )
 
     def _abs(self, rel: str) -> str:
@@ -494,6 +497,23 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
         decision = self._judge("Write", {"file_path": self._abs("src/app.py"), "content": "x"})
         self.assertEqual(decision.hook_decision, ALLOW)
 
+    def test_windows_repo_internal_absolute_write_is_allow_not_deny(self):
+        repo_root = r"C:\Users\test\repo"
+        for path in (
+            r"C:\Users\test\repo\src\app.py",
+            "C:/Users/test/repo/src/app.py",
+        ):
+            with self.subTest(path=path):
+                decision = self._judge_with_repo_root(
+                    "Write",
+                    {"file_path": path, "content": "x"},
+                    repo_root,
+                )
+                self.assertEqual(decision.hook_decision, ALLOW)
+                norm = decision.engine_decision_basis["path_normalization"][0]
+                self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
+                self.assertEqual(norm["normalized"], "src/app.py")
+
     def test_repo_internal_absolute_edit_is_not_deny(self):
         decision = self._judge(
             "Edit", {"file_path": self._abs("README.md"), "old_string": "a", "new_string": "b"}
@@ -508,6 +528,17 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
                 decision = self._judge("Write", {"file_path": self._abs(rel), "content": "x"})
                 self.assertEqual(decision.hook_decision, DENY)
 
+    def test_windows_repo_internal_absolute_protected_path_still_denies(self):
+        decision = self._judge_with_repo_root(
+            "Write",
+            {"file_path": r"C:\Users\test\repo\.env", "content": "x"},
+            r"C:\Users\test\repo",
+        )
+        self.assertEqual(decision.hook_decision, DENY)
+        norm = decision.engine_decision_basis["path_normalization"][0]
+        self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
+        self.assertEqual(norm["normalized"], ".env")
+
     # --- repo-external / traversal / symlink: must STILL deny -------------
 
     def test_repo_external_absolute_paths_still_deny(self):
@@ -516,6 +547,24 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
                 decision = self._judge("Read", {"file_path": path})
                 self.assertEqual(decision.hook_decision, DENY)
                 self.assertNotIn(decision.hook_decision, (ALLOW, ASK))
+
+    def test_windows_repo_external_absolute_paths_still_deny(self):
+        repo_root = r"C:\Users\test\repo"
+        for path in (
+            r"C:\Users\test\repo.env",
+            r"C:\Windows\System32\config",
+            r"D:\other\path\file.txt",
+        ):
+            with self.subTest(path=path):
+                decision = self._judge_with_repo_root(
+                    "Write",
+                    {"file_path": path, "content": "x"},
+                    repo_root,
+                )
+                self.assertEqual(decision.hook_decision, DENY)
+                norm = decision.engine_decision_basis["path_normalization"][0]
+                self.assertEqual(norm["action"], "outside_repo_kept_absolute_for_scope_rejection")
+                self.assertFalse(norm["in_repo"])
 
     def test_sibling_prefix_directory_is_not_treated_as_in_repo(self):
         # /tmp/x/repo-evil/secret.txt must NOT be considered under /tmp/x/repo.
