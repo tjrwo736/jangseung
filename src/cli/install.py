@@ -20,6 +20,7 @@ import datetime
 import difflib
 import json
 import shutil
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -105,6 +106,16 @@ def resolve_windows_hook_command_parts() -> tuple[str, tuple[str, ...]]:
     if isinstance(aeg_path, str) and _is_windows_exe_path(aeg_path):
         return (aeg_path, ("hook-run",))
     return (sys.executable, ("-m", "src.cli", "hook-run"))
+
+
+def resolve_codex_windows_hook_command(*, platform: str | None = None) -> str | None:
+    """Return a Windows command string for Codex, when installing on Windows."""
+
+    effective_platform = sys.platform if platform is None else platform
+    if effective_platform != "win32":
+        return None
+    command, args = resolve_windows_hook_command_parts()
+    return subprocess.list2cmdline((command, *args, "--substrate", TARGET_CODEX))
 
 
 def is_aegis_hook_command(command: Any) -> bool:
@@ -245,6 +256,8 @@ def normalize_install_target(target: str) -> str:
 def build_installed_codex_config_text(
     current_text: str,
     command: str,
+    *,
+    command_windows: str | None = None,
 ) -> tuple[str, bool]:
     """Return (new_config_text, already_installed) for project-local Codex TOML.
 
@@ -261,7 +274,7 @@ def build_installed_codex_config_text(
             "--substrate codex"
         )
 
-    block = _codex_hook_block(command)
+    block = _codex_hook_block(command, command_windows=command_windows)
     if not current_text.strip():
         return (block, False)
     return (_ensure_trailing_newline(current_text) + "\n" + block, False)
@@ -381,8 +394,13 @@ def _cmd_install_codex(
         return 1
 
     command = resolve_hook_command(substrate=TARGET_CODEX)
+    command_windows = resolve_codex_windows_hook_command()
     try:
-        after_text, already = build_installed_codex_config_text(before_text, command)
+        after_text, already = build_installed_codex_config_text(
+            before_text,
+            command,
+            command_windows=command_windows,
+        )
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected Codex config structure: {exc}")
         _write(out, "Please adjust .codex/config.toml manually, then retry.")
@@ -396,6 +414,8 @@ def _cmd_install_codex(
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
     _write(out, f"  target:       {TARGET_CODEX}")
     _write(out, f"  hook command: {command}")
+    if command_windows is not None:
+        _write(out, f"  windows cmd:  {command_windows}")
     _write(out, f"  matcher:      {CODEX_AEGIS_HOOK_MATCHER}")
     _write(out, "")
     _write_diff(out, preview_before, after_text, path)
@@ -515,7 +535,12 @@ def _load_text_file(path: Path) -> tuple[str, bool, str | None]:
         return ("", True, f"cannot read {path}: {exc}")
 
 
-def _codex_hook_block(command: str) -> str:
+def _codex_hook_block(command: str, *, command_windows: str | None = None) -> str:
+    windows_line = (
+        f"command_windows = {_toml_string(command_windows)}\n"
+        if command_windows is not None
+        else ""
+    )
     return (
         "# Aegis PreToolUse hook for Codex. Managed by `aeg install --target codex`.\n"
         "[[hooks.PreToolUse]]\n"
@@ -524,6 +549,7 @@ def _codex_hook_block(command: str) -> str:
         "[[hooks.PreToolUse.hooks]]\n"
         "type = \"command\"\n"
         f"command = {_toml_string(command)}\n"
+        f"{windows_line}"
     )
 
 
@@ -650,6 +676,7 @@ __all__ = [
     "load_settings",
     "normalize_install_target",
     "resolve_claude_code_hook_command",
+    "resolve_codex_windows_hook_command",
     "resolve_hook_command",
     "resolve_hook_command_parts",
     "resolve_windows_hook_command_parts",

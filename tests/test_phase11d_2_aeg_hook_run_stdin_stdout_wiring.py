@@ -190,7 +190,7 @@ class RenderHookResponseTests(unittest.TestCase):
         result = _render_for_substrate(payload, self.repo_root, SUBSTRATE_CODEX)
 
         self.assertEqual(result.permission_decision, PERMISSION_DENY)
-        self.assertEqual(result.exit_code, EXIT_BLOCK)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
         self.assertEqual(result.hook_decision, "defer")
         self.assertIn("substrate=codex", result.reason)
         self.assertIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
@@ -257,6 +257,10 @@ class RenderHookResponseTests(unittest.TestCase):
                 "*** Begin Patch\n*** Add File: .github/workflows/x.yml\n+name: x\n*** End Patch",
             ),
             (
+                "workflow_delete",
+                "*** Begin Patch\n*** Delete File: .github/workflows/ci.yml\n*** End Patch",
+            ),
+            (
                 "env_delete",
                 "*** Begin Patch\n*** Delete File: .env\n*** End Patch",
             ),
@@ -302,7 +306,7 @@ class RenderHookResponseTests(unittest.TestCase):
                 self.assertEqual(result.permission_decision, PERMISSION_DENY)
                 self.assertEqual(result.exit_code, EXIT_BLOCK)
 
-    def test_codex_substrate_does_not_change_clear_deny_or_allow(self):
+    def test_codex_substrate_keeps_clear_permission_but_exits_zero(self):
         deny = _render_for_substrate(
             {
                 "tool_name": "Bash",
@@ -323,11 +327,39 @@ class RenderHookResponseTests(unittest.TestCase):
         )
 
         self.assertEqual(deny.permission_decision, PERMISSION_DENY)
-        self.assertEqual(deny.exit_code, EXIT_BLOCK)
+        self.assertEqual(deny.exit_code, EXIT_ALLOW_OR_ASK)
         self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, deny.reason)
         self.assertEqual(allow.permission_decision, PERMISSION_ALLOW)
         self.assertEqual(allow.exit_code, EXIT_ALLOW_OR_ASK)
         self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, allow.reason)
+
+    def test_claude_code_substrate_deny_keeps_exit_2(self):
+        payload = {
+            "tool_name": "apply_patch",
+            "tool_input": {
+                "command": "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch"
+            },
+            "tool_use_id": "t-apply-patch-deny",
+        }
+
+        for substrate in (None, SUBSTRATE_CLAUDE_CODE, "unknown"):
+            with self.subTest(substrate=substrate):
+                result = _render_for_substrate(payload, self.repo_root, substrate)
+                self.assertEqual(result.permission_decision, PERMISSION_DENY)
+                self.assertEqual(result.exit_code, EXIT_BLOCK)
+                self.assertIn("substrate=claude-code", result.reason)
+
+    def test_codex_substrate_fail_closed_deny_json_still_exits_zero(self):
+        result = render_hook_response(
+            "this is not json {{{",
+            repo_root=self.repo_root,
+            substrate=SUBSTRATE_CODEX,
+        )
+
+        self.assertEqual(result.permission_decision, PERMISSION_DENY)
+        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_DENY)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertTrue(result.fail_closed)
 
     def test_protected_write_with_missing_tool_use_id_still_denies(self):
         # Downgrade guard: an invalid input must not skip path judgment and
@@ -452,6 +484,16 @@ class RenderHookResponseTests(unittest.TestCase):
             evidence["codex_substrate_upgrade_reason_code"],
             CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
         )
+        self.assertTrue(evidence["codex_substrate_all_permission_decisions_exit_zero"])
+        self.assertEqual(evidence["claude_code_substrate_deny_exit_code"], EXIT_BLOCK)
+        self.assertEqual(
+            evidence["codex_substrate_process_exit_code"],
+            EXIT_ALLOW_OR_ASK,
+        )
+        self.assertEqual(
+            evidence["fail_closed_exit_code_codex_substrate"],
+            EXIT_ALLOW_OR_ASK,
+        )
         self.assertFalse(evidence["settings_json_modified"])
         self.assertFalse(evidence["hook_installed"])
         self.assertFalse(evidence["claude_code_execution_performed"])
@@ -493,14 +535,86 @@ class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
         self.assertEqual(proc.returncode, EXIT_ALLOW_OR_ASK)
         self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_ASK)
 
-    def test_subprocess_unclassified_bash_codex_substrate_denies_exit_2(self):
+    def test_subprocess_unclassified_bash_codex_substrate_denies_exit_0(self):
         proc = self._invoke(
             '{"tool_name":"Bash","tool_input":{"command":"dd if=/dev/zero of=tmp.bin bs=1 count=1"},"tool_use_id":"t"}',
             ["--substrate", "codex"],
         )
-        self.assertEqual(proc.returncode, EXIT_BLOCK)
+        self.assertEqual(proc.returncode, EXIT_ALLOW_OR_ASK)
         self.assertEqual(_permission_from_stdout(proc.stdout), PERMISSION_DENY)
         self.assertIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, proc.stdout)
+
+    def test_subprocess_codex_apply_patch_denies_json_but_always_exit_0(self):
+        cases = (
+            (
+                "env_apply_patch",
+                "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+                PERMISSION_DENY,
+            ),
+            (
+                "workflow_delete_apply_patch",
+                "*** Begin Patch\n*** Delete File: .github/workflows/ci.yml\n*** End Patch",
+                PERMISSION_DENY,
+            ),
+            (
+                "readme_apply_patch",
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+normal line\n*** End Patch",
+                PERMISSION_ALLOW,
+            ),
+        )
+
+        for label, command, expected_permission in cases:
+            with self.subTest(label=label):
+                proc = self._invoke(
+                    json.dumps(
+                        {
+                            "tool_name": "apply_patch",
+                            "tool_input": {"command": command},
+                            "tool_use_id": "t-apply-patch",
+                        }
+                    ),
+                    ["--substrate", "codex"],
+                )
+                self.assertEqual(proc.returncode, EXIT_ALLOW_OR_ASK)
+                self.assertEqual(_permission_from_stdout(proc.stdout), expected_permission)
+
+    def test_subprocess_claude_code_apply_patch_exit_codes_unchanged(self):
+        cases = (
+            (
+                "env_apply_patch",
+                "*** Begin Patch\n*** Add File: .env\n+API_KEY=x\n*** End Patch",
+                PERMISSION_DENY,
+                EXIT_BLOCK,
+            ),
+            (
+                "workflow_delete_apply_patch",
+                "*** Begin Patch\n*** Delete File: .github/workflows/ci.yml\n*** End Patch",
+                PERMISSION_DENY,
+                EXIT_BLOCK,
+            ),
+            (
+                "readme_apply_patch",
+                "*** Begin Patch\n*** Update File: README.md\n@@\n+normal line\n*** End Patch",
+                PERMISSION_ALLOW,
+                EXIT_ALLOW_OR_ASK,
+            ),
+        )
+
+        for extra_args in (None, ["--substrate", "claude-code"]):
+            for label, command, expected_permission, expected_exit in cases:
+                with self.subTest(label=label, extra_args=extra_args):
+                    proc = self._invoke(
+                        json.dumps(
+                            {
+                                "tool_name": "apply_patch",
+                                "tool_input": {"command": command},
+                                "tool_use_id": "t-apply-patch",
+                            }
+                        ),
+                        extra_args,
+                    )
+                    self.assertEqual(proc.returncode, expected_exit)
+                    self.assertEqual(_permission_from_stdout(proc.stdout), expected_permission)
 
     def test_subprocess_normal_write_allows_exit_0(self):
         proc = self._invoke(
