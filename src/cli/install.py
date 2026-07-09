@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Sequence, TextIO
 
 AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read"
+WINDOWS_AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read|PowerShell"
 CODEX_AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read|apply_patch"
 HOOK_RUN_MARKER = "hook-run"
 HOOK_EVENT_NAME = "PreToolUse"
@@ -82,6 +83,19 @@ def resolve_claude_code_hook_command(
     if effective_platform == "win32":
         return resolve_windows_hook_command_parts()
     return (resolve_hook_command(), None)
+
+
+def claude_code_hook_matcher(*, platform: str | None = None) -> str:
+    """Return the Claude Code matcher for the current platform.
+
+    Windows Claude Code exposes file mutation through both Bash and PowerShell
+    tool calls. POSIX keeps the historical matcher unchanged.
+    """
+
+    effective_platform = sys.platform if platform is None else platform
+    if effective_platform == "win32":
+        return WINDOWS_AEGIS_HOOK_MATCHER
+    return AEGIS_HOOK_MATCHER
 
 
 def resolve_windows_hook_command_parts() -> tuple[str, tuple[str, ...]]:
@@ -153,6 +167,7 @@ def build_installed_settings(
     command: str,
     *,
     args: Sequence[str] | None = None,
+    matcher: str = AEGIS_HOOK_MATCHER,
 ) -> tuple[dict[str, Any], bool]:
     """Return (new_settings, already_installed). Preserves all existing content;
     appends one Aegis PreToolUse entry unless one is already present."""
@@ -170,7 +185,7 @@ def build_installed_settings(
 
     pretooluse.append(
         {
-            "matcher": AEGIS_HOOK_MATCHER,
+            "matcher": matcher,
             "hooks": [_command_hook(command, args=args)],
         }
     )
@@ -310,8 +325,14 @@ def _cmd_install_claude_code(
         return 1
 
     command, args = resolve_claude_code_hook_command()
+    matcher = claude_code_hook_matcher()
     try:
-        new_data, already = build_installed_settings(data or {}, command, args=args)
+        new_data, already = build_installed_settings(
+            data or {},
+            command,
+            args=args,
+            matcher=matcher,
+        )
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected settings structure: {exc}")
         _write(out, "Please adjust .claude/settings.json manually, then retry.")
@@ -326,7 +347,7 @@ def _cmd_install_claude_code(
 
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
     _write(out, f"  hook command: {_format_hook_command(command, args=args)}")
-    _write(out, f"  matcher:      {AEGIS_HOOK_MATCHER}")
+    _write(out, f"  matcher:      {matcher}")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
 
@@ -609,7 +630,9 @@ def _write(out: TextIO, line: str) -> None:
 
 __all__ = [
     "AEGIS_HOOK_MATCHER",
+    "WINDOWS_AEGIS_HOOK_MATCHER",
     "CODEX_AEGIS_HOOK_MATCHER",
+    "claude_code_hook_matcher",
     "HOOK_EVENT_NAME",
     "HOOK_RUN_MARKER",
     "INSTALL_TARGETS",

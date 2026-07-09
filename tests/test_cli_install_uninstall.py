@@ -17,9 +17,11 @@ from src.cli.install import (
     HOOK_EVENT_NAME,
     InstallStructureError,
     TARGET_CODEX,
+    WINDOWS_AEGIS_HOOK_MATCHER,
     build_installed_codex_config_text,
     build_installed_settings,
     build_uninstalled_settings,
+    claude_code_hook_matcher,
     cmd_install,
     cmd_uninstall,
     codex_config_path,
@@ -74,12 +76,29 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertEqual(command, python_path)
         self.assertEqual(args, ("-m", "src.cli", "hook-run"))
 
-        data, already = build_installed_settings({}, command, args=args)
+        data, already = build_installed_settings(
+            {},
+            command,
+            args=args,
+            matcher=claude_code_hook_matcher(platform="win32"),
+        )
         self.assertFalse(already)
+        self.assertEqual(
+            data["hooks"][HOOK_EVENT_NAME][0]["matcher"],
+            WINDOWS_AEGIS_HOOK_MATCHER,
+        )
         hook = data["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
         self.assertEqual(hook["command"], python_path)
         self.assertEqual(hook["args"], ["-m", "src.cli", "hook-run"])
         self.assertTrue(is_aegis_hook(hook))
+
+    def test_claude_code_matcher_adds_powershell_only_on_windows(self):
+        self.assertEqual(claude_code_hook_matcher(platform="linux"), AEGIS_HOOK_MATCHER)
+        self.assertEqual(claude_code_hook_matcher(platform="darwin"), AEGIS_HOOK_MATCHER)
+        self.assertEqual(
+            claude_code_hook_matcher(platform="win32"),
+            WINDOWS_AEGIS_HOOK_MATCHER,
+        )
 
     def test_windows_hook_uses_aeg_exe_when_available(self):
         aeg_path = r"C:\Users\Name With Space\venv\Scripts\aeg.exe"

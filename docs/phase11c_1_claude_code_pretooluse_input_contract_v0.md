@@ -109,6 +109,7 @@ Bash
 Write
 Edit
 Read
+PowerShell
 apply_patch
 ```
 
@@ -119,6 +120,11 @@ allowed, denied, executed, or sandboxed.
 `apply_patch` is recognized for Codex-style PreToolUse-shaped input where
 `tool_input.command` contains a patch text. Recognition only lets later gates
 parse target paths; it does not apply the patch or grant write authority.
+
+`PowerShell` is recognized for Claude Code PreToolUse input where
+`tool_input.command` contains a PowerShell command string. Recognition only
+lets later gates parse common write/delete targets; it is not a claim of full
+PowerShell language coverage or command safety.
 
 Tool support rules:
 

@@ -34,7 +34,14 @@ OPTIONAL_HOOK_METADATA_FIELDS = (
     "project_root",
     "timestamp",
 )
-SUPPORTED_INITIAL_TARGET_TOOLS = ("Bash", "Write", "Edit", "Read", "apply_patch")
+SUPPORTED_INITIAL_TARGET_TOOLS = (
+    "Bash",
+    "Write",
+    "Edit",
+    "Read",
+    "PowerShell",
+    "apply_patch",
+)
 
 VALID_PRETOOLUSE_INPUT_CONTRACT = "VALID_PRETOOLUSE_INPUT_CONTRACT"
 INVALID_PRETOOLUSE_INPUT_CONTRACT = "INVALID_PRETOOLUSE_INPUT_CONTRACT"
