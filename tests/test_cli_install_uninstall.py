@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from src.cli.install import (
     AEGIS_HOOK_MATCHER,
@@ -22,9 +23,13 @@ from src.cli.install import (
     cmd_install,
     cmd_uninstall,
     codex_config_path,
+    is_aegis_hook,
     is_aegis_hook_command,
     load_settings,
+    resolve_claude_code_hook_command,
     resolve_hook_command,
+    resolve_hook_command_parts,
+    resolve_windows_hook_command_parts,
     settings_path,
 )
 
@@ -47,11 +52,62 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertNotIn("--substrate", command)
         self.assertTrue(is_aegis_hook_command(command))
 
+    def test_resolve_hook_command_parts_references_hook_run(self):
+        command, args = resolve_hook_command_parts()
+        self.assertIsInstance(command, str)
+        self.assertIn("hook-run", args)
+
     def test_resolve_hook_command_can_encode_codex_substrate(self):
         command = resolve_hook_command(substrate=TARGET_CODEX)
         self.assertIn("hook-run", command)
         self.assertIn("--substrate codex", command)
         self.assertTrue(is_aegis_hook_command(command))
+
+    def test_windows_claude_code_hook_uses_exec_form_args(self):
+        python_path = r"C:\Users\Name With Space\AppData\Local\Temp\aeg venv\Scripts\python.exe"
+        with mock.patch("src.cli.install.shutil.which", return_value=None), mock.patch(
+            "src.cli.install.sys.executable",
+            python_path,
+        ):
+            command, args = resolve_claude_code_hook_command(platform="win32")
+
+        self.assertEqual(command, python_path)
+        self.assertEqual(args, ("-m", "src.cli", "hook-run"))
+
+        data, already = build_installed_settings({}, command, args=args)
+        self.assertFalse(already)
+        hook = data["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
+        self.assertEqual(hook["command"], python_path)
+        self.assertEqual(hook["args"], ["-m", "src.cli", "hook-run"])
+        self.assertTrue(is_aegis_hook(hook))
+
+    def test_windows_hook_uses_aeg_exe_when_available(self):
+        aeg_path = r"C:\Users\Name With Space\venv\Scripts\aeg.exe"
+        with mock.patch("src.cli.install.shutil.which", return_value=aeg_path):
+            command, args = resolve_windows_hook_command_parts()
+
+        self.assertEqual(command, aeg_path)
+        self.assertEqual(args, ("hook-run",))
+
+    def test_windows_hook_ignores_non_exe_aeg_shim(self):
+        python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
+        with mock.patch(
+            "src.cli.install.shutil.which",
+            return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
+        ), mock.patch("src.cli.install.sys.executable", python_path):
+            command, args = resolve_windows_hook_command_parts()
+
+        self.assertEqual(command, python_path)
+        self.assertEqual(args, ("-m", "src.cli", "hook-run"))
+
+    def test_posix_claude_code_hook_keeps_shell_form(self):
+        command, args = resolve_claude_code_hook_command(platform="linux")
+
+        self.assertIsNone(args)
+        self.assertIn("hook-run", command)
+        data, _ = build_installed_settings({}, command, args=args)
+        hook = data["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
+        self.assertEqual(hook, {"type": "command", "command": command})
 
     def test_is_aegis_hook_command_does_not_match_user_hooks(self):
         self.assertFalse(is_aegis_hook_command(_USER_HOOK))
@@ -97,6 +153,17 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertTrue(already)
         self.assertEqual(len(again["hooks"][HOOK_EVENT_NAME]), 1)
 
+    def test_install_is_idempotent_for_windows_exec_form_hook(self):
+        data, _ = build_installed_settings(
+            {},
+            r"C:\Users\Name With Space\venv\Scripts\python.exe",
+            args=["-m", "src.cli", "hook-run"],
+        )
+        again, already = build_installed_settings(data, "aeg hook-run")
+
+        self.assertTrue(already)
+        self.assertEqual(len(again["hooks"][HOOK_EVENT_NAME]), 1)
+
     def test_uninstall_removes_only_aegis_keeps_user(self):
         data = {
             "model": "x",
@@ -113,6 +180,32 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertEqual(len(pre), 1)
         self.assertEqual(pre[0]["hooks"][0]["command"], _USER_HOOK)
         self.assertEqual(new_data["model"], "x")
+
+    def test_uninstall_removes_windows_exec_form_aegis_hook(self):
+        data = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": _USER_HOOK}]},
+                    {
+                        "matcher": AEGIS_HOOK_MATCHER,
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": r"C:\Users\x\venv\Scripts\python.exe",
+                                "args": ["-m", "src.cli", "hook-run"],
+                            }
+                        ],
+                    },
+                ]
+            }
+        }
+
+        new_data, removed = build_uninstalled_settings(data)
+
+        self.assertEqual(removed, 1)
+        pre = new_data["hooks"]["PreToolUse"]
+        self.assertEqual(len(pre), 1)
+        self.assertEqual(pre[0]["hooks"][0]["command"], _USER_HOOK)
 
     def test_uninstall_cleans_up_empty_structures(self):
         data = {"hooks": {"PreToolUse": [_aegis_entry("aeg hook-run")]}}
@@ -251,13 +344,14 @@ class CmdFlowTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             written = json.loads(path.read_text(encoding="utf-8"))
-            commands = [
-                h["command"]
+            hooks = [
+                h
                 for entry in written["hooks"]["PreToolUse"]
                 for h in entry["hooks"]
             ]
+            commands = [h["command"] for h in hooks]
             self.assertIn(_USER_HOOK, commands)  # user hook preserved
-            self.assertTrue(any(is_aegis_hook_command(c) for c in commands))
+            self.assertTrue(any(is_aegis_hook(h) for h in hooks))
             backups = list(path.parent.glob("settings.json.aegis-backup-*"))
             self.assertEqual(len(backups), 1)  # backup created
 
@@ -270,9 +364,9 @@ class CmdFlowTests(unittest.TestCase):
             self.assertTrue(settings_path(tmp).exists())
             self.assertFalse(codex_config_path(tmp).exists())
             written = json.loads(settings_path(tmp).read_text(encoding="utf-8"))
-            command = written["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-            self.assertIn("hook-run", command)
-            self.assertNotIn("--substrate", command)
+            hook = written["hooks"]["PreToolUse"][0]["hooks"][0]
+            self.assertTrue(is_aegis_hook(hook))
+            self.assertNotIn("--substrate", " ".join([hook["command"], *hook.get("args", [])]))
 
     def test_install_target_codex_writes_codex_config_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -339,9 +433,9 @@ class SubprocessInstallTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             written = json.loads(settings_path(tmp).read_text(encoding="utf-8"))
-            command = written["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-            self.assertIn("hook-run", command)
-            self.assertNotIn("--substrate", command)
+            hook = written["hooks"]["PreToolUse"][0]["hooks"][0]
+            self.assertTrue(is_aegis_hook(hook))
+            self.assertNotIn("--substrate", " ".join([hook["command"], *hook.get("args", [])]))
 
     def test_subprocess_install_target_codex_creates_codex_config(self):
         with tempfile.TemporaryDirectory() as tmp:
