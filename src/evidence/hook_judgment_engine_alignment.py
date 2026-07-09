@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 from typing import Any
 
@@ -414,11 +414,10 @@ def _normalize_hook_input_repo_paths(
 ) -> tuple[ClaudeCodePreToolUseInput, tuple[Mapping[str, Any], ...]]:
     """Rewrite repo-internal absolute file paths in tool_input to repo-relative.
 
-    Repo-external, traversal-escaping, symlink-escaping, and Windows-style
-    absolute paths are left unchanged so the existing scope defense still
-    rejects them. Non-absolute paths are also left unchanged so existing
-    relative-path behaviour (including relative traversal rejection) is
-    preserved.
+    Repo-external, traversal-escaping, and symlink-escaping absolute paths are
+    left unchanged so the existing scope defense still rejects them.
+    Non-absolute paths are also left unchanged so existing relative-path
+    behaviour (including relative traversal rejection) is preserved.
     """
 
     tool_input = dict(hook_input.tool_input)
@@ -445,18 +444,7 @@ def _normalize_repo_internal_absolute_path(
 ) -> tuple[str, dict[str, Any]]:
     stripped = path_value.strip()
 
-    if _looks_like_windows_absolute_path(stripped):
-        # Not resolvable as a repo-internal POSIX path here; leave it so the
-        # mapping's absolute-path deny-candidate rule rejects it.
-        return path_value, {
-            "original": path_value,
-            "normalized": path_value,
-            "was_absolute": True,
-            "in_repo": False,
-            "action": "windows_absolute_kept_for_scope_rejection",
-        }
-
-    if not stripped.startswith("/"):
+    if not (stripped.startswith("/") or _looks_like_windows_absolute_path(stripped)):
         return path_value, {
             "original": path_value,
             "normalized": path_value,
@@ -489,10 +477,7 @@ def _normalize_repo_internal_absolute_path(
         }
 
     try:
-        relative = Path(resolution.canonical_target).relative_to(
-            Path(resolution.repo_root)
-        )
-        normalized = relative.as_posix() or "."
+        normalized = _repo_relative_posix_from_resolution(resolution) or "."
     except Exception:  # noqa: BLE001 - keep absolute on any relativization error.
         return path_value, {
             "original": path_value,
@@ -509,6 +494,19 @@ def _normalize_repo_internal_absolute_path(
         "in_repo": True,
         "action": "repo_internal_absolute_normalized_to_relative",
     }
+
+
+def _repo_relative_posix_from_resolution(resolution: Any) -> str:
+    if _looks_like_windows_absolute_path(resolution.repo_root) or _looks_like_windows_absolute_path(
+        resolution.canonical_target
+    ):
+        relative = PureWindowsPath(resolution.canonical_target).relative_to(
+            PureWindowsPath(resolution.repo_root)
+        )
+        return relative.as_posix()
+
+    relative = Path(resolution.canonical_target).relative_to(Path(resolution.repo_root))
+    return relative.as_posix()
 
 
 def _build_request(

@@ -171,6 +171,48 @@ class Phase10E4MediatedOutsideRepoWriteDenialTests(unittest.TestCase):
                 self.assertTrue(path_resolution.target_outside_repo)
                 self.assertTrue(Path(path_resolution.canonical_target).is_absolute())
 
+    def test_resolve_repo_boundary_path_handles_windows_absolute_paths_cross_platform(self):
+        repo_root = r"C:\Users\test\repo"
+
+        internal_backslash = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"C:\Users\test\repo\src\app.py",
+        )
+        internal_forward_slash = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target="C:/Users/test/repo/src/app.py",
+        )
+        protected_inside = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"C:\Users\test\repo\.env",
+        )
+        prefix_sibling = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"C:\Users\test\repo.env",
+        )
+        windows_outside = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"C:\Windows\System32\config",
+        )
+        other_drive = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"D:\other\path\file.txt",
+        )
+        traversal_outside = resolve_repo_boundary_path(
+            repo_root=repo_root,
+            submitted_target=r"C:\Users\test\repo\..\outside.txt",
+        )
+
+        for path_resolution in (internal_backslash, internal_forward_slash, protected_inside):
+            with self.subTest(canonical_target=path_resolution.canonical_target):
+                self.assertTrue(path_resolution.target_under_repo)
+                self.assertFalse(path_resolution.target_outside_repo)
+
+        for path_resolution in (prefix_sibling, windows_outside, other_drive, traversal_outside):
+            with self.subTest(canonical_target=path_resolution.canonical_target):
+                self.assertFalse(path_resolution.target_under_repo)
+                self.assertTrue(path_resolution.target_outside_repo)
+
     def test_repo_internal_target_is_not_accepted_by_e4_outside_repo_helper(self):
         with self.assertRaisesRegex(ValueError, "outside-repo"):
             request_mediated_outside_repo_write_text(
