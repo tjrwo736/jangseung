@@ -29,6 +29,7 @@ from src.cli.install import (
     is_aegis_hook_command,
     load_settings,
     resolve_claude_code_hook_command,
+    resolve_codex_windows_hook_command,
     resolve_hook_command,
     resolve_hook_command_parts,
     resolve_windows_hook_command_parts,
@@ -118,6 +119,22 @@ class BuildMergeLogicTests(unittest.TestCase):
 
         self.assertEqual(command, python_path)
         self.assertEqual(args, ("-m", "src.cli", "hook-run"))
+
+    def test_codex_windows_command_uses_quoted_windows_command_string(self):
+        python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
+        with mock.patch(
+            "src.cli.install.shutil.which",
+            return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
+        ), mock.patch("src.cli.install.sys.executable", python_path):
+            command = resolve_codex_windows_hook_command(platform="win32")
+
+        self.assertIsNotNone(command)
+        self.assertTrue(command.startswith('"C:\\Users\\Name With Space\\venv\\Scripts\\python.exe"'))
+        self.assertIn("-m src.cli hook-run", command)
+        self.assertIn("--substrate codex", command)
+
+    def test_codex_windows_command_omitted_off_windows(self):
+        self.assertIsNone(resolve_codex_windows_hook_command(platform="linux"))
 
     def test_posix_claude_code_hook_keeps_shell_form(self):
         command, args = resolve_claude_code_hook_command(platform="linux")
@@ -273,6 +290,23 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertIn('type = "command"', text)
         self.assertIn('command = "aeg hook-run --substrate codex"', text)
 
+    def test_codex_config_can_include_windows_command_field(self):
+        windows_command = (
+            r'"C:\Users\Name With Space\venv\Scripts\python.exe" '
+            r"-m src.cli hook-run --substrate codex"
+        )
+
+        text, already = build_installed_codex_config_text(
+            "",
+            "aeg hook-run --substrate codex",
+            command_windows=windows_command,
+        )
+
+        self.assertFalse(already)
+        self.assertIn('command = "aeg hook-run --substrate codex"', text)
+        self.assertIn("command_windows = ", text)
+        self.assertIn("--substrate codex", text)
+
     def test_codex_config_preserves_existing_text_and_appends(self):
         original = 'model = "gpt-5"\n\n[tool_suggest]\ndisabled_tools = []\n'
 
@@ -405,6 +439,29 @@ class CmdFlowTests(unittest.TestCase):
             self.assertIn("[[hooks.PreToolUse]]", text)
             self.assertIn(f'matcher = "{CODEX_AEGIS_HOOK_MATCHER}"', text)
             self.assertIn("--substrate codex", text)
+
+    def test_install_target_codex_writes_command_windows_on_windows(self):
+        python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "src.cli.install.sys.platform",
+            "win32",
+        ), mock.patch("src.cli.install.sys.executable", python_path), mock.patch(
+            "src.cli.install.shutil.which",
+            return_value=None,
+        ):
+            out = io.StringIO()
+            rc = cmd_install(
+                tmp,
+                assume_yes=True,
+                target=TARGET_CODEX,
+                output_stream=out,
+            )
+
+            self.assertEqual(rc, 0)
+            text = codex_config_path(tmp).read_text(encoding="utf-8")
+            self.assertIn("command_windows = ", text)
+            self.assertIn("--substrate codex", text)
+            self.assertIn("windows cmd:", out.getvalue())
 
     def test_install_global_unsupported(self):
         with tempfile.TemporaryDirectory() as tmp:
