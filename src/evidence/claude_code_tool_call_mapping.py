@@ -44,6 +44,9 @@ NORMAL_REPO_PATH = "NORMAL_REPO_PATH"
 PROTECTED_PATH = "PROTECTED_PATH"
 BASH_DANGEROUS = "BASH_DANGEROUS"
 BASH_NOT_CHECKED = "BASH_NOT_CHECKED"
+POWERSHELL_NOT_CHECKED = "POWERSHELL_NOT_CHECKED"
+POWERSHELL_SAFE_READ_ONLY = "POWERSHELL_SAFE_READ_ONLY"
+POWERSHELL_TARGETS_EXTRACTED = "POWERSHELL_TARGETS_EXTRACTED"
 UNKNOWN_TOOL = "UNKNOWN_TOOL"
 INVALID_TOOL_INPUT = "INVALID_TOOL_INPUT"
 
@@ -53,6 +56,7 @@ SUPPORTED_TOOL_TO_CANDIDATE_ACTION = MappingProxyType(
         "Write": WRITE_FILE,
         "Edit": EDIT_FILE,
         "Bash": RUN_COMMAND,
+        "PowerShell": RUN_COMMAND,
         "apply_patch": WRITE_FILE,
     }
 )
@@ -132,6 +136,8 @@ def map_pretooluse_input_to_structured_action_candidate(
         return _map_edit(hook_input)
     if hook_input.tool_name == "Bash":
         return _map_bash(hook_input)
+    if hook_input.tool_name == "PowerShell":
+        return _map_powershell(hook_input)
     if hook_input.tool_name == "apply_patch":
         return _map_apply_patch(hook_input)
 
@@ -172,6 +178,21 @@ def build_tool_call_mapping_contract_evidence() -> dict[str, Any]:
             "*** Move to: ",
         ),
         "dangerous_bash_tokens": tuple(sorted(DANGEROUS_BASH_TOKENS)),
+        "powershell_tool_call_supported": True,
+        "powershell_maps_to_run_command_candidate": True,
+        "powershell_target_parsing_is_structural_tokenizer_not_string_match": True,
+        "powershell_target_gate_covers": (
+            "Remove-Item",
+            "rm",
+            "del",
+            "Set-Content",
+            "Out-File",
+            "redirect",
+            "Move-Item",
+            "Copy-Item",
+        ),
+        "powershell_complex_or_dynamic_commands_fail_closed_to_ask_defer": True,
+        "powershell_read_only_commands_do_not_create_write_delete_targets": True,
         "rm_recursive_force_is_dangerous": True,
         "git_reset_hard_is_dangerous": True,
         "git_clean_force_delete_is_dangerous": True,
@@ -334,6 +355,70 @@ def _map_bash(
         capability_requirements=("run_command",),
         target_scope={"repo_relative": False, "paths": tuple()},
         payload={"command": command},
+    )
+
+
+def _map_powershell(
+    hook_input: ClaudeCodePreToolUseInput,
+) -> ToolCallStructuredActionCandidate:
+    command = hook_input.tool_input.get("command")
+    if not _is_non_empty_string(command):
+        return _invalid_tool_input_candidate(
+            hook_input,
+            RUN_COMMAND,
+            "missing_or_invalid_tool_input:command",
+        )
+
+    extraction = extract_powershell_write_delete_targets(command)
+    if extraction.parse_ambiguous:
+        candidate_status = HOLD_CURRENT_STATE_CANDIDATE
+        declared_risk = NOT_CHECKED
+        risk_status = POWERSHELL_NOT_CHECKED
+        reasons = (
+            f"powershell_target_parse_ambiguous:{extraction.reason}",
+            "powershell_not_proven_safe_maps_to_hold_current_state",
+        )
+    elif extraction.write_delete_targets:
+        candidate_status = HOLD_CURRENT_STATE_CANDIDATE
+        declared_risk = NOT_CHECKED
+        risk_status = POWERSHELL_TARGETS_EXTRACTED
+        reasons = (
+            "powershell_write_delete_targets_extracted_structurally",
+            "powershell_target_risk_judged_by_hook_target_gate",
+        )
+    elif extraction.read_only:
+        candidate_status = STRUCTURED_ACTION_CANDIDATE
+        declared_risk = LOW
+        risk_status = POWERSHELL_SAFE_READ_ONLY
+        reasons = (
+            "powershell_read_only_command_has_no_write_delete_target",
+            "powershell_read_only_candidate_only_no_execution_or_authority",
+        )
+    else:
+        candidate_status = HOLD_CURRENT_STATE_CANDIDATE
+        declared_risk = NOT_CHECKED
+        risk_status = POWERSHELL_NOT_CHECKED
+        reasons = (
+            "powershell_command_not_proven_safe_maps_to_hold_current_state",
+        )
+
+    return _build_candidate(
+        hook_input,
+        candidate_action_type=RUN_COMMAND,
+        candidate_status=candidate_status,
+        reasons=(*reasons, "powershell_candidate_only_no_execution_or_powershell_safe_claim"),
+        declared_risk=declared_risk,
+        risk_status=risk_status,
+        capability_requirements=("run_command",),
+        target_scope={
+            "repo_relative": False,
+            "paths": extraction.write_delete_targets,
+        },
+        payload={
+            "command": command,
+            "target_paths": extraction.write_delete_targets,
+            "target_operations": extraction.target_operations,
+        },
     )
 
 
@@ -562,6 +647,23 @@ class BashTargetExtraction:
 
 
 @dataclass(frozen=True)
+class PowerShellTargetExtraction:
+    """Structurally-parsed file write/delete targets of a PowerShell command.
+
+    This covers a deliberately small, common subset of PowerShell syntax:
+    known cmdlets/aliases, named parameters, positional path arguments, and
+    file redirection. Dynamic targets, variables in targets, unrecognized
+    commands, or complex pipelines are ambiguous so callers can fail closed.
+    """
+
+    write_delete_targets: tuple[str, ...]
+    target_operations: tuple[tuple[str, str], ...]
+    parse_ambiguous: bool
+    read_only: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class ApplyPatchTargetExtraction:
     """Structurally-parsed file targets from a Codex ``apply_patch`` command."""
 
@@ -608,6 +710,635 @@ def extract_bash_write_delete_targets(command: str) -> BashTargetExtraction:
         False,
         "bash_write_delete_targets_extracted" if unique else "no_write_delete_target",
     )
+
+
+_POWERSHELL_CONTROL_OPERATORS = frozenset({";", "&&", "||"})
+_POWERSHELL_PIPE_OPERATOR = "|"
+_POWERSHELL_REDIRECT_OPS = frozenset(
+    {
+        ">",
+        ">>",
+        "1>",
+        "1>>",
+        "2>",
+        "2>>",
+        "3>",
+        "3>>",
+        "4>",
+        "4>>",
+        "5>",
+        "5>>",
+        "6>",
+        "6>>",
+        "*>",
+        "*>>",
+    }
+)
+_POWERSHELL_DELETE_COMMANDS = frozenset({"remove-item", "rm", "del"})
+_POWERSHELL_WRITE_COMMANDS = frozenset({"set-content", "out-file"})
+_POWERSHELL_COPY_MOVE_COMMANDS = frozenset({"copy-item", "move-item"})
+_POWERSHELL_READ_ONLY_COMMANDS = frozenset(
+    {
+        "get-content",
+        "gc",
+        "cat",
+        "type",
+        "get-childitem",
+        "gci",
+        "dir",
+        "ls",
+        "test-path",
+    }
+)
+_POWERSHELL_PATH_PARAMETERS = frozenset({"path", "literalpath"})
+_POWERSHELL_OUT_FILE_PATH_PARAMETERS = frozenset({"filepath", "literalpath"})
+_POWERSHELL_DESTINATION_PARAMETERS = frozenset({"destination"})
+_POWERSHELL_VALUE_PARAMETERS = frozenset(
+    {
+        "value",
+        "inputobject",
+        "encoding",
+        "stream",
+        "width",
+        "credential",
+        "filter",
+        "include",
+        "exclude",
+    }
+)
+_POWERSHELL_SWITCH_PARAMETERS = frozenset(
+    {
+        "force",
+        "recurse",
+        "confirm",
+        "whatif",
+        "verbose",
+        "debug",
+        "erroraction",
+        "warningaction",
+        "informationaction",
+        "errorvariable",
+        "warningvariable",
+        "informationvariable",
+        "outvariable",
+        "outbuffer",
+        "append",
+        "noclobber",
+        "nonewline",
+        "passthru",
+    }
+)
+_POWERSHELL_BOOLEAN_LITERALS = frozenset({"$true", "$false", "$null"})
+
+
+@dataclass(frozen=True)
+class _PowerShellToken:
+    value: str
+    variable_expansion: bool = False
+
+
+def extract_powershell_write_delete_targets(command: str) -> PowerShellTargetExtraction:
+    """Extract write/delete targets from a limited PowerShell command subset.
+
+    The parser tokenizes PowerShell quoting/backtick escapes and then walks
+    cmdlet parameters/positional arguments. It is intentionally conservative:
+    dynamic command names, variables in target arguments, and unrecognized
+    commands are ambiguous rather than allowed.
+    """
+
+    stripped = command.strip()
+    if not stripped:
+        return PowerShellTargetExtraction((), (), False, False, "empty_command")
+
+    try:
+        tokens = _powershell_tokenize(stripped)
+    except ValueError as exc:
+        return PowerShellTargetExtraction(
+            (),
+            (),
+            True,
+            False,
+            f"powershell_tokenize_error:{exc.__class__.__name__}",
+        )
+
+    if not tokens:
+        return PowerShellTargetExtraction((), (), False, False, "empty_command")
+
+    operations: list[tuple[str, str]] = []
+    ambiguous_reasons: list[str] = []
+    read_only_seen = False
+    command_seen = False
+
+    for statement in _split_powershell_statements(tokens):
+        if not statement:
+            continue
+
+        (
+            redirect_ops,
+            clean_statement,
+            redirect_ambiguous,
+        ) = _powershell_redirection_operations(statement)
+        operations.extend(redirect_ops)
+        if redirect_ambiguous:
+            ambiguous_reasons.append(redirect_ambiguous)
+
+        pipeline_segments = _split_powershell_pipeline(clean_statement)
+        pipeline = len(pipeline_segments) > 1
+        pipeline_had_write = bool(redirect_ops)
+        pipeline_had_unknown = False
+
+        for index, segment in enumerate(pipeline_segments):
+            if not segment:
+                continue
+            result = _powershell_segment_operations(segment)
+            command_seen = command_seen or result.command_seen
+            read_only_seen = read_only_seen or result.read_only
+            operations.extend(result.operations)
+            pipeline_had_write = pipeline_had_write or bool(result.operations)
+            if result.ambiguous_reason:
+                if pipeline and index < len(pipeline_segments) - 1:
+                    pipeline_had_unknown = True
+                else:
+                    ambiguous_reasons.append(result.ambiguous_reason)
+
+        if pipeline and pipeline_had_unknown and not pipeline_had_write:
+            ambiguous_reasons.append("powershell_pipeline_without_known_write_target")
+        elif pipeline and pipeline_had_unknown:
+            ambiguous_reasons.append("powershell_pipeline_has_unclassified_input")
+
+    unique_operations = tuple(dict.fromkeys(operations))
+    unique_targets = tuple(dict.fromkeys(path for _, path in unique_operations))
+    parse_ambiguous = bool(ambiguous_reasons)
+    if parse_ambiguous:
+        reason = ";".join(dict.fromkeys(ambiguous_reasons))
+    elif unique_operations:
+        reason = "powershell_write_delete_targets_extracted"
+    elif read_only_seen and command_seen:
+        reason = "powershell_read_only_command_no_write_delete_target"
+    elif command_seen:
+        reason = "powershell_no_write_delete_target"
+    else:
+        reason = "powershell_no_command"
+
+    return PowerShellTargetExtraction(
+        unique_targets,
+        unique_operations,
+        parse_ambiguous,
+        read_only_seen and command_seen and not unique_operations and not parse_ambiguous,
+        reason,
+    )
+
+
+@dataclass(frozen=True)
+class _PowerShellSegmentResult:
+    operations: tuple[tuple[str, str], ...]
+    ambiguous_reason: str | None
+    read_only: bool = False
+    command_seen: bool = False
+
+
+def _powershell_tokenize(command: str) -> tuple[_PowerShellToken, ...]:
+    tokens: list[_PowerShellToken] = []
+    current: list[str] = []
+    current_variable = False
+    index = 0
+    length = len(command)
+
+    def emit() -> None:
+        nonlocal current, current_variable
+        if current:
+            tokens.append(_PowerShellToken("".join(current), current_variable))
+            current = []
+            current_variable = False
+
+    while index < length:
+        char = command[index]
+
+        if char.isspace():
+            emit()
+            index += 1
+            continue
+
+        two = command[index : index + 2]
+        if two in ("&&", "||", ">>"):
+            emit()
+            tokens.append(_PowerShellToken(two))
+            index += 2
+            continue
+        if char in (";", "|", ">", ","):
+            emit()
+            tokens.append(_PowerShellToken(char))
+            index += 1
+            continue
+        if char == "#" and not current:
+            break
+        if char == "`":
+            if index + 1 >= length:
+                raise ValueError("dangling_backtick_escape")
+            current.append(command[index + 1])
+            index += 2
+            continue
+        if char == "'":
+            index = _consume_powershell_single_quoted(command, index + 1, current)
+            continue
+        if char == '"':
+            index, had_variable = _consume_powershell_double_quoted(command, index + 1, current)
+            current_variable = current_variable or had_variable
+            continue
+
+        current.append(char)
+        current_variable = current_variable or char == "$"
+        index += 1
+
+    emit()
+    return tuple(_combine_powershell_stream_redirect_tokens(tokens))
+
+
+def _consume_powershell_single_quoted(command: str, index: int, current: list[str]) -> int:
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if char == "'":
+            if index + 1 < length and command[index + 1] == "'":
+                current.append("'")
+                index += 2
+                continue
+            return index + 1
+        current.append(char)
+        index += 1
+    raise ValueError("unterminated_single_quote")
+
+
+def _consume_powershell_double_quoted(
+    command: str,
+    index: int,
+    current: list[str],
+) -> tuple[int, bool]:
+    length = len(command)
+    had_variable = False
+    while index < length:
+        char = command[index]
+        if char == '"':
+            return (index + 1, had_variable)
+        if char == "`":
+            if index + 1 >= length:
+                raise ValueError("dangling_backtick_escape")
+            current.append(command[index + 1])
+            index += 2
+            continue
+        current.append(char)
+        had_variable = had_variable or char == "$"
+        index += 1
+    raise ValueError("unterminated_double_quote")
+
+
+def _combine_powershell_stream_redirect_tokens(
+    tokens: tuple[_PowerShellToken, ...],
+) -> tuple[_PowerShellToken, ...]:
+    combined: list[_PowerShellToken] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            token.value in {"1", "2", "3", "4", "5", "6", "*"}
+            and index + 1 < len(tokens)
+            and tokens[index + 1].value in {">", ">>"}
+        ):
+            combined.append(
+                _PowerShellToken(
+                    token.value + tokens[index + 1].value,
+                    token.variable_expansion or tokens[index + 1].variable_expansion,
+                )
+            )
+            index += 2
+            continue
+        combined.append(token)
+        index += 1
+    return tuple(combined)
+
+
+def _split_powershell_statements(
+    tokens: tuple[_PowerShellToken, ...],
+) -> list[list[_PowerShellToken]]:
+    statements: list[list[_PowerShellToken]] = []
+    current: list[_PowerShellToken] = []
+    for token in tokens:
+        if token.value in _POWERSHELL_CONTROL_OPERATORS:
+            if current:
+                statements.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        statements.append(current)
+    return statements
+
+
+def _split_powershell_pipeline(
+    tokens: list[_PowerShellToken],
+) -> list[list[_PowerShellToken]]:
+    segments: list[list[_PowerShellToken]] = []
+    current: list[_PowerShellToken] = []
+    for token in tokens:
+        if token.value == _POWERSHELL_PIPE_OPERATOR:
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    segments.append(current)
+    return segments
+
+
+def _powershell_redirection_operations(
+    tokens: list[_PowerShellToken],
+) -> tuple[tuple[tuple[str, str], ...], list[_PowerShellToken], str | None]:
+    operations: list[tuple[str, str]] = []
+    clean: list[_PowerShellToken] = []
+    ambiguous_reason: str | None = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.value in _POWERSHELL_REDIRECT_OPS:
+            if index + 1 >= len(tokens):
+                ambiguous_reason = "powershell_redirect_missing_target"
+                break
+            target = tokens[index + 1]
+            if target.value.startswith("&"):
+                index += 2
+                continue
+            if target.variable_expansion:
+                ambiguous_reason = "powershell_redirect_target_uses_variable"
+                break
+            operations.append(("write", target.value))
+            index += 2
+            continue
+        clean.append(token)
+        index += 1
+    return (tuple(operations), clean, ambiguous_reason)
+
+
+def _powershell_segment_operations(
+    segment: list[_PowerShellToken],
+) -> _PowerShellSegmentResult:
+    if not segment:
+        return _PowerShellSegmentResult((), None)
+
+    command_token = segment[0]
+    if command_token.value in {"&", "."} or command_token.variable_expansion:
+        return _PowerShellSegmentResult(
+            (),
+            "powershell_dynamic_command_invocation",
+            command_seen=True,
+        )
+
+    command = _powershell_command_name(command_token.value)
+    args = segment[1:]
+
+    if command in _POWERSHELL_DELETE_COMMANDS:
+        return _powershell_delete_operations(args)
+    if command in _POWERSHELL_WRITE_COMMANDS:
+        return _powershell_write_operations(command, args)
+    if command in _POWERSHELL_COPY_MOVE_COMMANDS:
+        return _powershell_copy_move_operations(args)
+    if command in _POWERSHELL_READ_ONLY_COMMANDS:
+        if _powershell_args_have_unapproved_variables(args):
+            return _PowerShellSegmentResult(
+                (),
+                "powershell_read_only_arguments_use_variable",
+                read_only=True,
+                command_seen=True,
+            )
+        return _PowerShellSegmentResult((), None, read_only=True, command_seen=True)
+
+    if _powershell_args_have_unapproved_variables(args):
+        return _PowerShellSegmentResult(
+            (),
+            "powershell_unknown_command_or_arguments_use_variable",
+            command_seen=True,
+        )
+    return _PowerShellSegmentResult(
+        (),
+        f"powershell_unrecognized_command:{command}",
+        command_seen=True,
+    )
+
+
+def _powershell_delete_operations(args: list[_PowerShellToken]) -> _PowerShellSegmentResult:
+    path_values, ambiguous = _powershell_collect_path_values(
+        args,
+        named_path_parameters=_POWERSHELL_PATH_PARAMETERS,
+        positional_count=None,
+    )
+    if ambiguous is not None:
+        return _PowerShellSegmentResult((), ambiguous, command_seen=True)
+    if not path_values:
+        return _PowerShellSegmentResult(
+            (),
+            "powershell_remove_item_missing_target",
+            command_seen=True,
+        )
+    return _PowerShellSegmentResult(
+        tuple(("delete", path) for path in path_values),
+        None,
+        command_seen=True,
+    )
+
+
+def _powershell_write_operations(
+    command: str,
+    args: list[_PowerShellToken],
+) -> _PowerShellSegmentResult:
+    named_parameters = (
+        _POWERSHELL_OUT_FILE_PATH_PARAMETERS
+        if command == "out-file"
+        else _POWERSHELL_PATH_PARAMETERS
+    )
+    path_values, ambiguous = _powershell_collect_path_values(
+        args,
+        named_path_parameters=named_parameters,
+        positional_count=1,
+    )
+    if ambiguous is not None:
+        return _PowerShellSegmentResult((), ambiguous, command_seen=True)
+    if not path_values:
+        return _PowerShellSegmentResult(
+            (),
+            f"powershell_{command}_missing_target",
+            command_seen=True,
+        )
+    return _PowerShellSegmentResult(
+        tuple(("write", path) for path in path_values),
+        None,
+        command_seen=True,
+    )
+
+
+def _powershell_copy_move_operations(
+    args: list[_PowerShellToken],
+) -> _PowerShellSegmentResult:
+    path_values, ambiguous = _powershell_collect_path_values(
+        args,
+        named_path_parameters=_POWERSHELL_DESTINATION_PARAMETERS,
+        positional_count=2,
+        positional_target_index=1,
+    )
+    if ambiguous is not None:
+        return _PowerShellSegmentResult((), ambiguous, command_seen=True)
+    if not path_values:
+        return _PowerShellSegmentResult(
+            (),
+            "powershell_copy_move_missing_destination",
+            command_seen=True,
+        )
+    return _PowerShellSegmentResult(
+        tuple(("write", path) for path in path_values),
+        None,
+        command_seen=True,
+    )
+
+
+def _powershell_collect_path_values(
+    args: list[_PowerShellToken],
+    *,
+    named_path_parameters: frozenset[str],
+    positional_count: int | None,
+    positional_target_index: int = 0,
+) -> tuple[tuple[str, ...], str | None]:
+    paths: list[str] = []
+    positionals: list[_PowerShellToken] = []
+    index = 0
+    stop_parsing = False
+
+    while index < len(args):
+        token = args[index]
+        value = token.value
+
+        if value == "--%":
+            return ((), "powershell_stop_parsing_token_ambiguous")
+        if value == "--":
+            stop_parsing = True
+            index += 1
+            continue
+
+        if not stop_parsing and _powershell_is_parameter(value):
+            name, inline_value = _powershell_parameter_name_and_inline_value(value)
+            if name in named_path_parameters:
+                target_token: _PowerShellToken | None
+                if inline_value is not None:
+                    target_tokens = tuple(
+                        _PowerShellToken(
+                            item,
+                            "$" in item
+                            and item.lower() not in _POWERSHELL_BOOLEAN_LITERALS,
+                        )
+                        for item in _powershell_inline_argument_values(inline_value)
+                    )
+                elif index + 1 < len(args):
+                    target_tokens, index = _powershell_collect_argument_list(
+                        args,
+                        index + 1,
+                    )
+                else:
+                    return ((), f"powershell_parameter_missing_value:{name}")
+                if not target_tokens:
+                    return ((), f"powershell_parameter_missing_value:{name}")
+                if any(target.variable_expansion for target in target_tokens):
+                    return ((), f"powershell_target_parameter_uses_variable:{name}")
+                paths.extend(target.value for target in target_tokens)
+                index += 1
+                continue
+            if name in _POWERSHELL_DESTINATION_PARAMETERS:
+                return ((), f"powershell_unexpected_destination_parameter:{name}")
+            if (
+                inline_value is None
+                and name in _POWERSHELL_VALUE_PARAMETERS
+                and index + 1 < len(args)
+            ):
+                index += 2
+                continue
+            index += 1
+            continue
+
+        positionals.append(token)
+        index += 1
+
+    if paths:
+        return (tuple(paths), None)
+    if positional_count is None:
+        candidate_tokens = [token for token in positionals if token.value != ","]
+    elif len(positionals) >= positional_count:
+        candidate_tokens, _ = _powershell_collect_argument_list(
+            positionals,
+            positional_target_index,
+        )
+    else:
+        candidate_tokens = []
+    for token in candidate_tokens:
+        if token.variable_expansion:
+            return ((), "powershell_positional_target_uses_variable")
+        paths.append(token.value)
+    return (tuple(paths), None)
+
+
+def _powershell_collect_argument_list(
+    args: list[_PowerShellToken],
+    start_index: int,
+) -> tuple[tuple[_PowerShellToken, ...], int]:
+    values: list[_PowerShellToken] = []
+    index = start_index
+    expect_value = True
+    while index < len(args):
+        token = args[index]
+        if expect_value:
+            if token.value == ",":
+                break
+            values.append(token)
+            index += 1
+            expect_value = False
+            continue
+        if token.value != ",":
+            break
+        if index + 1 >= len(args) or args[index + 1].value == ",":
+            break
+        index += 1
+        expect_value = True
+    return (tuple(values), index - 1)
+
+
+def _powershell_inline_argument_values(value: str) -> tuple[str, ...]:
+    return tuple(item for item in value.split(",") if item)
+
+
+def _powershell_args_have_unapproved_variables(args: list[_PowerShellToken]) -> bool:
+    for token in args:
+        if not token.variable_expansion:
+            continue
+        if _powershell_is_parameter(token.value):
+            name, inline_value = _powershell_parameter_name_and_inline_value(token.value)
+            if inline_value is not None and inline_value.lower() in _POWERSHELL_BOOLEAN_LITERALS:
+                continue
+            if name in _POWERSHELL_SWITCH_PARAMETERS:
+                continue
+        if token.value.lower() in _POWERSHELL_BOOLEAN_LITERALS:
+            continue
+        return True
+    return False
+
+
+def _powershell_is_parameter(value: str) -> bool:
+    return len(value) > 1 and value.startswith("-") and value != "--"
+
+
+def _powershell_parameter_name_and_inline_value(value: str) -> tuple[str, str | None]:
+    body = value.lstrip("-")
+    if ":" in body:
+        name, inline_value = body.split(":", 1)
+        return (name.lower(), inline_value)
+    return (body.lower(), None)
+
+
+def _powershell_command_name(value: str) -> str:
+    return _bash_basename(value).lower()
 
 
 _APPLY_PATCH_BEGIN = "*** Begin Patch"

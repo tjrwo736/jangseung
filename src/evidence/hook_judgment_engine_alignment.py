@@ -37,11 +37,14 @@ from src.evidence.claude_code_tool_call_mapping import (
     BASH_NOT_CHECKED,
     DENY_CANDIDATE,
     EDIT_FILE,
+    POWERSHELL_NOT_CHECKED,
+    POWERSHELL_SAFE_READ_ONLY,
     READ_REPO,
     STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
     extract_apply_patch_targets,
     extract_bash_write_delete_targets,
+    extract_powershell_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
 )
 from src.evidence.claude_code_tool_call_mapping import RUN_COMMAND as MAPPING_RUN_COMMAND
@@ -125,6 +128,8 @@ _WRITE_LIKE_TOOL_NAMES = frozenset({"Write", "Edit", "apply_patch"})
 #    returned DENY before this check;
 #  - Bash maps to HOLD_CURRENT_STATE_CANDIDATE with impact NOT_CHECKED, so it is
 #    never a STRUCTURED_ACTION_CANDIDATE and never clearly-safe -> ask/defer;
+#  - PowerShell uses its own target gate; read-only PowerShell is allowed only
+#    when the structural parser proves there is no write/delete target;
 #  - a NOT_CHECKED / NOT_CHECKED_NO_MUTATION impact (unclassifiable / unknown
 #    source) is not in the safe impact set -> ask/defer.
 _CLEARLY_SAFE_FILE_ACTION_TYPES = frozenset(
@@ -274,6 +279,7 @@ def judge_pretooluse_with_aeg_engine(
     repo_boundary_records = _repo_boundary_records(repo_root, request.target_paths)
     protected_path_gate = _protected_path_gate(request.target_paths)
     bash_target_gate = _bash_write_delete_target_gate(hook_input, repo_root)
+    powershell_target_gate = _powershell_write_delete_target_gate(hook_input, repo_root)
     dangerous_bash_gate = {
         "risk_status": action_candidate.risk_status,
         "dangerous_bash": action_candidate.risk_status == BASH_DANGEROUS,
@@ -301,6 +307,7 @@ def judge_pretooluse_with_aeg_engine(
         "repo_boundary_gate": repo_boundary_records,
         "path_normalization": path_normalization,
         "bash_target_gate": bash_target_gate,
+        "powershell_target_gate": powershell_target_gate,
         "dangerous_bash_gate": dangerous_bash_gate,
         "ignored_reported_only_fields": ignored_reported_only_fields,
         "reported_only_trusted_as_judgment_basis": False,
@@ -319,6 +326,7 @@ def judge_pretooluse_with_aeg_engine(
         repo_boundary_records=repo_boundary_records,
         classification=classification,
         bash_target_gate=bash_target_gate,
+        powershell_target_gate=powershell_target_gate,
     )
     hook_decision = engine_decision
     return _build_decision(
@@ -371,6 +379,21 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
             "dd_of",
             "truncate",
             "ln",
+        ),
+        "powershell_tool_call_supported": True,
+        "powershell_write_delete_target_protected_or_out_of_scope_maps_to_deny": True,
+        "powershell_target_parsing_is_structural_tokenizer_not_string_match": True,
+        "powershell_unparseable_target_maps_to_ask_defer_not_allow": True,
+        "powershell_read_only_commands_do_not_deny_protected_paths": True,
+        "powershell_target_gate_covers": (
+            "Remove-Item",
+            "rm",
+            "del",
+            "Set-Content",
+            "Out-File",
+            "redirect",
+            "Move-Item",
+            "Copy-Item",
         ),
         "apply_patch_tool_supported": True,
         "apply_patch_maps_to_write_file_judgment": True,
@@ -540,6 +563,12 @@ def _target_paths(hook_input: ClaudeCodePreToolUseInput | None) -> tuple[str, ..
             extraction = extract_apply_patch_targets(command)
             if not extraction.parse_ambiguous:
                 return extraction.target_paths
+    if hook_input.tool_name == "PowerShell":
+        command = hook_input.tool_input.get("command")
+        if isinstance(command, str) and command.strip():
+            extraction = extract_powershell_write_delete_targets(command)
+            if not extraction.parse_ambiguous:
+                return extraction.write_delete_targets
     return tuple()
 
 
@@ -553,6 +582,13 @@ def _classify_hook_target(
             changed_files=[],
             changed_files_source=NOT_CHECKED_SOURCE,
             no_mutation=False,
+        )
+    if hook_input.tool_name == "PowerShell":
+        return classify_task(
+            "run command through Claude Code PowerShell tool",
+            changed_files=target_paths,
+            changed_files_source=GIT_WORKING_TREE if target_paths else NOT_CHECKED_SOURCE,
+            no_mutation=not target_paths,
         )
 
     intent_text = "update documentation"
@@ -579,7 +615,7 @@ def _engine_action_for_hook_input(
     elif hook_input.tool_name in _WRITE_LIKE_TOOL_NAMES:
         action_type = WRITE_FILE
         capabilities = ["write_file"]
-    elif hook_input.tool_name == "Bash":
+    elif hook_input.tool_name in {"Bash", "PowerShell"}:
         action_type = RUN_COMMAND
         capabilities = ["run_command"]
     else:
@@ -668,7 +704,67 @@ def _bash_write_delete_target_gate(
     }
 
 
+def _powershell_write_delete_target_gate(
+    hook_input: ClaudeCodePreToolUseInput,
+    repo_root: str | Path,
+) -> dict[str, Any]:
+    """Deny a PowerShell command whose structurally-parsed write/delete target
+    is protected or outside the repo. Ambiguous PowerShell remains ask/defer
+    unless a parsed target is already clearly denied."""
+
+    if hook_input.tool_name != "PowerShell":
+        return {
+            "applicable": False,
+            "deny": False,
+            "parse_ambiguous": False,
+            "read_only": False,
+            "targets": tuple(),
+            "target_operations": tuple(),
+            "deny_targets": tuple(),
+            "reason": "not_a_powershell_tool_call",
+        }
+
+    command = hook_input.tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return {
+            "applicable": True,
+            "deny": False,
+            "parse_ambiguous": True,
+            "read_only": False,
+            "targets": tuple(),
+            "target_operations": tuple(),
+            "deny_targets": tuple(),
+            "reason": "missing_or_empty_command",
+        }
+
+    extraction = extract_powershell_write_delete_targets(command)
+    deny_targets: list[dict[str, str]] = []
+    for target in extraction.write_delete_targets:
+        kind = _classify_command_target(target, repo_root)
+        if kind in ("out_of_scope", "protected_path", "protected_state_dir"):
+            deny_targets.append({"target": target, "kind": kind})
+
+    return {
+        "applicable": True,
+        "deny": bool(deny_targets),
+        "parse_ambiguous": extraction.parse_ambiguous,
+        "read_only": extraction.read_only,
+        "targets": extraction.write_delete_targets,
+        "target_operations": extraction.target_operations,
+        "deny_targets": tuple(deny_targets),
+        "protected_path_policy_source": "src.classify.is_protected_path",
+        "repo_boundary_policy_source": (
+            "src.evidence.mediated_repo_boundary_write_path.resolve_repo_boundary_path"
+        ),
+        "reason": extraction.reason,
+    }
+
+
 def _classify_bash_target(target: str, repo_root: str | Path) -> str:
+    return _classify_command_target(target, repo_root)
+
+
+def _classify_command_target(target: str, repo_root: str | Path) -> str:
     try:
         resolution = resolve_repo_boundary_path(repo_root=repo_root, submitted_target=target)
     except Exception:  # noqa: BLE001 - unresolvable target -> do not deny, leave to ask/defer.
@@ -678,9 +774,7 @@ def _classify_bash_target(target: str, repo_root: str | Path) -> str:
         return "out_of_scope"
 
     try:
-        relative = Path(resolution.canonical_target).relative_to(
-            Path(resolution.repo_root)
-        ).as_posix()
+        relative = _repo_relative_posix_from_resolution(resolution)
     except Exception:  # noqa: BLE001 - keep fail-closed to ask/defer, not a claimed deny.
         return "unresolvable_ambiguous"
 
@@ -740,6 +834,7 @@ def _collapse_engine_decision(
     repo_boundary_records: tuple[Mapping[str, Any], ...],
     classification: Classification,
     bash_target_gate: Mapping[str, Any],
+    powershell_target_gate: Mapping[str, Any],
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -752,6 +847,8 @@ def _collapse_engine_decision(
         reasons.append("dangerous_bash_gate_denies_command")
     if bash_target_gate.get("deny") is True:
         reasons.append("bash_write_delete_target_protected_or_out_of_scope")
+    if powershell_target_gate.get("deny") is True:
+        reasons.append("powershell_write_delete_target_protected_or_out_of_scope")
 
     # WRITE_FILE/RUN_COMMAND capability status reflects Aegis's own
     # propose-only self-execution policy (11-B), not the risk of the
@@ -770,6 +867,17 @@ def _collapse_engine_decision(
 
     if reasons:
         return DENY, tuple((*reasons, "hook_decision_matches_or_is_stricter_than_engine"))
+
+    if (
+        powershell_target_gate.get("applicable") is True
+        and powershell_target_gate.get("read_only") is True
+        and action_risk_status == POWERSHELL_SAFE_READ_ONLY
+    ):
+        return ALLOW, (
+            "powershell_read_only_command_has_no_write_delete_target",
+            "powershell_read_only_maps_to_allow_without_path_deny",
+            "hook_decision_matches_engine_decision",
+        )
 
     # Clearly-safe normal work: a repo-internal, non-protected Read/Write/Edit
     # that the existing engine classified as a definite LOW/MEDIUM change is
@@ -812,7 +920,10 @@ def _collapse_engine_decision(
             "hook_decision_matches_or_is_stricter_than_engine",
         )
 
-    if action_risk_status in {BASH_NOT_CHECKED, UNKNOWN_TOOL} or law_status == NOT_CHECKED:
+    if (
+        action_risk_status in {BASH_NOT_CHECKED, POWERSHELL_NOT_CHECKED, UNKNOWN_TOOL}
+        or law_status == NOT_CHECKED
+    ):
         return DEFER, (
             "not_checked_or_unclassified_maps_to_defer",
             "not_checked_unknown_or_unclassified_never_maps_to_allow",

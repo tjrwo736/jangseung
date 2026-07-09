@@ -930,5 +930,104 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
         )
 
 
+class Phase11C8PowerShellTargetPathGateTests(unittest.TestCase):
+    """PowerShell write/delete targets deny protected paths; read-only commands
+    do not false-positive deny protected paths; ambiguous commands never allow."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name) / "repo"
+        (self.repo_root / "src").mkdir(parents=True)
+        (self.repo_root / ".github" / "workflows").mkdir(parents=True)
+        (self.repo_root / "README.md").write_text("# r", encoding="utf-8")
+        (self.repo_root / "src" / "app.py").write_text("x", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _judge_powershell(self, command):
+        return judge_pretooluse_with_aeg_engine(
+            {
+                "tool_name": "PowerShell",
+                "tool_input": {"command": command},
+                "tool_use_id": "t",
+            },
+            repo_root=str(self.repo_root),
+        )
+
+    def test_protected_path_powershell_write_delete_denies(self):
+        for command in (
+            "Remove-Item .env",
+            r"Remove-Item .github\workflows\ci.yml",
+            "rm .env",
+            "del .env",
+            "Set-Content .env -Value x",
+            'Remove-Item -Path ".env",".env.local"',
+            '"x" > .env',
+            '"x" | Out-File ".env"',
+            "Move-Item -Path x -Destination .env",
+            "Copy-Item -Path x -Destination .env",
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_powershell(command)
+                self.assertEqual(decision.hook_decision, DENY)
+                self.assertIn(
+                    "powershell_write_delete_target_protected_or_out_of_scope",
+                    decision.decision_reasons,
+                )
+
+    def test_normal_powershell_target_does_not_deny_or_allow_by_default(self):
+        decision = self._judge_powershell(r"Remove-Item src\app.py")
+
+        self.assertEqual(decision.hook_decision, DEFER)
+        self.assertNotEqual(decision.hook_decision, DENY)
+        gate = decision.engine_decision_basis["powershell_target_gate"]
+        self.assertFalse(gate["deny"])
+        self.assertEqual(gate["targets"], (r"src\app.py",))
+
+    def test_read_only_powershell_commands_do_not_false_positive_deny(self):
+        for command in (
+            "Get-ChildItem .github\\workflows\\",
+            "Get-Content .env",
+            "Test-Path .env",
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_powershell(command)
+                self.assertEqual(decision.hook_decision, ALLOW)
+                gate = decision.engine_decision_basis["powershell_target_gate"]
+                self.assertTrue(gate["read_only"])
+                self.assertFalse(gate["deny"])
+                self.assertEqual(gate["targets"], tuple())
+
+    def test_ambiguous_powershell_never_allows(self):
+        for command in (
+            'Remove-Item $target',
+            '$p = ".env"; Remove-Item $p',
+            "Get-Content x | Where-Object { $_ }",
+        ):
+            with self.subTest(command=command):
+                decision = self._judge_powershell(command)
+                self.assertEqual(decision.hook_decision, DEFER)
+                self.assertNotEqual(decision.hook_decision, ALLOW)
+                gate = decision.engine_decision_basis["powershell_target_gate"]
+                self.assertTrue(gate["parse_ambiguous"])
+                self.assertFalse(gate["deny"])
+
+    def test_evidence_records_powershell_target_gate(self):
+        evidence = build_hook_judgment_engine_alignment_evidence()
+        self.assertTrue(
+            evidence["powershell_write_delete_target_protected_or_out_of_scope_maps_to_deny"]
+        )
+        self.assertTrue(
+            evidence["powershell_target_parsing_is_structural_tokenizer_not_string_match"]
+        )
+        self.assertTrue(
+            evidence["powershell_unparseable_target_maps_to_ask_defer_not_allow"]
+        )
+        self.assertTrue(evidence["powershell_read_only_commands_do_not_deny_protected_paths"])
+
+
 if __name__ == "__main__":
     unittest.main()
