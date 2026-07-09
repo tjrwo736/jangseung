@@ -139,6 +139,34 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertIn("substrate=claude-code", result.reason)
         self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
 
+    def test_powershell_read_only_maps_to_allow(self):
+        result = _render(
+            {
+                "tool_name": "PowerShell",
+                "tool_input": {"command": "Get-Content .env"},
+                "tool_use_id": "t-powershell-read",
+            },
+            self.repo_root,
+        )
+
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_ALLOW)
+
+    def test_ambiguous_powershell_default_substrate_maps_to_ask(self):
+        result = _render(
+            {
+                "tool_name": "PowerShell",
+                "tool_input": {"command": 'Remove-Item $target'},
+                "tool_use_id": "t-powershell-ambiguous",
+            },
+            self.repo_root,
+        )
+
+        self.assertEqual(result.permission_decision, PERMISSION_ASK)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertIn("substrate=claude-code", result.reason)
+
     def test_unclassified_bash_claude_code_substrate_still_maps_to_ask(self):
         payload = {
             "tool_name": "Bash",
@@ -188,6 +216,26 @@ class RenderHookResponseTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = _render(
                     {"tool_name": "Write", "tool_input": {"file_path": path, "content": "x"}, "tool_use_id": "t"},
+                    self.repo_root,
+                )
+                self.assertEqual(result.permission_decision, PERMISSION_DENY)
+                self.assertEqual(result.exit_code, EXIT_BLOCK)
+                self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_DENY)
+
+    def test_powershell_protected_path_write_delete_deny_and_block(self):
+        for command in (
+            "Remove-Item .env",
+            r"Remove-Item .github\workflows\ci.yml",
+            "Set-Content .env -Value x",
+            '"x" > .env',
+        ):
+            with self.subTest(command=command):
+                result = _render(
+                    {
+                        "tool_name": "PowerShell",
+                        "tool_input": {"command": command},
+                        "tool_use_id": "t-powershell-deny",
+                    },
                     self.repo_root,
                 )
                 self.assertEqual(result.permission_decision, PERMISSION_DENY)

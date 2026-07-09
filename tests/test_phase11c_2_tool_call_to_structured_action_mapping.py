@@ -22,6 +22,9 @@ from src.evidence.claude_code_tool_call_mapping import (
     INVALID_TOOL_INPUT,
     NORMAL_REPO_PATH,
     PHASE11C_2_COMPLETE_LABEL,
+    POWERSHELL_NOT_CHECKED,
+    POWERSHELL_SAFE_READ_ONLY,
+    POWERSHELL_TARGETS_EXTRACTED,
     PROTECTED_PATH,
     READ_REPO,
     RUN_COMMAND,
@@ -30,6 +33,7 @@ from src.evidence.claude_code_tool_call_mapping import (
     WRITE_FILE,
     build_tool_call_mapping_contract_evidence,
     extract_apply_patch_targets,
+    extract_powershell_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
 )
 
@@ -185,6 +189,50 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 self.assertEqual(candidate.decision, SAFE_DEFAULT)
                 self._assert_candidate_only_no_authority(candidate)
 
+    def test_powershell_tool_maps_to_run_command_candidate(self):
+        candidate = self._candidate(
+            "PowerShell",
+            {"command": "Remove-Item .env"},
+            "toolu-powershell-target",
+        )
+
+        self.assertEqual(candidate.candidate_action_type, RUN_COMMAND)
+        self.assertEqual(candidate.candidate_status, HOLD_CURRENT_STATE_CANDIDATE)
+        self.assertEqual(candidate.declared_risk, NOT_CHECKED)
+        self.assertEqual(candidate.risk_status, POWERSHELL_TARGETS_EXTRACTED)
+        self.assertEqual(candidate.payload["target_paths"], (".env",))
+        self.assertEqual(candidate.payload["target_operations"], (("delete", ".env"),))
+        self.assertEqual(candidate.capability_requirements, ("run_command",))
+        self._assert_candidate_only_no_authority(candidate)
+
+    def test_powershell_read_only_maps_to_candidate_without_write_target(self):
+        candidate = self._candidate(
+            "PowerShell",
+            {"command": "Get-Content .env"},
+            "toolu-powershell-read",
+        )
+
+        self.assertEqual(candidate.candidate_action_type, RUN_COMMAND)
+        self.assertEqual(candidate.candidate_status, STRUCTURED_ACTION_CANDIDATE)
+        self.assertEqual(candidate.declared_risk, LOW)
+        self.assertEqual(candidate.risk_status, POWERSHELL_SAFE_READ_ONLY)
+        self.assertEqual(candidate.payload["target_paths"], tuple())
+        self._assert_candidate_only_no_authority(candidate)
+
+    def test_powershell_ambiguous_command_holds_current_state(self):
+        candidate = self._candidate(
+            "PowerShell",
+            {"command": '$p = ".env"; Remove-Item $p'},
+            "toolu-powershell-ambiguous",
+        )
+
+        self.assertEqual(candidate.candidate_action_type, RUN_COMMAND)
+        self.assertEqual(candidate.candidate_status, HOLD_CURRENT_STATE_CANDIDATE)
+        self.assertEqual(candidate.declared_risk, NOT_CHECKED)
+        self.assertEqual(candidate.risk_status, POWERSHELL_NOT_CHECKED)
+        self.assertEqual(candidate.decision, SAFE_DEFAULT)
+        self._assert_candidate_only_no_authority(candidate)
+
     def test_apply_patch_normal_targets_map_to_write_file_candidate(self):
         command = (
             "*** Begin Patch\n"
@@ -306,6 +354,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             ("Write", {"file_path": "README.md"}, WRITE_FILE),
             ("Edit", {"file_path": "README.md", "old_string": "old"}, EDIT_FILE),
             ("Bash", {}, RUN_COMMAND),
+            ("PowerShell", {}, RUN_COMMAND),
         )
 
         for tool_name, tool_input, expected_action in cases:
@@ -371,6 +420,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
                 "Write": WRITE_FILE,
                 "Edit": EDIT_FILE,
                 "Bash": RUN_COMMAND,
+                "PowerShell": RUN_COMMAND,
                 "apply_patch": WRITE_FILE,
             },
         )
@@ -385,6 +435,17 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         self.assertTrue(evidence["apply_patch_maps_to_write_file_candidate"])
         self.assertTrue(evidence["apply_patch_target_parsing_is_structural_directive_parse"])
         self.assertTrue(evidence["apply_patch_unparseable_maps_to_deny_candidate"])
+        self.assertTrue(evidence["powershell_tool_call_supported"])
+        self.assertTrue(evidence["powershell_maps_to_run_command_candidate"])
+        self.assertTrue(
+            evidence["powershell_target_parsing_is_structural_tokenizer_not_string_match"]
+        )
+        self.assertTrue(
+            evidence["powershell_complex_or_dynamic_commands_fail_closed_to_ask_defer"]
+        )
+        self.assertTrue(
+            evidence["powershell_read_only_commands_do_not_create_write_delete_targets"]
+        )
         self.assertTrue(evidence["git_reset_hard_is_dangerous"])
         self.assertTrue(evidence["git_clean_force_delete_is_dangerous"])
         self.assertNotIn("protected_path_segments", evidence)
@@ -469,6 +530,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             "-> EDIT_FILE candidate",
             "Bash(command)",
             "-> RUN_COMMAND candidate",
+            "PowerShell(command)",
             "mapping output is structured action candidate only",
             "mapping output != execution",
             "mapping output != permission decision",
@@ -636,6 +698,94 @@ class BashTargetExtractionTests(unittest.TestCase):
                 extraction = self._extract(command)
                 self.assertFalse(extraction.parse_ambiguous)
                 self.assertEqual(extraction.write_delete_targets, tuple())
+
+
+class PowerShellTargetExtractionTests(unittest.TestCase):
+    def _extract(self, command):
+        return extract_powershell_write_delete_targets(command)
+
+    def test_remove_set_outfile_redirect_copy_move_targets_extracted(self):
+        cases = {
+            'Remove-Item -Path ".env" -Confirm:$false': [("delete", ".env")],
+            'Remove-Item ".env"': [("delete", ".env")],
+            "rm .env": [("delete", ".env")],
+            "del .env": [("delete", ".env")],
+            'Set-Content -Path ".env" -Value "x"': [("write", ".env")],
+            'Set-Content -LiteralPath ".env" -Value "x"': [("write", ".env")],
+            'Out-File -FilePath ".env"': [("write", ".env")],
+            '"x" | Out-File ".env"': [("write", ".env")],
+            '"x" > .env': [("write", ".env")],
+            'Move-Item -Path "x" -Destination ".env"': [("write", ".env")],
+            'Copy-Item -Path "x" -Destination ".env"': [("write", ".env")],
+            'Copy-Item "x" ".env"': [("write", ".env")],
+        }
+
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertEqual(list(extraction.target_operations), expected)
+                self.assertEqual(
+                    list(extraction.write_delete_targets),
+                    [path for _, path in expected],
+                )
+
+    def test_tokenizer_handles_quotes_and_backtick_escapes(self):
+        cases = {
+            'Remove-Item .en"v"': ".env",
+            "Remove-Item '.env'": ".env",
+            "Remove-Item .en`v": ".env",
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertFalse(extraction.parse_ambiguous)
+                self.assertEqual(extraction.write_delete_targets, (expected,))
+
+    def test_comma_separated_path_argument_lists_are_extracted(self):
+        cases = {
+            'Remove-Item -Path ".env",".env.local"': (
+                ("delete", ".env"),
+                ("delete", ".env.local"),
+            ),
+            'Set-Content -Path ".env",".env.local" -Value x': (
+                ("write", ".env"),
+                ("write", ".env.local"),
+            ),
+            "Remove-Item .env,.env.local": (
+                ("delete", ".env"),
+                ("delete", ".env.local"),
+            ),
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertFalse(extraction.parse_ambiguous)
+                self.assertEqual(extraction.target_operations, expected)
+
+    def test_read_only_commands_have_no_write_delete_targets(self):
+        for command in (
+            "Get-ChildItem .github\\workflows\\",
+            "Get-Content .env",
+            "Test-Path .env",
+            "ls .github\\workflows\\",
+        ):
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertFalse(extraction.parse_ambiguous)
+                self.assertTrue(extraction.read_only)
+                self.assertEqual(extraction.write_delete_targets, tuple())
+
+    def test_variables_dynamic_commands_and_unknown_cmdlets_are_ambiguous(self):
+        for command in (
+            "Remove-Item $target",
+            '$p = ".env"; Remove-Item $p',
+            "& $cmd .env",
+            "Invoke-Expression 'Remove-Item .env'",
+            "Get-Content x | Where-Object { $_ }",
+        ):
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertTrue(extraction.parse_ambiguous)
 
 
 class ApplyPatchTargetExtractionTests(unittest.TestCase):

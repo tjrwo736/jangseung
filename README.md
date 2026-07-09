@@ -34,7 +34,7 @@ Aegis는 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 
 - 감시 기록 조작: `.aeg` 디렉토리 쓰기
 - 범위 밖 접근: 프로젝트 폴더 바깥 경로 (`/etc`, `~/.ssh` 등)
 
-이 판정은 파일을 직접 쓰는 경우(Write/Edit)뿐 아니라, Bash 명령으로 우회하려는 경우(`echo > .env` 같은)도 동일하게 적용됩니다.
+이 판정은 파일을 직접 쓰는 경우(Write/Edit)뿐 아니라, Bash 명령이나 Windows Claude Code의 PowerShell 명령으로 우회하려는 경우(`echo > .env`, `Remove-Item .env` 같은)도 동일하게 적용됩니다.
 
 막지 않습니다 (그냥 통과):
 
@@ -64,15 +64,19 @@ Aegis는 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용�
 | 상태 | 범위 |
 | --- | --- |
 | 지원됨 | Claude Code `Write`/`Edit`/`Read`/`Bash` PreToolUse hook |
+| 지원됨 | Windows Claude Code `PowerShell` PreToolUse hook matcher와 흔한 PowerShell 쓰기/삭제 target 판정 |
 | 지원됨 | 프로젝트 로컬 Claude Code 설치: `aeg install --target claude-code` (기본값) |
 | 지원됨 | 보호 경로(`.env`, `.github/workflows`, `Dockerfile`, `.aeg`, 정책/판정 코드 등)를 직접 대상으로 하는 `Read`/`Write`/`Edit` deny |
 | 지원됨 | Bash의 보호 경로 쓰기/삭제 deny: 리다이렉트, heredoc 계열, `tee`, `cp`, `mv`, `rm`, `dd`, `truncate`, `ln` 등 구조적으로 파악 가능한 쓰기/삭제 타깃 포함 |
+| 지원됨 | PowerShell의 보호 경로 쓰기/삭제 deny: `Remove-Item`/`rm`/`del`, `Set-Content`, `Out-File`, `>`/`>>`, `Move-Item`/`Copy-Item -Destination` 등 구조적으로 파악 가능한 쓰기/삭제 타깃 포함 |
+| 지원됨 | PowerShell read-only 명령(`Get-Content`, `Get-ChildItem`, `Test-Path`)은 쓰기/삭제 타깃으로 오탐 deny하지 않음 |
 | 지원됨 | 위험 명령 deny: `rm -rf`, `git reset --hard`, `git clean -fd`, `git push`, 배포 관련 명령 등 |
 | 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
 | 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow |
 | 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
 | 지원됨 | Codex substrate에서 `ask`/`defer`를 `deny`로 격상: Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 실측 결과 반영 |
 | 부분 지원 / 확인 중 | Bash 동적/난독화 명령: 변수 치환, 명령 치환, 중첩 셸, `find -delete`/`xargs` 등은 정밀 판별하지 못하면 자동 허용하지 않고 `ask`/`defer`로 보냄 (Codex substrate에서는 `deny`로 격상) |
+| 부분 지원 / 확인 중 | PowerShell 동적/복잡 명령: target 변수, 동적 command invocation, 미지원 cmdlet, 복잡한 pipeline은 정밀 판별을 주장하지 않고 `ask`/`defer`로 보냄 |
 | 부분 지원 / 확인 중 | `apply_patch` quoted path 처리: 대칭 따옴표는 정규화해서 판정하고, 비대칭/중간 따옴표/빈 경로처럼 애매한 입력은 fail-closed deny |
 | 지원 안 됨 (로드맵) | 파일 내용 안의 실제 secret 값 스캔: 현재는 경로와 의도 기반 판정 |
 | 지원 안 됨 (로드맵) | 사용자 정의 정책: 현재 정책은 하드코딩 |

@@ -114,6 +114,9 @@ Edit(file_path, old_string, new_string)
 Bash(command)
   -> RUN_COMMAND candidate
 
+PowerShell(command)
+  -> RUN_COMMAND candidate
+
 apply_patch(command)
   -> WRITE_FILE candidate with target paths extracted from patch directives
 ```
@@ -219,6 +222,31 @@ unsupported/unknown/NOT_CHECKED != PASS
 
 Phase 11-C-2 does not claim Bash safety. A non-dangerous string match is still
 not proof that a Bash command is safe.
+
+## PowerShell Handling
+
+PowerShell input maps to a `RUN_COMMAND` candidate. A limited structural parser
+tokenizes PowerShell quoting/backtick escapes and recognizes common write/delete
+target shapes:
+
+```text
+Remove-Item / rm / del path -> delete target
+Set-Content -Path/-LiteralPath path -> write target
+Out-File -FilePath path and pipeline to Out-File path -> write target
+> path and >> path -> write target
+Move-Item / Copy-Item -Destination path -> write target
+```
+
+Read-only commands such as `Get-Content`, `Get-ChildItem`, and `Test-Path` do
+not create write/delete targets and are not treated as protected-path writes.
+
+Dynamic targets, variables in target arguments, dynamic command invocation,
+unrecognized cmdlets, and complex pipelines are not claimed as fully parsed.
+They map to `HOLD_CURRENT_STATE_CANDIDATE` so later hook judgment can ask/defer
+instead of allowing by default.
+
+Phase 11-C-2 does not claim full PowerShell language coverage or PowerShell
+safety.
 
 ## Unknown Tool Handling
 

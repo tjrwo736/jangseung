@@ -168,6 +168,29 @@ The current adapter reaches `deny` for Bash through the existing
 `run_command` capability denial. If a future engine changes Bash routing, the
 floor remains deny/defer and never allow without a separate explicit gate.
 
+## PowerShell Target Gate
+
+PowerShell tool calls are recognized as `RUN_COMMAND` candidates, with a narrow
+target-aware gate for common write/delete syntax. The gate reuses the same path
+policies as other file targets:
+
+```text
+Remove-Item .env -> deny via protected path gate
+Remove-Item .github\workflows\ci.yml -> deny via protected path gate
+Set-Content .env -Value x -> deny via protected path gate
+"x" > .env -> deny via protected path gate
+Move-Item/Copy-Item -Destination .env -> deny via protected path gate
+Remove-Item src\app.py -> defer/ask by normal command policy, not protected-path deny
+Get-ChildItem .github\workflows\ -> allow as read-only, no write/delete target
+Get-Content .env -> allow as read-only, no write/delete target
+PowerShell with target variables or complex/unknown pipelines -> defer/ask, never allow
+```
+
+This is not full PowerShell language support. It covers structurally parsed
+cmdlet/alias, parameter, positional path, and redirection patterns. Dynamic
+command generation, variables in target arguments, and unrecognized cmdlets are
+not claimed as precisely parsed.
+
 ## Reported-Only And NOT_CHECKED
 
 Reported-only fields may be retained as ignored context, but they are not
