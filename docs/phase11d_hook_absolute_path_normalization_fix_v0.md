@@ -20,12 +20,16 @@ called at the top of `judge_pretooluse_with_aeg_engine`):
 
 ```text
 non-absolute path              -> unchanged (relative behaviour preserved, incl. relative traversal denial)
-Windows-style absolute path    -> unchanged (mapping's absolute deny-candidate rejects it)
 POSIX absolute path:
   resolve via the existing resolve_repo_boundary_path helper (absorbs .. and symlinks)
   if resolved target is under repo root -> rewrite to repo-relative, judge normally
   if resolved target is outside repo    -> keep absolute, existing scope defense rejects it
   on any resolution/relativize error    -> keep absolute (fail-closed)
+Windows-style absolute path:
+  parse with PureWindowsPath regardless of host OS
+  if the Windows target is under the Windows repo root -> rewrite to repo-relative, judge normally
+  if the target is outside repo / ambiguous / on another drive -> keep absolute, existing scope defense rejects it
+  on any parsing/relativize error -> keep absolute (fail-closed)
 ```
 
 Key point: this only rewrites the **input path the engine sees**. It does not
@@ -36,10 +40,14 @@ engine already judges correctly; everything outside the repo stays absolute and
 stays rejected.
 
 The repo boundary is computed with `resolve_repo_boundary_path`, which uses
-component-wise `Path.relative_to` (not string-prefix matching) on
-`.resolve(strict=False)`-canonicalized paths, so `..`, `.`, and symlinks are
-absorbed and a sibling directory that merely shares the repo-name prefix
-(`/tmp/x/repo-evil` vs `/tmp/x/repo`) is correctly treated as outside.
+component-wise relative checks rather than string-prefix matching. POSIX paths
+continue to use `Path.relative_to` on `.resolve(strict=False)`-canonicalized
+paths. Windows-style absolute paths use `PureWindowsPath` parsing so drive
+letters, backslashes, forward slashes, and `..` segments are interpreted as
+Windows path structure even when the tests run on Linux/WSL. Sibling names that
+merely share the repo-name prefix (`/tmp/x/repo-evil` vs `/tmp/x/repo`, or
+`C:\Users\test\repo.env` vs `C:\Users\test\repo`) are correctly treated as
+outside.
 
 ## Before / After (isolated temp repo, absolute paths as Claude Code sends them)
 
@@ -56,6 +64,11 @@ absorbed and a sibling directory that merely shares the repo-name prefix
 | Read `/root/.ssh/id_rsa` (outside) | deny | deny (unchanged) |
 | Write `<repo>/../outside.txt` (traversal out) | deny | deny (unchanged) |
 | Write `/tmp/other/x` (outside) | deny | deny (unchanged) |
+| Write `C:\Users\test\repo\src\app.py` (Windows internal normal) | deny | **allow** |
+| Write `C:/Users/test/repo/src/app.py` (Windows internal normal) | deny | **allow** |
+| Write `C:\Users\test\repo\.env` (Windows internal protected) | deny | deny (unchanged) |
+| Write `C:\Windows\System32\config` (Windows outside) | deny | deny (unchanged) |
+| Write `D:\other\path\file.txt` (Windows other drive) | deny | deny (unchanged) |
 | relative `README.md` | allow | allow (unchanged) |
 | relative `../outside.txt` | deny | deny (unchanged) |
 
