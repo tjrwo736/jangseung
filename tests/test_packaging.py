@@ -53,6 +53,10 @@ class PackagingMetadataTests(unittest.TestCase):
         # honest current-scope disclaimers must stay documented
         self.assertIn("PyPI", readme)
         self.assertIn("Claude Code와 Codex에서 검증됨", readme)
+        self.assertIn("Windows 네이티브", readme)
+        self.assertIn("hook exit code 처리 포함 실측", readme)
+        self.assertIn("macOS: 테스터 검증 진행 중", readme)
+        self.assertIn("PowerShell 문법 명령은 아직 구조적으로 파싱하지 않습니다", readme)
         self.assertIn("Codex", readme)
         self.assertIn("하드코딩", readme)
         self.assertIn("스캔하는 기능은 아직 없습니다", readme)
