@@ -2,10 +2,10 @@
 
 This is the real I/O boundary that lets the existing in-memory Aegis hook
 judgment brain (Phase 11-C-8 ``judge_pretooluse_with_aeg_engine``) act as a
-Claude Code PreToolUse hook command: it reads untrusted PreToolUse JSON from
-stdin, routes it through the unchanged judgment brain, and writes a
-Claude Code ``hookSpecificOutput.permissionDecision`` response to stdout with a
-spec-aligned exit code.
+PreToolUse hook command: it reads untrusted PreToolUse JSON from stdin, routes
+it through the unchanged judgment brain, and writes a
+``hookSpecificOutput.permissionDecision`` response to stdout with a
+substrate-specific exit code.
 
 Safety properties enforced here (not in the judgment brain, which is not
 modified by this module):
@@ -13,8 +13,8 @@ modified by this module):
 * stdin JSON is treated as untrusted raw executor output; it is never trusted
   as a decision or authority and is always routed through validate/map/judge.
 * fail-closed: any parse failure, missing/invalid field, unknown tool, or
-  internal exception resolves to ``deny`` with a blocking exit code. There is
-  no code path where a failure resolves to ``allow``.
+  internal exception resolves to a ``deny`` JSON response. There is no code
+  path where a failure resolves to ``allow``.
 * the reason string carries only decision codes and the tool name, never raw
   ``tool_input`` content, so secrets in tool input are not echoed to stdout or
   stderr.
@@ -63,10 +63,9 @@ CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON = (
     "codex_substrate_ask_not_enforced_upgraded_to_deny"
 )
 
-# Exit codes. allow/ask carry their decision in the stdout JSON with exit 0.
-# deny additionally exits with the Claude Code blocking exit code so the tool
-# call is blocked even if the stdout JSON were ignored (belt-and-suspenders
-# fail-closed). Both mechanisms independently mean "do not run the tool".
+# Exit codes. Claude Code uses exit 2 as the hard-blocking deny path. Codex
+# consumes the JSON permissionDecision when the process exits 0, so Codex
+# substrate responses always exit 0 and carry allow/deny in stdout JSON.
 EXIT_ALLOW_OR_ASK = 0
 EXIT_BLOCK = 2
 
@@ -103,10 +102,10 @@ def render_hook_response(
     repo_root: str | Path,
     substrate: str | None = None,
 ) -> HookRunResult:
-    """Render a Claude Code PreToolUse hook response from untrusted stdin text.
+    """Render a PreToolUse hook response from untrusted stdin text.
 
     Pure and side-effect free: performs no stream or filesystem I/O so it can be
-    exercised directly in tests. Every failure mode returns a blocking ``deny``.
+    exercised directly in tests. Every failure mode returns a ``deny`` JSON.
     """
 
     effective_substrate = _normalize_substrate(substrate)
@@ -175,7 +174,7 @@ def render_hook_response(
             substrate=effective_substrate,
         )
 
-    permission_decision, exit_code, substrate_reason_codes = mapping
+    permission_decision, mapped_exit_code, substrate_reason_codes = mapping
     reason = _reason_string(
         permission_decision=permission_decision,
         hook_decision=hook_decision,
@@ -184,7 +183,11 @@ def render_hook_response(
         substrate=effective_substrate,
     )
     stdout_json = _permission_decision_json(permission_decision, reason)
-    stderr_text = reason if exit_code == EXIT_BLOCK else ""
+    stderr_text = reason if mapped_exit_code == EXIT_BLOCK else ""
+    exit_code = _process_exit_code_for_substrate(
+        substrate=effective_substrate,
+        mapped_exit_code=mapped_exit_code,
+    )
     return HookRunResult(
         stdout_json=stdout_json,
         stderr_text=stderr_text,
@@ -204,10 +207,10 @@ def run_aeg_hook_run(
     repo_root: str | Path,
     substrate: str | None = None,
 ) -> int:
-    """Read PreToolUse JSON from ``stdin``, judge it, write the Claude Code
+    """Read PreToolUse JSON from ``stdin``, judge it, write the substrate
     hook response to ``stdout``/``stderr``, and return the exit code.
 
-    A failure to read stdin itself also fails closed to a blocking deny.
+    A failure to read stdin itself also fails closed to a ``deny`` JSON.
     """
 
     try:
@@ -268,12 +271,16 @@ def build_aeg_hook_run_contract_evidence() -> dict[str, Any]:
         "missing_or_unknown_substrate_defaults_to_claude_code": True,
         "codex_substrate_ask_defer_upgraded_to_deny": True,
         "codex_substrate_upgrade_reason_code": CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
+        "codex_substrate_all_permission_decisions_exit_zero": True,
+        "claude_code_substrate_deny_exit_code": EXIT_BLOCK,
+        "codex_substrate_process_exit_code": EXIT_ALLOW_OR_ASK,
         "decision_to_permission_and_exit": {
             decision: {"permissionDecision": permission, "exit_code": exit_code}
             for decision, (permission, exit_code) in _DECISION_TO_PERMISSION_AND_EXIT.items()
         },
         "fail_closed_default": PERMISSION_DENY,
         "fail_closed_exit_code": EXIT_BLOCK,
+        "fail_closed_exit_code_codex_substrate": EXIT_ALLOW_OR_ASK,
         "failure_ever_maps_to_allow": False,
         "raw_tool_input_echoed_in_reason": False,
         # This module builds the real I/O boundary only. It does not install a
@@ -306,10 +313,14 @@ def _deny_result(
         decision_reasons=(reason_code, *extra_reason_codes),
         substrate=substrate,
     )
+    exit_code = _process_exit_code_for_substrate(
+        substrate=substrate,
+        mapped_exit_code=EXIT_BLOCK,
+    )
     return HookRunResult(
         stdout_json=_permission_decision_json(PERMISSION_DENY, reason),
         stderr_text=reason,
-        exit_code=EXIT_BLOCK,
+        exit_code=exit_code,
         permission_decision=PERMISSION_DENY,
         hook_decision=hook_decision,
         fail_closed=fail_closed,
@@ -354,6 +365,16 @@ def _normalize_substrate(substrate: str | None) -> str:
     if substrate == SUBSTRATE_CODEX:
         return SUBSTRATE_CODEX
     return SUBSTRATE_CLAUDE_CODE
+
+
+def _process_exit_code_for_substrate(
+    *,
+    substrate: str,
+    mapped_exit_code: int,
+) -> int:
+    if substrate == SUBSTRATE_CODEX:
+        return EXIT_ALLOW_OR_ASK
+    return mapped_exit_code
 
 
 def _permission_mapping_for_substrate(
