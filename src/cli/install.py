@@ -23,7 +23,7 @@ import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Sequence, TextIO
 
 AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read"
 CODEX_AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read|apply_patch"
@@ -44,14 +44,53 @@ def resolve_hook_command(*, substrate: str | None = None) -> str:
     the installed ``aeg`` console script if available (absolute path, no
     PYTHONPATH needed), else the current interpreter's module invocation."""
 
+    command, args = resolve_hook_command_parts(substrate=substrate)
+    command = " ".join((command, *args))
+    return command
+
+
+def resolve_hook_command_parts(
+    *,
+    substrate: str | None = None,
+) -> tuple[str, tuple[str, ...]]:
+    """Return the hook executable and argv tail without shell tokenization."""
+
     aeg_path = shutil.which("aeg")
     if aeg_path:
-        command = f"{aeg_path} hook-run"
+        command = aeg_path
+        args = ["hook-run"]
     else:
-        command = f"{sys.executable} -m src.cli hook-run"
+        command = sys.executable
+        args = ["-m", "src.cli", "hook-run"]
     if substrate:
-        command = f"{command} --substrate {substrate}"
-    return command
+        args.extend(("--substrate", substrate))
+    return (command, tuple(args))
+
+
+def resolve_claude_code_hook_command(
+    *,
+    platform: str | None = None,
+) -> tuple[str, tuple[str, ...] | None]:
+    """Return the Claude Code command config.
+
+    POSIX platforms keep the existing shell-form command string. Windows uses
+    Claude Code exec form (``command`` + ``args``) so Git Bash/PowerShell never
+    reinterpret backslashes or spaces in the Python executable path.
+    """
+
+    effective_platform = sys.platform if platform is None else platform
+    if effective_platform == "win32":
+        return resolve_windows_hook_command_parts()
+    return (resolve_hook_command(), None)
+
+
+def resolve_windows_hook_command_parts() -> tuple[str, tuple[str, ...]]:
+    """Return a Windows exec-form hook target that Claude Code can spawn."""
+
+    aeg_path = shutil.which("aeg")
+    if isinstance(aeg_path, str) and _is_windows_exe_path(aeg_path):
+        return (aeg_path, ("hook-run",))
+    return (sys.executable, ("-m", "src.cli", "hook-run"))
 
 
 def is_aegis_hook_command(command: Any) -> bool:
@@ -63,6 +102,21 @@ def is_aegis_hook_command(command: Any) -> bool:
         and HOOK_RUN_MARKER in command
         and ("aeg" in command or "src.cli" in command)
     )
+
+
+def is_aegis_hook(hook: Any) -> bool:
+    """Identify both legacy shell-form and Windows exec-form Aegis hooks."""
+
+    if not isinstance(hook, dict):
+        return False
+    if is_aegis_hook_command(hook.get("command")):
+        return True
+
+    command = hook.get("command")
+    args = hook.get("args")
+    if not isinstance(command, str) or not _is_string_sequence(args):
+        return False
+    return _is_aegis_exec_form_hook(command, tuple(args))
 
 
 def settings_path(base_dir: str | Path) -> Path:
@@ -97,6 +151,8 @@ def load_settings(path: Path) -> tuple[dict[str, Any] | None, bool, str | None]:
 def build_installed_settings(
     data: dict[str, Any],
     command: str,
+    *,
+    args: Sequence[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Return (new_settings, already_installed). Preserves all existing content;
     appends one Aegis PreToolUse entry unless one is already present."""
@@ -115,7 +171,7 @@ def build_installed_settings(
     pretooluse.append(
         {
             "matcher": AEGIS_HOOK_MATCHER,
-            "hooks": [{"type": "command", "command": command}],
+            "hooks": [_command_hook(command, args=args)],
         }
     )
     return (new_data, False)
@@ -145,7 +201,7 @@ def build_uninstalled_settings(
         kept_hooks = [
             hook
             for hook in nested
-            if not (isinstance(hook, dict) and is_aegis_hook_command(hook.get("command")))
+            if not is_aegis_hook(hook)
         ]
         removed += len(nested) - len(kept_hooks)
         if len(kept_hooks) == len(nested):
@@ -253,9 +309,9 @@ def _cmd_install_claude_code(
         _write(out, "Please fix or remove the file manually, then retry.")
         return 1
 
-    command = resolve_hook_command()
+    command, args = resolve_claude_code_hook_command()
     try:
-        new_data, already = build_installed_settings(data or {}, command)
+        new_data, already = build_installed_settings(data or {}, command, args=args)
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected settings structure: {exc}")
         _write(out, "Please adjust .claude/settings.json manually, then retry.")
@@ -269,7 +325,7 @@ def _cmd_install_claude_code(
     after_text = _json_text(new_data)
 
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
-    _write(out, f"  hook command: {command}")
+    _write(out, f"  hook command: {_format_hook_command(command, args=args)}")
     _write(out, f"  matcher:      {AEGIS_HOOK_MATCHER}")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
@@ -387,9 +443,46 @@ def _find_aegis_hook(pretooluse: list[Any]) -> bool:
         if not isinstance(nested, list):
             continue
         for hook in nested:
-            if isinstance(hook, dict) and is_aegis_hook_command(hook.get("command")):
+            if is_aegis_hook(hook):
                 return True
     return False
+
+
+def _command_hook(command: str, *, args: Sequence[str] | None = None) -> dict[str, Any]:
+    hook: dict[str, Any] = {"type": "command", "command": command}
+    if args is not None:
+        hook["args"] = list(args)
+    return hook
+
+
+def _format_hook_command(command: str, *, args: Sequence[str] | None = None) -> str:
+    if args is None:
+        return command
+    return f"{command} args={list(args)!r}"
+
+
+def _is_string_sequence(value: Any) -> bool:
+    return isinstance(value, (list, tuple)) and all(
+        isinstance(item, str) for item in value
+    )
+
+
+def _is_aegis_exec_form_hook(command: str, args: tuple[str, ...]) -> bool:
+    if HOOK_RUN_MARKER not in args:
+        return False
+
+    command_name = command.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+    if command_name in ("aeg", "aeg.exe"):
+        return True
+
+    return any(
+        args[index : index + 3] == ("-m", "src.cli", HOOK_RUN_MARKER)
+        for index in range(max(len(args) - 2, 0))
+    )
+
+
+def _is_windows_exe_path(path: str) -> bool:
+    return path.replace("\\", "/").rstrip("/").lower().endswith(".exe")
 
 
 def _load_text_file(path: Path) -> tuple[str, bool, str | None]:
@@ -529,9 +622,13 @@ __all__ = [
     "cmd_install",
     "cmd_uninstall",
     "codex_config_path",
+    "is_aegis_hook",
     "is_aegis_hook_command",
     "load_settings",
     "normalize_install_target",
+    "resolve_claude_code_hook_command",
     "resolve_hook_command",
+    "resolve_hook_command_parts",
+    "resolve_windows_hook_command_parts",
     "settings_path",
 ]
