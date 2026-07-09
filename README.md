@@ -57,6 +57,31 @@ Aegis는 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용�
 
 이 한계를 감추지 않는 것이 Aegis가 신뢰를 얻는 방식입니다.
 
+## 지원 범위
+
+현재 구현과 실측 기준의 범위입니다. Aegis는 Claude Code 전체나 Codex 전체를 안전하게 만든다고 주장하지 않습니다.
+
+| 상태 | 범위 |
+| --- | --- |
+| 지원됨 | Claude Code `Write`/`Edit`/`Read`/`Bash` PreToolUse hook |
+| 지원됨 | 프로젝트 로컬 Claude Code 설치: `aeg install --target claude-code` (기본값) |
+| 지원됨 | 보호 경로(`.env`, `.github/workflows`, `Dockerfile`, `.aeg`, 정책/판정 코드 등)를 직접 대상으로 하는 `Read`/`Write`/`Edit` deny |
+| 지원됨 | Bash의 보호 경로 쓰기/삭제 deny: 리다이렉트, heredoc 계열, `tee`, `cp`, `mv`, `rm`, `dd`, `truncate`, `ln` 등 구조적으로 파악 가능한 쓰기/삭제 타깃 포함 |
+| 지원됨 | 위험 명령 deny: `rm -rf`, `git reset --hard`, `git clean -fd`, `git push`, 배포 관련 명령 등 |
+| 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
+| 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow |
+| 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
+| 지원됨 | Codex substrate에서 `ask`/`defer`를 `deny`로 격상: Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 실측 결과 반영 |
+| 부분 지원 / 확인 중 | Bash 동적/난독화 명령: 변수 치환, 명령 치환, 중첩 셸, `find -delete`/`xargs` 등은 정밀 판별하지 못하면 자동 허용하지 않고 `ask`/`defer`로 보냄 (Codex substrate에서는 `deny`로 격상) |
+| 부분 지원 / 확인 중 | `apply_patch` quoted path 처리: 대칭 따옴표는 정규화해서 판정하고, 비대칭/중간 따옴표/빈 경로처럼 애매한 입력은 fail-closed deny |
+| 지원 안 됨 (로드맵) | 파일 내용 안의 실제 secret 값 스캔: 현재는 경로와 의도 기반 판정 |
+| 지원 안 됨 (로드맵) | 사용자 정의 정책: 현재 정책은 하드코딩 |
+| 지원 안 됨 | `@` 파일 참조처럼 tool call을 거치지 않고 모델 컨텍스트로 직접 읽히는 내용 |
+| 지원 안 됨 | 이미 허용된 명령이 내부에서 실행하는 하위 프로세스의 모든 행동 추적 |
+| 지원 안 됨 | 글로벌 설치: `~/.claude`, `~/.codex` 설치는 지원하지 않음 |
+| 지원 안 됨 | PyPI 공개 배포: 현재는 소스 설치만 지원 |
+| 지원 안 됨 | OS 수준 격리/샌드박스 |
+
 ## 설치
 
 현재 PyPI에 공개 배포되어 있지 않습니다. 소스에서 설치합니다 (로컬 클론).
