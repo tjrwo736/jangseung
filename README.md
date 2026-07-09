@@ -96,10 +96,14 @@ Aegis는 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용�
 ```bash
 git clone https://github.com/tjrwo736/aegis.git
 cd aegis
+# 가상환경 생성 (특히 macOS/최신 Linux 배포판에서 필요 — 시스템 Python에 직접 설치가 막힐 수 있습니다)
+python -m venv venv
+source venv/bin/activate
+# Windows(PowerShell)는: venv\Scripts\Activate.ps1
 python -m pip install -e .
 ```
 
-설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
+설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
 ```bash
 cd /path/to/your-project
