@@ -18,7 +18,7 @@ class PackagingMetadataTests(unittest.TestCase):
     def test_console_script_points_at_existing_cli_main(self):
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-        self.assertEqual(pyproject["project"]["name"], "aegis-runtime")
+        self.assertEqual(pyproject["project"]["name"], "jangseung")
         self.assertEqual(pyproject["project"]["dependencies"], [])
         self.assertEqual(pyproject["project"]["scripts"]["aeg"], "src.cli:main")
 

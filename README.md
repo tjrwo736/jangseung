@@ -1,12 +1,14 @@
-![Aegis — 코딩 에이전트의 문지기](docs/assets/jangseung-hero.png)
+![장승(Jangseung) — 코딩 에이전트의 문지기](docs/assets/jangseung-hero.png)
 
-# Aegis — AI 코딩 에이전트를 위한 방패
+# 장승(Jangseung) — AI 코딩 에이전트를 위한 방패
 
 Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막습니다.
 
+장승은 한국 전통 마을 어귀에 세워져 나쁜 것을 막던 수호신상입니다. 이 도구도 AI 에이전트가 위험한 작업을 하기 전, 그 경계에 서 있습니다.
+
 [![asciicast](https://asciinema.org/a/6B2AARAZCOKB9snJ.svg)](https://asciinema.org/a/6B2AARAZCOKB9snJ)
 
-실제 Claude Code 세션에서 Aegis가 위험한 작업을 막고 정상 작업은 통과시키는 데모
+실제 Claude Code 세션에서 장승(Jangseung)이 위험한 작업을 막고 정상 작업은 통과시키는 데모
 
 ## 핵심 3가지
 
@@ -22,11 +24,11 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 - AI가 뭘 했는지 조작할 수 없는 기록이 안 남습니다. "어제 얘가 뭘 건드렸지?"를 나중에 추적하기 어렵습니다.
 - 규칙이 흐트러지면 그냥 통과시킵니다(fail-open). 안전 도구인데 문제가 생기면 위험한 쪽으로 실패합니다.
 
-Aegis는 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 작업은 방해하지 않습니다), 모든 판정을 조작 불가능한 기록으로 남기고, 문제가 생기면 안전한 쪽으로 멈춥니다(fail-closed).
+장승(Jangseung)은 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 작업은 방해하지 않습니다), 모든 판정을 조작 불가능한 기록으로 남기고, 문제가 생기면 안전한 쪽으로 멈춥니다(fail-closed).
 
 ## 무엇을 막나 (그리고 안 막나)
 
-방패는 앞을 막지, 지나가는 사람까지 막지 않습니다. Aegis는 명확한 기준으로 위험한 것만 막습니다.
+방패는 앞을 막지, 지나가는 사람까지 막지 않습니다. 장승(Jangseung)은 명확한 기준으로 위험한 것만 막습니다.
 
 막습니다 (사용자 승인 없이는 실행 안 됨):
 
@@ -49,19 +51,19 @@ Aegis는 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 
 
 ## 우리가 못 막는 것
 
-Aegis는 "완벽하게 안전하다"고 말하지 않습니다. 지키는 선을 정확히 말합니다.
+장승(Jangseung)은 "완벽하게 안전하다"고 말하지 않습니다. 지키는 선을 정확히 말합니다.
 
-Aegis는 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용하려는 순간에 끼어들어 판단합니다. 그래서 도구를 거치지 않는 것들 — AI가 참조로 직접 읽어 들이는 파일 내용, 이미 허용된 명령이 내부에서 실행하는 다른 프로그램 — 은 이 선 바깥에 있습니다.
+장승(Jangseung)은 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용하려는 순간에 끼어들어 판단합니다. 그래서 도구를 거치지 않는 것들 — AI가 참조로 직접 읽어 들이는 파일 내용, 이미 허용된 명령이 내부에서 실행하는 다른 프로그램 — 은 이 선 바깥에 있습니다.
 
 또한 변수 치환이나 중첩 셸처럼 복잡하게 감춰진 명령은 대상을 정밀하게 판별하지 못해, 이 경우 자동 통과가 아니라 확인을 요청합니다.
 
-다르게 말하면, Aegis는 문 앞을 지키는 경비이지 집 안 모든 방을 감시하는 CCTV가 아닙니다.
+다르게 말하면, 장승(Jangseung)은 문 앞을 지키는 경비이지 집 안 모든 방을 감시하는 CCTV가 아닙니다.
 
-이 한계를 감추지 않는 것이 Aegis가 신뢰를 얻는 방식입니다.
+이 한계를 감추지 않는 것이 장승(Jangseung)이 신뢰를 얻는 방식입니다.
 
 ## 지원 범위
 
-현재 구현과 실측 기준의 범위입니다. Aegis는 Claude Code 전체나 Codex 전체를 안전하게 만든다고 주장하지 않습니다.
+현재 구현과 실측 기준의 범위입니다. 장승(Jangseung)은 Claude Code 전체나 Codex 전체를 안전하게 만든다고 주장하지 않습니다.
 
 | 상태 | 범위 |
 | --- | --- |
@@ -120,8 +122,8 @@ aeg install --target claude-code
 
 Claude Code 대상 `aeg install`은 다음을 확인하고 진행합니다.
 
-- 프로젝트 폴더의 `.claude/settings.json`에 Aegis PreToolUse hook을 등록합니다. **project-local만 지원합니다** — 글로벌(`~/.claude`) 설치는 이 버전에서 지원하지 않습니다.
-- 기존 `.claude/settings.json`이 있으면 병합합니다. 기존에 등록된 다른 hook과 설정은 그대로 남고, Aegis hook만 추가됩니다.
+- 프로젝트 폴더의 `.claude/settings.json`에 장승(Jangseung) PreToolUse hook을 등록합니다. **project-local만 지원합니다** — 글로벌(`~/.claude`) 설치는 이 버전에서 지원하지 않습니다.
+- 기존 `.claude/settings.json`이 있으면 병합합니다. 기존에 등록된 다른 hook과 설정은 그대로 남고, 장승(Jangseung) hook만 추가됩니다.
 - 쓰기 전에 변경 내용을 diff로 보여주고 확인(`y/N`)을 받습니다. 이미 승인한 자동화 환경이라면 `--yes`로 확인을 건너뛸 수 있습니다.
 - 쓰기 전에 기존 파일을 `settings.json.aegis-backup-<timestamp>`로 백업합니다.
 
@@ -131,7 +133,7 @@ Codex 대상은 명시적으로 설치해야 합니다.
 aeg install --target codex
 ```
 
-Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.PreToolUse]]` command hook을 추가하고, hook command에 `aeg hook-run --substrate codex`를 기록합니다. 이 명시적 substrate 값이 있을 때만 Aegis는 내부 판정이 `ask`/`defer`인 경계 사례를 `deny`로 격상합니다. `allow`와 기존 `deny` 판정은 바꾸지 않습니다.
+Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.PreToolUse]]` command hook을 추가하고, hook command에 `aeg hook-run --substrate codex`를 기록합니다. 이 명시적 substrate 값이 있을 때만 장승(Jangseung)은 내부 판정이 `ask`/`defer`인 경계 사례를 `deny`로 격상합니다. `allow`와 기존 `deny` 판정은 바꾸지 않습니다.
 
 주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
 
@@ -141,11 +143,11 @@ Claude Code 제거는 반대로:
 aeg uninstall
 ```
 
-`aeg uninstall`은 `.claude/settings.json`에서 Aegis가 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
+`aeg uninstall`은 `.claude/settings.json`에서 장승(Jangseung)이 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
 
 ## 어떻게 작동하나
 
-Aegis는 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령을 실행하는 tool call을 하려는 순간, 실행되기 직전에 그 요청이 Aegis로 전달됩니다. Aegis는 요청을 판정해서 위험하면 막고, 정상이면 통과시키고, 애매하면 확인을 요청합니다. 단, `--target codex`로 설치된 hook은 Codex가 `ask`를 강제 차단하지 않는 것으로 확인되어 애매한 `ask`/`defer` 판정을 `deny`로 응답합니다.
+장승(Jangseung)은 PreToolUse hook으로 동작합니다. AI가 파일을 쓰거나 명령을 실행하는 tool call을 하려는 순간, 실행되기 직전에 그 요청이 장승(Jangseung)으로 전달됩니다. 장승(Jangseung)은 요청을 판정해서 위험하면 막고, 정상이면 통과시키고, 애매하면 확인을 요청합니다. 단, `--target codex`로 설치된 hook은 Codex가 `ask`를 강제 차단하지 않는 것으로 확인되어 애매한 `ask`/`defer` 판정을 `deny`로 응답합니다.
 
 판정은 결정론적입니다 — 같은 입력에는 항상 같은 결과가 나옵니다. 그리고 판정 근거가 불확실할 때는 안전한 쪽(막거나 확인 요청)으로 실패합니다(fail-closed).
 
