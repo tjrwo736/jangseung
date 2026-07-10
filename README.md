@@ -1,3 +1,5 @@
+![Aegis — 코딩 에이전트의 문지기](docs/assets/jangseung-hero.png)
+
 # Aegis — AI 코딩 에이전트를 위한 방패
 
 Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막습니다.
