@@ -98,8 +98,8 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 현재 PyPI에 공개 배포되어 있지 않습니다. 소스에서 설치합니다 (로컬 클론).
 
 ```bash
-git clone https://github.com/tjrwo736/aegis.git
-cd aegis
+git clone https://github.com/tjrwo736/jangseung.git
+cd jangseung
 # 가상환경 생성 (특히 macOS/최신 Linux 배포판에서 필요 — 시스템 Python에 직접 설치가 막힐 수 있습니다)
 python -m venv venv
 source venv/bin/activate
