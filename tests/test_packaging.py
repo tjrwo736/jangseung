@@ -19,8 +19,13 @@ class PackagingMetadataTests(unittest.TestCase):
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         self.assertEqual(pyproject["project"]["name"], "jangseung")
+        self.assertEqual(pyproject["project"]["version"], "0.1.0")
         self.assertEqual(pyproject["project"]["dependencies"], [])
         self.assertEqual(pyproject["project"]["scripts"]["aeg"], "src.cli:main")
+        self.assertEqual(
+            pyproject["tool"]["setuptools"]["packages"]["find"]["include"],
+            ["src", "src.*"],
+        )
 
         module_name, function_name = pyproject["project"]["scripts"]["aeg"].split(":", 1)
         module = importlib.import_module(module_name)
@@ -39,7 +44,9 @@ class PackagingMetadataTests(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
         # real, verified install flow
-        self.assertIn("git clone https://github.com/tjrwo736/aegis.git", readme)
+        self.assertIn("git clone https://github.com/tjrwo736/jangseung.git", readme)
+        self.assertIn("cd jangseung", readme)
+        self.assertNotIn("github.com/tjrwo736/aegis", readme)
         self.assertIn("python -m pip install -e .", readme)
         self.assertIn("aeg install", readme)
         self.assertIn("aeg uninstall", readme)

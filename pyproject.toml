@@ -9,10 +9,22 @@ description = "Contract-first local runtime for the Jangseung CLI, including the
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+authors = [
+    { name = "Seokjae Lee", email = "62044870+tjrwo736@users.noreply.github.com" },
+]
 license = { file = "LICENSE" }
 classifiers = [
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
 ]
+
+[project.urls]
+Homepage = "https://github.com/tjrwo736/jangseung"
+Repository = "https://github.com/tjrwo736/jangseung"
+Issues = "https://github.com/tjrwo736/jangseung/issues"
 
 [project.scripts]
 aeg = "src.cli:main"
