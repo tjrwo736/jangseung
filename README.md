@@ -13,7 +13,7 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 ## 핵심 3가지
 
 - **위험한 것만 막습니다**: `.env` 유출, 배포 설정 변경, `rm -rf` 같은 파괴 명령을 실행 전에 멈춥니다. 정상 작업은 방해하지 않습니다.
-- **조작할 수 없는 기록**: AI가 무엇을 하려 했는지, 무엇이 막혔는지 남깁니다.
+- **변조를 탐지할 수 있는 기록**: 일반 run evidence와 라이브 hook 판정을 분리해 기록하고, 각 ledger의 hash chain으로 사후 변조를 탐지합니다. 로컬 파일이므로 tamper-proof라고 주장하지 않습니다.
 - **프롬프트 인젝션 방어**: 조작된 지시로 위험한 행동을 하려 해도 tool call 단계에서 걸러냅니다.
 
 ## Claude Code도 위험하면 물어보는데?
@@ -21,10 +21,10 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 맞아요. 근데 기본 승인은 세 가지가 아쉽습니다.
 
 - 매번 다 물어봅니다. 그래서 결국 `--dangerously-skip-permissions`로 꺼버리게 되죠. 그러면 안전장치가 통째로 사라집니다.
-- AI가 뭘 했는지 조작할 수 없는 기록이 안 남습니다. "어제 얘가 뭘 건드렸지?"를 나중에 추적하기 어렵습니다.
+- AI가 뭘 했는지 감사할 기록이 충분히 남지 않습니다. "어제 얘가 뭘 건드렸지?"를 나중에 추적하기 어렵습니다.
 - 규칙이 흐트러지면 그냥 통과시킵니다(fail-open). 안전 도구인데 문제가 생기면 위험한 쪽으로 실패합니다.
 
-장승(Jangseung)은 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 작업은 방해하지 않습니다), 모든 판정을 조작 불가능한 기록으로 남기고, 문제가 생기면 안전한 쪽으로 멈춥니다(fail-closed).
+장승(Jangseung)은 반대로 만들었습니다. 위험한 것만 골라 멈추고(정상 작업은 방해하지 않습니다), 판정 메타데이터를 변조 탐지 가능한 기록으로 남기고, 문제가 생기면 안전한 쪽으로 멈춥니다(fail-closed).
 
 ## 무엇을 막나 (그리고 안 막나)
 
@@ -35,7 +35,7 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 - 비밀 노출 위험: `.env`, 비밀키, 배포 설정 파일 수정
 - 공급망/빌드 위험: `.github/workflows`, `Dockerfile`, 배포 스크립트 수정
 - 되돌릴 수 없는 파괴: `rm -rf`, `git reset --hard`, `git clean -fd`
-- 감시 기록 조작: `.aeg` 디렉토리 쓰기
+- 감시 기록 조작: executor가 `.aeg` 디렉토리에 직접 쓰는 행위 (장승의 신뢰된 내부 recorder만 전용 ledger에 기록)
 - 범위 밖 접근: 프로젝트 폴더 바깥 경로 (`/etc`, `~/.ssh` 등)
 
 이 판정은 파일을 직접 쓰는 경우(Write/Edit)뿐 아니라, Bash 명령이나 Windows Claude Code의 PowerShell 명령으로 우회하려는 경우(`echo > .env`, `Remove-Item .env` 같은)도 동일하게 적용됩니다.
@@ -144,6 +144,31 @@ aeg uninstall
 ```
 
 `aeg uninstall`은 `.claude/settings.json`에서 장승(Jangseung)이 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
+
+## Evidence 조회와 라이브 hook 기록
+
+기존 run evidence는 쓰기 없이 조회할 수 있습니다.
+
+```bash
+aeg evidence list --limit 20
+aeg evidence show <run-id>
+aeg evidence list --json
+aeg evidence show <run-id> --json
+```
+
+`list`는 최신순으로 run id, 시각, 판정 요약과 artifact 존재 여부를 보여 줍니다. `show`는 100개가 넘는 필드를 평면으로 덤프하지 않고 summary, decision, artifacts, provenance, integrity 섹션으로 나눕니다. 조회 결과는 credential 형태 필터를 거치며 `.aeg`를 수정하지 않습니다. 손상된 ledger line이나 누락 artifact는 `UNREADABLE`로 표시합니다.
+
+라이브 `aeg hook-run` 판정은 일반 run ledger와 섞지 않고 `.aeg/hook_ledger.jsonl`에 append-only로 기록합니다. 기록에는 substrate, tool name, 판정/permission, fail-closed 여부, reason code, exit code와 hash chain만 포함되며 raw `tool_input`은 저장하지 않습니다. 다음 명령으로 함께 조회하고 chain을 검증할 수 있습니다.
+
+```bash
+aeg evidence list
+aeg evidence show <hook-record-hash-prefix>
+aeg evidence verify-hooks
+```
+
+hook 기록에 실패해도 이미 계산된 `permissionDecision`과 exit code는 바뀌지 않습니다. 대신 응답 reason code에 `hook_decision_recording_failed`가 추가됩니다. 이는 기록 장치 장애가 정상 판정을 임의로 allow/deny로 재분류하지 않도록 판정 브레인과 recorder를 분리하기 위한 선택입니다. 단, 기존 판정 자체가 fail-closed deny인 경우에는 그대로 deny를 유지합니다.
+
+두 ledger의 hash chain은 중간 레코드의 변경·삭제를 탐지하기 위한 tamper-evident 장치입니다. 외부 anchor가 없는 로컬 파일이므로 마지막 레코드와 파일 전체를 함께 삭제하는 공격까지 증명하는 tamper-proof 저장소는 아닙니다.
 
 ## 어떻게 작동하나
 

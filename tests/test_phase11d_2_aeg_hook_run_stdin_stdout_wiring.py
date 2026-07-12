@@ -498,7 +498,9 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertFalse(evidence["hook_installed"])
         self.assertFalse(evidence["claude_code_execution_performed"])
         self.assertFalse(evidence["tool_execution_performed"])
-        self.assertFalse(evidence["store_write_performed"])
+        self.assertTrue(evidence["store_write_performed"])
+        self.assertEqual(evidence["store_write_scope"], ".aeg/hook_ledger.jsonl")
+        self.assertFalse(evidence["raw_tool_input_stored_in_hook_ledger"])
         self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
         self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
 

@@ -200,7 +200,7 @@ def diagnose_hook_entrypoint_stdin_stdout_wiring() -> HookEntrypointStdinStdoutD
         text = py_file.read_text(encoding="utf-8")
         found = tuple(token for token in _STDIN_STDOUT_EXIT_TOKENS if token in text)
         if found:
-            matches[str(py_file.relative_to(src_root.parent))] = found
+            matches[py_file.relative_to(src_root.parent).as_posix()] = found
 
     wired = bool(matches)
     hook_run_exists = _hook_run_subcommand_exists(src_root)

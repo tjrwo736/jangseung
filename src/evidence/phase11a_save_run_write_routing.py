@@ -244,7 +244,7 @@ def build_save_run_write_request(
     """Build a deterministic pre-live request for a ``save_run`` target."""
 
     metadata = dict(payload_metadata or {})
-    target_relative_path = str(Path(STATE_DIR) / RUNS_DIR / run_id / target_filename)
+    target_relative_path = (Path(STATE_DIR) / RUNS_DIR / run_id / target_filename).as_posix()
     payload_digest = _payload_digest(payload=payload, payload_metadata=metadata)
     return SaveRunWriteRequest(
         request_id=request_id

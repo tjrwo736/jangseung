@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,17 @@ from src.evidence.mutation_boundary import (
 from src.law import apply_law
 from src.state import git
 from src.state.doctor import DoctorCheck, doctor_status, run_doctor
+from src.state.evidence_query import (
+    detail_as_json,
+    hook_detail_as_json,
+    hook_human_sections,
+    human_sections,
+    list_all_evidence,
+    load_hook_evidence,
+    load_run_evidence,
+    sanitize_for_display,
+)
+from src.state.hook_ledger import verify_hook_ledger
 from src.state.store import ensure_initialized, require_initialized, save_run
 
 
@@ -49,6 +61,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("task", help="task text to classify and gate")
     subparsers.add_parser("verify", help="verify latest evidence with deterministic replay")
+    evidence_parser = subparsers.add_parser(
+        "evidence",
+        help="inspect persisted evidence without modifying .aeg state",
+    )
+    evidence_subparsers = evidence_parser.add_subparsers(
+        dest="evidence_command",
+        required=True,
+    )
+    evidence_list_parser = evidence_subparsers.add_parser(
+        "list",
+        help="list persisted run evidence newest-first",
+    )
+    evidence_list_parser.add_argument("--limit", type=_positive_int, default=20)
+    evidence_list_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_show_parser = evidence_subparsers.add_parser(
+        "show",
+        help="show structured evidence and manifest details for one run",
+    )
+    evidence_show_parser.add_argument(
+        "evidence_id",
+        help="run id or an unambiguous hook record hash prefix",
+    )
+    evidence_show_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_verify_hooks_parser = evidence_subparsers.add_parser(
+        "verify-hooks",
+        help="verify the dedicated hook decision ledger hash chain",
+    )
+    evidence_verify_hooks_parser.add_argument("--json", action="store_true", dest="as_json")
     hook_run_parser = subparsers.add_parser(
         "hook-run",
         help=(
@@ -115,6 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "verify":
         return _cmd_verify(Path.cwd())
+    if args.command == "evidence":
+        if args.evidence_command == "list":
+            return _cmd_evidence_list(Path.cwd(), limit=args.limit, as_json=args.as_json)
+        if args.evidence_command == "show":
+            return _cmd_evidence_show(Path.cwd(), args.evidence_id, as_json=args.as_json)
+        if args.evidence_command == "verify-hooks":
+            return _cmd_evidence_verify_hooks(Path.cwd(), as_json=args.as_json)
     if args.command == "hook-run":
         return run_aeg_hook_run(
             stdin=sys.stdin,
@@ -168,6 +215,132 @@ def _cmd_doctor(cwd: Path) -> int:
     status = doctor_status(checks)
     _print_doctor_card(status, checks)
     return 1 if status == "FAIL" else 0
+
+
+def _cmd_evidence_list(cwd: Path, *, limit: int = 20, as_json: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        items = list_all_evidence(repo, limit=limit)
+    except Exception as exc:  # noqa: BLE001 - inspection errors must be reported, not crash.
+        if as_json:
+            print(json.dumps({"status": "FAIL", "error": str(exc), "items": []}, sort_keys=True))
+        else:
+            _print_card("Aegis evidence list", "FAIL", [("error", str(exc))])
+        return 1
+
+    summaries = [sanitize_for_display(item.to_summary()) for item in items]
+    status = "EMPTY" if not summaries else (
+        "DEGRADED" if any(item["readability"] == "UNREADABLE" for item in summaries) else "OK"
+    )
+    if as_json:
+        print(json.dumps({"status": status, "items": summaries}, ensure_ascii=True, sort_keys=True))
+        return 0
+
+    print("Aegis evidence list")
+    print(f"status: {status}")
+    if not summaries:
+        print("No persisted run evidence found.")
+        return 0
+    rows = []
+    for item in summaries:
+        artifact = item["artifacts"]
+        artifact_text = "/".join(
+            f"{name}:{'yes' if present else 'no'}"
+            for name, present in artifact.items()
+        )
+        decision = str(item["decision"])
+        if item["risk_level"]:
+            decision = f"{decision}/{item['risk_level']}"
+        rows.append(
+            (
+                str(item["kind"]).upper(),
+                str(item["id"]),
+                str(item["timestamp"]),
+                decision,
+                artifact_text,
+                str(item["readability"]),
+            )
+        )
+    _print_table(("TYPE", "ID", "TIMESTAMP", "DECISION", "ARTIFACTS", "READABILITY"), rows)
+    for item in summaries:
+        if item["error"]:
+            print(f"warning: {item['id']}: {item['error']}")
+    return 0
+
+
+def _cmd_evidence_show(cwd: Path, run_id: str, *, as_json: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        run_detail = load_run_evidence(repo, run_id)
+        hook_detail = None if run_detail is not None else load_hook_evidence(repo, run_id)
+    except Exception as exc:  # noqa: BLE001 - inspection errors must be reported, not crash.
+        if as_json:
+            print(json.dumps({"status": "FAIL", "id": run_id, "error": str(exc)}, sort_keys=True))
+        else:
+            _print_card("Aegis evidence show", "FAIL", [("id", run_id), ("error", str(exc))])
+        return 1
+
+    if run_detail is None and hook_detail is None:
+        payload = {"status": "NOT_FOUND", "id": run_id, "error": "evidence id not found"}
+        if as_json:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            _print_card(
+                "Aegis evidence show",
+                "NOT_FOUND",
+                [("id", run_id), ("error", "evidence id not found")],
+            )
+        return 1
+
+    detail = run_detail if run_detail is not None else hook_detail
+    assert detail is not None
+    if as_json:
+        payload = detail_as_json(run_detail) if run_detail is not None else hook_detail_as_json(hook_detail)
+        payload["status"] = "OK" if detail.readable else "UNREADABLE"
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0 if detail.readable else 1
+
+    print("Aegis evidence show")
+    print(f"status: {'OK' if detail.readable else 'UNREADABLE'}")
+    if not detail.readable:
+        identifier = detail.item.run_id if run_detail is not None else detail.item.identifier
+        error = detail.error if run_detail is not None else detail.item.error
+        print(f"id: {identifier}")
+        print(f"error: {sanitize_for_display(error or 'unreadable evidence')}")
+        return 1
+    sections = human_sections(run_detail) if run_detail is not None else hook_human_sections(hook_detail)
+    for section, rows in sections:
+        print(f"[{section}]")
+        for key, value in rows:
+            print(f"{key}: {_display_value(value)}")
+    return 0
+
+
+def _cmd_evidence_verify_hooks(cwd: Path, *, as_json: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        result = verify_hook_ledger(repo)
+    except Exception as exc:  # noqa: BLE001 - verification failures must be reported.
+        if as_json:
+            print(json.dumps({"status": "FAIL", "checks": [], "errors": [str(exc)]}, sort_keys=True))
+        else:
+            _print_card("Aegis evidence verify-hooks", "FAIL", [("error", str(exc))])
+        return 1
+    status = "PASS" if result.ok else "FAIL"
+    payload = {
+        "status": status,
+        "record_count": len(result.records),
+        "checks": list(result.checks),
+        "errors": list(result.errors),
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    else:
+        rows = [("record_count", str(payload["record_count"]))]
+        rows.extend(("check", check) for check in result.checks)
+        rows.extend(("error", error) for error in result.errors)
+        _print_card("Aegis evidence verify-hooks", status, rows)
+    return 0 if result.ok else 1
 
 
 def _cmd_run(
@@ -835,6 +1008,32 @@ def _list_count(value: object) -> int | str:
     if not isinstance(value, list):
         return ""
     return len(value)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def _display_value(value: object) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return str(value)
+
+
+def _print_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
 def _print_card(title: str, status: str, rows: list[tuple[str, str]], reasons: list[str] | None = None) -> None:

@@ -15,13 +15,15 @@ modified by this module):
 * fail-closed: any parse failure, missing/invalid field, unknown tool, or
   internal exception resolves to a ``deny`` JSON response. There is no code
   path where a failure resolves to ``allow``.
-* the reason string carries only decision codes and the tool name, never raw
-  ``tool_input`` content, so secrets in tool input are not echoed to stdout or
-  stderr.
+* the reason string and the dedicated hook ledger carry only decision codes
+  and the tool name, never raw ``tool_input`` content.
+* recording is append-only and tamper-evident.  A recording failure never
+  changes the permission decision or process exit code; it adds a safe reason
+  code to the response instead.
 
 This module does not install a hook, modify ``.claude/settings.json``, execute
-Claude Code itself, execute any tool, call a provider/model/network, or write
-Aegis state.
+Claude Code itself, execute any tool, or call a provider/model/network.  Its
+only Aegis state write is a decision-only record in ``.aeg/hook_ledger.jsonl``.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from src.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
 from src.evidence.hook_judgment_engine_alignment import (
     judge_pretooluse_with_aeg_engine,
 )
+from src.state.hook_ledger import HOOK_LEDGER_FILE, append_hook_decision_record
 
 PHASE11D_2_AEG_HOOK_RUN_VERSION = "phase11d_2_aeg_hook_run_stdin_stdout_wiring_v0"
 PHASE11D_2_COMPLETE_LABEL = (
@@ -62,6 +65,7 @@ SUBSTRATE_CODEX = "codex"
 CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON = (
     "codex_substrate_ask_not_enforced_upgraded_to_deny"
 )
+HOOK_DECISION_RECORDING_FAILED_REASON = "hook_decision_recording_failed"
 
 # Exit codes. Claude Code uses exit 2 as the hard-blocking deny path. Codex
 # consumes the JSON permissionDecision when the process exits 0, so Codex
@@ -94,6 +98,9 @@ class HookRunResult:
     hook_decision: str | None
     fail_closed: bool
     reason: str
+    reason_codes: tuple[str, ...]
+    tool_name: str
+    substrate: str
 
 
 def render_hook_response(
@@ -175,11 +182,12 @@ def render_hook_response(
         )
 
     permission_decision, mapped_exit_code, substrate_reason_codes = mapping
+    reason_codes = (*decision_reasons, *substrate_reason_codes)
     reason = _reason_string(
         permission_decision=permission_decision,
         hook_decision=hook_decision,
         tool_name=tool_name,
-        decision_reasons=(*decision_reasons, *substrate_reason_codes),
+        decision_reasons=reason_codes,
         substrate=effective_substrate,
     )
     stdout_json = _permission_decision_json(permission_decision, reason)
@@ -196,6 +204,9 @@ def render_hook_response(
         hook_decision=hook_decision,
         fail_closed=False,
         reason=reason,
+        reason_codes=reason_codes,
+        tool_name=tool_name,
+        substrate=effective_substrate,
     )
 
 
@@ -223,6 +234,19 @@ def run_aeg_hook_run(
         repo_root=repo_root,
         substrate=substrate,
     )
+    try:
+        append_hook_decision_record(
+            repo_root,
+            substrate=result.substrate,
+            tool_name=result.tool_name,
+            hook_decision=result.hook_decision,
+            permission_decision=result.permission_decision,
+            fail_closed=result.fail_closed,
+            reason_codes=result.reason_codes,
+            exit_code=result.exit_code,
+        )
+    except Exception:  # noqa: BLE001 - recording failure must not change the judgment.
+        result = _with_recording_failure(result)
     stdout.write(result.stdout_json + "\n")
     if result.stderr_text:
         stderr.write(result.stderr_text + "\n")
@@ -283,6 +307,7 @@ def build_aeg_hook_run_contract_evidence() -> dict[str, Any]:
         "fail_closed_exit_code_codex_substrate": EXIT_ALLOW_OR_ASK,
         "failure_ever_maps_to_allow": False,
         "raw_tool_input_echoed_in_reason": False,
+        "raw_tool_input_stored_in_hook_ledger": False,
         # This module builds the real I/O boundary only. It does not install a
         # hook, modify settings, or run Claude Code itself.
         "settings_json_modified": False,
@@ -290,9 +315,17 @@ def build_aeg_hook_run_contract_evidence() -> dict[str, Any]:
         "claude_code_execution_performed": False,
         "tool_execution_performed": False,
         "provider_model_network_implemented": False,
-        "store_write_performed": False,
-        "filesystem_mutation_by_hook_run": False,
+        "store_write_performed": True,
+        "store_write_scope": f".aeg/{HOOK_LEDGER_FILE}",
+        "hook_recording_append_only": True,
+        "hook_recording_tamper_evident_not_tamper_proof": True,
+        "recording_failure_changes_permission_decision": False,
+        "recording_failure_changes_exit_code": False,
+        "recording_failure_reason_code": HOOK_DECISION_RECORDING_FAILED_REASON,
+        "filesystem_mutation_by_hook_run": True,
         "write_authority_granted": False,
+        "executor_write_authority_granted": False,
+        "trusted_hook_recorder_write_authority": True,
         "safe_default": SAFE_DEFAULT,
         "live_executor_authority": LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     }
@@ -306,11 +339,12 @@ def _deny_result(
     extra_reason_codes: tuple[str, ...] = (),
     substrate: str = SUBSTRATE_CLAUDE_CODE,
 ) -> HookRunResult:
+    reason_codes = (reason_code, *extra_reason_codes)
     reason = _reason_string(
         permission_decision=PERMISSION_DENY,
         hook_decision=hook_decision,
         tool_name=None,
-        decision_reasons=(reason_code, *extra_reason_codes),
+        decision_reasons=reason_codes,
         substrate=substrate,
     )
     exit_code = _process_exit_code_for_substrate(
@@ -325,6 +359,32 @@ def _deny_result(
         hook_decision=hook_decision,
         fail_closed=fail_closed,
         reason=reason,
+        reason_codes=reason_codes,
+        tool_name="unknown",
+        substrate=substrate,
+    )
+
+
+def _with_recording_failure(result: HookRunResult) -> HookRunResult:
+    reason_codes = (*result.reason_codes, HOOK_DECISION_RECORDING_FAILED_REASON)
+    reason = _reason_string(
+        permission_decision=result.permission_decision,
+        hook_decision=result.hook_decision,
+        tool_name=result.tool_name,
+        decision_reasons=reason_codes,
+        substrate=result.substrate,
+    )
+    return HookRunResult(
+        stdout_json=_permission_decision_json(result.permission_decision, reason),
+        stderr_text=reason if result.stderr_text else "",
+        exit_code=result.exit_code,
+        permission_decision=result.permission_decision,
+        hook_decision=result.hook_decision,
+        fail_closed=result.fail_closed,
+        reason=reason,
+        reason_codes=reason_codes,
+        tool_name=result.tool_name,
+        substrate=result.substrate,
     )
 
 
@@ -399,6 +459,7 @@ __all__ = [
     "CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON",
     "EXIT_ALLOW_OR_ASK",
     "EXIT_BLOCK",
+    "HOOK_DECISION_RECORDING_FAILED_REASON",
     "PERMISSION_ALLOW",
     "PERMISSION_ASK",
     "PERMISSION_DENY",
