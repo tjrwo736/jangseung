@@ -981,9 +981,9 @@ def _ledger_entry_base(
         "status": evidence["status"],
         "head_sha": evidence["head_sha"],
         "tree_sha": evidence["tree_sha"],
-        "evidence_path": str(evidence_path.relative_to(repo)),
-        "run_path": str(run_path.relative_to(repo)),
-        "manifest_path": str(manifest_path.relative_to(repo)),
+        "evidence_path": evidence_path.relative_to(repo).as_posix(),
+        "run_path": run_path.relative_to(repo).as_posix(),
+        "manifest_path": manifest_path.relative_to(repo).as_posix(),
         "manifest_hash": "",
     }
 

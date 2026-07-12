@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.contracts import LEDGER_FILE, RUNS_DIR
+from src.state.hook_ledger import HookLedgerItem, find_hook_record, read_hook_ledger
 from src.state.store import state_root
 
 REDACTED_CREDENTIAL = "[REDACTED_CREDENTIAL]"
@@ -85,6 +86,15 @@ class RunEvidenceDetail:
         return self.item.readable and self.error is None
 
 
+@dataclass(frozen=True)
+class HookEvidenceDetail:
+    item: HookLedgerItem
+
+    @property
+    def readable(self) -> bool:
+        return self.item.readable
+
+
 def list_run_evidence(repo_root: str | Path, *, limit: int | None = None) -> list[RunEvidenceItem]:
     """Return ledger entries newest-first without mutating state."""
 
@@ -104,6 +114,21 @@ def list_run_evidence(repo_root: str | Path, *, limit: int | None = None) -> lis
             break
         items.append(_parse_ledger_line(repo_root, line_number, line))
     return items
+
+
+def list_all_evidence(
+    repo_root: str | Path,
+    *,
+    limit: int | None = None,
+) -> list[RunEvidenceItem | HookLedgerItem]:
+    """Return run and hook evidence together, visually distinguishable by kind."""
+
+    items: list[RunEvidenceItem | HookLedgerItem] = [
+        *list_run_evidence(repo_root),
+        *reversed(read_hook_ledger(repo_root)),
+    ]
+    items.sort(key=_item_timestamp, reverse=True)
+    return items if limit is None else items[:limit]
 
 
 def load_run_evidence(repo_root: str | Path, run_id: str) -> RunEvidenceDetail | None:
@@ -126,6 +151,11 @@ def load_run_evidence(repo_root: str | Path, run_id: str) -> RunEvidenceDetail |
             )
         return RunEvidenceDetail(item=item, evidence=evidence, manifest=manifest)
     return None
+
+
+def load_hook_evidence(repo_root: str | Path, identifier: str) -> HookEvidenceDetail | None:
+    item = find_hook_record(repo_root, identifier)
+    return None if item is None else HookEvidenceDetail(item=item)
 
 
 def sanitize_for_display(value: Any, *, key: str | None = None) -> Any:
@@ -163,6 +193,18 @@ def detail_as_json(detail: RunEvidenceDetail) -> dict[str, Any]:
             "artifacts": detail.item.to_summary()["artifacts"],
             "evidence": detail.evidence,
             "manifest": detail.manifest,
+        }
+    )
+
+
+def hook_detail_as_json(detail: HookEvidenceDetail) -> dict[str, Any]:
+    return sanitize_for_display(
+        {
+            "kind": "hook",
+            "id": detail.item.identifier,
+            "readability": "READABLE" if detail.readable else "UNREADABLE",
+            "error": detail.item.error,
+            "record": detail.item.record,
         }
     )
 
@@ -223,6 +265,46 @@ def human_sections(detail: RunEvidenceDetail) -> list[tuple[str, list[tuple[str,
                 ("manifest_hash", entry.get("manifest_hash", manifest.get("manifest_hash", ""))),
                 ("ledger_sequence_number", evidence.get("ledger_sequence_number", "")),
                 ("ledger_chain_hash", evidence.get("ledger_chain_hash", "")),
+            ],
+        ),
+    ]
+    return [
+        (name, [(key, sanitize_for_display(value, key=key)) for key, value in rows])
+        for name, rows in sections
+    ]
+
+
+def hook_human_sections(detail: HookEvidenceDetail) -> list[tuple[str, list[tuple[str, Any]]]]:
+    record = detail.item.record or {}
+    sections = [
+        (
+            "summary",
+            [
+                ("kind", "hook"),
+                ("record_hash", record.get("record_hash", "")),
+                ("sequence_number", record.get("sequence_number", "")),
+                ("timestamp", record.get("timestamp", "")),
+            ],
+        ),
+        (
+            "decision",
+            [
+                ("substrate", record.get("substrate", "")),
+                ("tool_name", record.get("tool_name", "unknown")),
+                ("hook_decision", record.get("hook_decision", "")),
+                ("permission_decision", record.get("permission_decision", "")),
+                ("fail_closed", record.get("fail_closed", "")),
+                ("reason_codes", record.get("reason_codes", [])),
+                ("exit_code", record.get("exit_code", "")),
+            ],
+        ),
+        (
+            "integrity",
+            [
+                ("record_version", record.get("record_version", "")),
+                ("previous_record_hash", record.get("previous_record_hash", "")),
+                ("record_hash", record.get("record_hash", "")),
+                ("claim", "tamper-evident, not tamper-proof"),
             ],
         ),
     ]
@@ -300,13 +382,26 @@ def _display_path(path: Path | None) -> str:
     return "" if path is None else path.as_posix()
 
 
+def _item_timestamp(item: RunEvidenceItem | HookLedgerItem) -> str:
+    if isinstance(item, HookLedgerItem):
+        record = item.record or {}
+        return str(record.get("timestamp", ""))
+    entry = item.entry or {}
+    return str(entry.get("recorded_at", ""))
+
+
 __all__ = [
     "REDACTED_CREDENTIAL",
+    "HookEvidenceDetail",
     "RunEvidenceDetail",
     "RunEvidenceItem",
     "detail_as_json",
+    "hook_detail_as_json",
+    "hook_human_sections",
     "human_sections",
+    "list_all_evidence",
     "list_run_evidence",
+    "load_hook_evidence",
     "load_run_evidence",
     "sanitize_for_display",
 ]
