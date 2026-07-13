@@ -21,7 +21,7 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertEqual(pyproject["project"]["name"], "jangseung")
         self.assertEqual(pyproject["project"]["version"], "0.1.0")
         self.assertEqual(pyproject["project"]["dependencies"], [])
-        self.assertEqual(pyproject["project"]["scripts"]["aeg"], "src.cli:main")
+        self.assertEqual(pyproject["project"]["scripts"]["aeg"], "src.cli.main:main")
         self.assertEqual(
             pyproject["tool"]["setuptools"]["packages"]["find"]["include"],
             ["src", "src.*"],

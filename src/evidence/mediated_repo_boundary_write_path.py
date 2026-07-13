@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -171,6 +172,15 @@ def _resolve_windows_repo_boundary_path(
     repo_root: str | Path,
     submitted_target: str | Path,
 ) -> RepoBoundaryPathResolution | None:
+    # On a real Windows host, defer to the generic filesystem resolver in
+    # resolve_repo_boundary_path so that Path.resolve() canonicalizes the target
+    # (expanding 8.3 short names such as ``RUNNER~1`` -> ``runneradmin`` and
+    # resolving symlinks). This purely-lexical PureWindowsPath branch only models
+    # Windows-style path strings when analyzed on a non-Windows host, where
+    # Path.resolve() cannot interpret a ``C:\\`` drive path.
+    if os.name == "nt":
+        return None
+
     repo_root_value = str(repo_root)
     submitted_value = str(submitted_target)
     repo_root_path = PureWindowsPath(repo_root_value)

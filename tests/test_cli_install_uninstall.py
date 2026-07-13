@@ -499,7 +499,11 @@ class SubprocessInstallTests(unittest.TestCase):
     def _env(self):
         import os
 
-        return {"PYTHONPATH": str(REPO_ROOT), "PATH": os.environ.get("PATH", "")}
+        # Inherit the full parent environment and only override PYTHONPATH.
+        # Building a bare env drops Windows essentials like SystemRoot, without
+        # which CPython <= 3.10 fatally fails at interpreter startup
+        # ("_Py_HashRandomization_Init: failed to get random numbers").
+        return {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
     def test_subprocess_install_creates_working_hook_command(self):
         with tempfile.TemporaryDirectory() as tmp:
