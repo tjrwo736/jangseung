@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -510,7 +511,11 @@ class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
 
     def _invoke(self, stdin_text: str, extra_args: list[str] | None = None):
         with tempfile.TemporaryDirectory() as tmp:
-            env = {"PYTHONPATH": str(REPO_ROOT), "PATH": __import__("os").environ.get("PATH", "")}
+            # Inherit the full parent environment and only override PYTHONPATH.
+            # A bare env drops Windows essentials like SystemRoot, without which
+            # CPython <= 3.10 fatally fails at interpreter startup
+            # ("_Py_HashRandomization_Init: failed to get random numbers").
+            env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
             command = [sys.executable, "-m", "src.cli", "hook-run"]
             command.extend(extra_args or [])
             proc = subprocess.run(

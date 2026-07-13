@@ -56,7 +56,11 @@ class Phase10E4OutsideRepoFixture:
 class Phase10E4MediatedOutsideRepoWriteDenialTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        self.fixture = Phase10E4OutsideRepoFixture(Path(self.tempdir.name))
+        # Resolve the temp root so every derived path is canonical (long) form.
+        # On Windows tempfile yields 8.3 short names (e.g. RUNNER~1), which do
+        # not compare equal/relative to the .resolve()d (long) form used in
+        # assertions such as ``self.fixture.repo.resolve()``.
+        self.fixture = Phase10E4OutsideRepoFixture(Path(self.tempdir.name).resolve())
 
     def tearDown(self):
         self.tempdir.cleanup()

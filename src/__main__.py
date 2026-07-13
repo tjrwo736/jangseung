@@ -1,6 +1,6 @@
 """Run Aegis as ``python -m src``."""
 
-from src.cli import main
+from src.cli.main import main
 
 
 if __name__ == "__main__":

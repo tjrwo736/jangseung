@@ -27,7 +27,7 @@ Repository = "https://github.com/tjrwo736/jangseung"
 Issues = "https://github.com/tjrwo736/jangseung/issues"
 
 [project.scripts]
-aeg = "src.cli:main"
+aeg = "src.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
