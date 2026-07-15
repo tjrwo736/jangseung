@@ -1,4 +1,4 @@
-![장승(Jangseung) — 코딩 에이전트의 문지기](docs/assets/jangseung-hero.png)
+![장승(Jangseung) — 코딩 에이전트의 문지기](https://raw.githubusercontent.com/tjrwo736/jangseung/main/docs/assets/jangseung-hero.png)
 
 # 장승(Jangseung) — AI 코딩 에이전트를 위한 방패
 
@@ -95,16 +95,14 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 
 ## 설치
 
-현재 PyPI에 공개 배포되어 있지 않습니다. 소스에서 설치합니다 (로컬 클론).
+장승(Jangseung)은 PyPI에 배포되어 있습니다. `pip`으로 설치합니다.
 
 ```bash
-git clone https://github.com/tjrwo736/jangseung.git
-cd jangseung
 # 가상환경 생성 (특히 macOS/최신 Linux 배포판에서 필요 — 시스템 Python에 직접 설치가 막힐 수 있습니다)
 python -m venv venv
 source venv/bin/activate
 # Windows(PowerShell)는: venv\Scripts\Activate.ps1
-python -m pip install -e .
+pip install jangseung
 ```
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
@@ -144,6 +142,22 @@ aeg uninstall
 ```
 
 `aeg uninstall`은 `.claude/settings.json`에서 장승(Jangseung)이 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
+
+### 소스에서 설치 (개발/기여용)
+
+개발하거나 기여하려면 저장소를 클론해서 editable install 합니다.
+
+```bash
+git clone https://github.com/tjrwo736/jangseung.git
+cd jangseung
+# 가상환경 생성 (특히 macOS/최신 Linux 배포판에서 필요 — 시스템 Python에 직접 설치가 막힐 수 있습니다)
+python -m venv venv
+source venv/bin/activate
+# Windows(PowerShell)는: venv\Scripts\Activate.ps1
+python -m pip install -e .
+```
+
+이후 `aeg install` 사용법은 위와 동일합니다.
 
 ## Evidence 조회와 라이브 hook 기록
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jangseung"
-version = "0.1.0"
+version = "0.1.1"
 description = "Contract-first local runtime for the Jangseung CLI, including the Claude Code PreToolUse governance hook"
 readme = "README.md"
 requires-python = ">=3.10"
