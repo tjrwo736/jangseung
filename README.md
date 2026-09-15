@@ -79,8 +79,8 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 | 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
 | 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow (Windows 네이티브 hook exit code 처리 포함 실측) |
 | 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
-| 지원됨 (소스 수정본) | Codex 제거: `aeg uninstall --target codex`; 다른 hook과 TOML 설정/주석 보존, diff 확인과 백업 |
-| 지원됨 (소스 수정본) | 프로젝트 내부 일반 파일의 제한된 셸 읽기: `cat`, `head`/`tail`, 출력 전용 `sed -n`, `rg --no-config`, `Get-Content` 및 단순 출력 pipeline |
+| 지원됨 (0.1.2부터) | Codex 제거: `aeg uninstall --target codex`; 다른 hook과 TOML 설정/주석 보존, diff 확인과 백업 |
+| 지원됨 (0.1.2부터) | 프로젝트 내부 일반 파일의 제한된 셸 읽기: `cat`, `head`/`tail`, 출력 전용 `sed -n`, `rg --no-config`, `Get-Content` 및 단순 출력 pipeline |
 | 지원됨 | Codex substrate에서 `ask`/`defer`를 `deny`로 격상: Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 실측 결과 반영 |
 | 부분 지원 / 확인 중 | Bash 동적/난독화 명령: 변수 치환, 명령 치환, 중첩 셸, `find -delete`/`xargs` 등은 정밀 판별하지 못하면 자동 허용하지 않고 `ask`/`defer`로 보냄 (Codex substrate에서는 `deny`로 격상) |
 | 부분 지원 / 확인 중 | PowerShell 동적/복잡 명령: target 변수, 동적 command invocation, 미지원 cmdlet, 복잡한 pipeline은 정밀 판별을 주장하지 않고 `ask`/`defer`로 보냄 |
@@ -88,11 +88,11 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 | 부분 지원 / 확인 중 | macOS: 테스터 검증 진행 중 (결과 대기) |
 | 지원 안 됨 (로드맵) | 파일 내용 안의 실제 secret 값 스캔: 현재는 경로와 의도 기반 판정 |
 | 지원 안 됨 (로드맵) | 사용자 정의 정책: 현재 정책은 하드코딩 |
-| 지원 안 됨 | Codex에서 `Bash` tool name으로 들어오는 PowerShell 쓰기/삭제 명령(예: `Remove-Item` 등)의 구조적 파싱. 제한된 `Get-Content` 읽기는 소스 수정본에서 지원 |
+| 지원 안 됨 | Codex에서 `Bash` tool name으로 들어오는 PowerShell 쓰기/삭제 명령(예: `Remove-Item` 등)의 구조적 파싱. 제한된 `Get-Content` 읽기는 0.1.2부터 지원 |
 | 지원 안 됨 | `@` 파일 참조처럼 tool call을 거치지 않고 모델 컨텍스트로 직접 읽히는 내용 |
 | 지원 안 됨 | 이미 허용된 명령이 내부에서 실행하는 하위 프로세스의 모든 행동 추적 |
 | 지원 안 됨 | 글로벌 설치: `~/.claude`, `~/.codex` 설치는 지원하지 않음 |
-| 지원 안 됨 | PyPI 공개 배포: 현재는 소스 설치만 지원 |
+| 지원됨 | PyPI 공개 배포: `python -m pip install jangseung` |
 | 지원 안 됨 | OS 수준 격리/샌드박스 |
 
 ## 설치
@@ -108,6 +108,12 @@ pip install jangseung
 ```
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
+
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이 포함됩니다.
+
+```bash
+python -m pip install --upgrade jangseung
+```
 
 ```bash
 cd /path/to/your-project
@@ -145,7 +151,7 @@ aeg uninstall
 
 `aeg uninstall`은 `.claude/settings.json`에서 장승(Jangseung)이 추가한 hook만 찾아서 제거합니다. 다른 hook이나 다른 설정 항목은 건드리지 않습니다. 이 역시 백업 후 확인을 받습니다.
 
-Codex 제거는 설치 대상과 맞춰 실행합니다 (이 수정은 아직 PyPI 0.1.1에 포함되지 않았습니다).
+Codex 제거는 설치 대상과 맞춰 실행합니다 (0.1.2 이상 필요).
 
 ```bash
 aeg uninstall --target codex
@@ -157,7 +163,7 @@ aeg uninstall --target codex --path /path/to/your-project
 
 제거 명령 자체가 AI의 tool call로 실행되면 장승에 의해 차단될 수 있으므로, 제거는 사용자가 일반 터미널에서 실행하세요. `aeg uninstall`은 hook 등록을 해제하는 명령이며 Python 패키지를 삭제하지 않습니다.
 
-### Markdown 파일 읽기 (소스 수정본)
+### Markdown 파일 읽기 (0.1.2부터)
 
 프로젝트 안에 실제로 존재하는 일반 파일이면 다음과 같은 읽기를 허용합니다.
 
@@ -224,7 +230,7 @@ hook 기록에 실패해도 이미 계산된 `permissionDecision`과 exit code�
 
 ## 요구사항 / 현재 상태
 
-- **Claude Code와 Codex에서 검증됨**: Linux/WSL과 Windows 네이티브 양쪽에서 실제 Claude Code 세션과 Codex CLI 세션으로 주요 PreToolUse hook 경로가 정상 작동하는 것을 확인했습니다. Windows에서는 각 substrate의 실행 방식 차이(Claude Code hook command 실행 형태, Codex deny 응답의 종료 코드 처리, PowerShell tool 등)에 맞춰 별도로 대응했습니다. `aeg install --target claude-code`(기본값) 또는 `aeg install --target codex`로 각각 설치합니다. 두 substrate는 판정 방식이 일부 다릅니다 — Claude Code에서는 애매한 작업에 확인을 요청(ask)하지만, Codex에서는 그 확인 요청이 실행을 막는 안전망으로 동작하지 않는다는 것이 실측으로 확인되어, Codex에서는 애매한 경우 더 엄격하게 차단(deny)합니다. 다만 Codex에서 `Bash` tool name으로 전달되는 PowerShell 쓰기/삭제 명령은 아직 구조적으로 파싱하지 않습니다. 제한된 `Get-Content` 읽기는 소스 수정본에서 지원하며, 이번 수정은 자동 회귀 테스트와 hook CLI로 검증했습니다. 제보자의 실제 앱 버전에서 재확인이 필요합니다.
+- **Claude Code와 Codex에서 검증됨**: Linux/WSL과 Windows 네이티브 양쪽에서 실제 Claude Code 세션과 Codex CLI 세션으로 주요 PreToolUse hook 경로가 정상 작동하는 것을 확인했습니다. Windows에서는 각 substrate의 실행 방식 차이(Claude Code hook command 실행 형태, Codex deny 응답의 종료 코드 처리, PowerShell tool 등)에 맞춰 별도로 대응했습니다. `aeg install --target claude-code`(기본값) 또는 `aeg install --target codex`로 각각 설치합니다. 두 substrate는 판정 방식이 일부 다릅니다 — Claude Code에서는 애매한 작업에 확인을 요청(ask)하지만, Codex에서는 그 확인 요청이 실행을 막는 안전망으로 동작하지 않는다는 것이 실측으로 확인되어, Codex에서는 애매한 경우 더 엄격하게 차단(deny)합니다. 다만 Codex에서 `Bash` tool name으로 전달되는 PowerShell 쓰기/삭제 명령은 아직 구조적으로 파싱하지 않습니다. 제한된 `Get-Content` 읽기는 0.1.2부터 지원하며, 이번 수정은 자동 회귀 테스트와 hook CLI로 검증했습니다. 제보자의 실제 앱 버전에서 재확인이 필요합니다.
 - **정책은 현재 하드코딩되어 있습니다.** 사용자가 위험 기준을 직접 조정하는 기능은 아직 없습니다 (로드맵 예정).
 - **비밀(secret) 판정은 경로와 의도 기반입니다.** `.env` 같은 파일에 쓰는 시도 자체는 막지만, 파일 내용에서 실제 API 키/비밀번호 값을 스캔하는 기능은 아직 없습니다 (로드맵 예정).
 - Python 3.10 이상이 필요합니다.

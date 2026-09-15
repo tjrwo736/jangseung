@@ -1,6 +1,6 @@
 # Read-only shell and Codex uninstall fixes
 
-Status: source changes; not yet a PyPI release. Based on 0.1.1 / main
+Release target: 0.1.2. These fixes are not included in 0.1.1. Based on 0.1.1 / main
 `1e99f5c55346b8658d51fe7e924d43d388c5bbbe`.
 
 ## Reproductions
