@@ -20,6 +20,8 @@ from src.cli.install import (
     "aeg hook-run --substrate codex", "/usr/bin/aeg hook-run --substrate codex",
     "'/home/some user/bin/aeg' hook-run --substrate codex",
     "C:\\Python\\Scripts\\aeg.exe hook-run --substrate codex",
+    "C:\\Python\\Scripts\\aeg.EXE hook-run --substrate codex",
+    '"C:\\Program Files\\Python\\PYTHON.EXE" -m src.cli hook-run --substrate codex',
     '"C:\\Program Files\\Python\\python.exe" -m src.cli hook-run --substrate codex',
     "C:\\Program Files\\Python\\python.exe -m src.cli hook-run --substrate codex",
     "/usr/bin/python3.10 -m src.cli hook-run --substrate codex",
@@ -99,6 +101,7 @@ command_windows = "aeg hook-run --substrate codex"
 
 @pytest.mark.parametrize("executable,args,removed", [
     ("aeg.exe", ["hook-run", "--substrate", "codex"], 1),
+    ("AEG.EXE", ["hook-run", "--substrate", "codex"], 1),
     ("python.exe", ["-m", "src.cli", "hook-run", "--substrate", "codex"], 1),
     ("other.exe", ["-m", "src.cli", "hook-run"], 0),
     ("aeg.exe", ["other", "hook-run"], 0),

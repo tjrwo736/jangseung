@@ -496,6 +496,8 @@ def _is_managed_codex_hook(hook: dict[str, Any]) -> bool:
     args = hook.get("args")
     if isinstance(command, str) and _is_string_sequence(args):
         name = command.replace("\\", "/").rsplit("/", 1)[-1]
+        if name.lower().endswith(".exe"):
+            name = name.lower()
         prefix = () if name in {"aeg", "aeg.exe"} else ("-m", "src.cli")
         if prefix and not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
             return False
@@ -519,6 +521,8 @@ def _is_managed_codex_hook(hook: dict[str, Any]) -> bool:
             return False
         executable_path = match[1].strip().strip("\"'").replace("\\", "/")
         name = executable_path.rsplit("/", 1)[-1]
+        if name.lower().endswith(".exe"):
+            name = name.lower()
         if executable_path != name and not (
             executable_path.startswith("/") or re.match(r"^[A-Za-z]:/", executable_path)
         ):
