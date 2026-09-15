@@ -41,10 +41,11 @@ because the agent's own attempt to run uninstall may itself be gated.
 
 ## Verification scope
 
-Local Windows / Python 3.14 full suite: **985 passed, 11 skipped**, including
-120 added cases (119 passed and one symlink case skipped). The wheel build
-contains the new classifier and declares the TOML dependency. CI separately
-checks Windows/Linux and Python 3.10-3.13.
+The full suite and added regressions run locally on Windows / Python 3.14.
+PR CI carries per-version results for Windows/Linux and Python 3.10-3.13.
+Windows executable suffixes are matched case-insensitively, including `aeg.EXE`
+returned by PATH lookup on hosted runners. The wheel build contains the new
+classifier and declares the TOML dependency.
 
 Regression tests cover safe reads, denied write/execution options, protected and
 outside paths, symlinks, Windows path syntax, Unicode/space paths, real hook CLI
