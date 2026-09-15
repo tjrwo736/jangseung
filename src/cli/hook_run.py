@@ -111,8 +111,9 @@ def render_hook_response(
 ) -> HookRunResult:
     """Render a PreToolUse hook response from untrusted stdin text.
 
-    Pure and side-effect free: performs no stream or filesystem I/O so it can be
-    exercised directly in tests. Every failure mode returns a ``deny`` JSON.
+    Side-effect free: performs no stream I/O or filesystem writes. Path gates
+    inspect filesystem metadata; shell-read allow requires existing regular
+    files. Every failure mode returns a ``deny`` JSON.
     """
 
     effective_substrate = _normalize_substrate(substrate)

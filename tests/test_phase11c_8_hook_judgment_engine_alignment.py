@@ -891,8 +891,9 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._judge_bash(command).hook_decision, DENY)
 
-    def test_safe_bash_stays_ask_no_false_positive(self):
-        for command in ("pwd", "ls -la", "git status", "cat README.md", "echo x > src/app.py"):
+    def test_unclassified_bash_stays_ask_no_false_positive(self):
+        # Known file reads now have a separate positive classification.
+        for command in ("pwd", "ls -la", "git status", "echo x > src/app.py"):
             with self.subTest(command=command):
                 decision = self._judge_bash(command)
                 self.assertEqual(decision.hook_decision, DEFER)
