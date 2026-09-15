@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 import difflib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -439,10 +440,21 @@ def cmd_uninstall(
     base_dir: str | Path,
     *,
     assume_yes: bool = False,
+    target: str = TARGET_CLAUDE_CODE,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
     out = output_stream if output_stream is not None else sys.stdout
+    try:
+        normalized_target = normalize_install_target(target)
+    except ValueError as exc:
+        _write(out, f"aeg uninstall: aborted — {exc}")
+        return 2
+    if normalized_target == TARGET_CODEX:
+        return _cmd_uninstall_codex(
+            base_dir, assume_yes=assume_yes,
+            input_stream=input_stream, output_stream=out,
+        )
     path = settings_path(base_dir)
     data, existed, error = load_settings(path)
     if error is not None:
@@ -472,6 +484,128 @@ def cmd_uninstall(
     backup = _backup_file(path)
     _write(out, f"aeg uninstall: backed up existing settings to {backup}")
     path.write_text(after_text, encoding="utf-8")
+    _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
+    return 0
+
+
+def _is_managed_codex_hook(hook: dict[str, Any]) -> bool:
+    """Recognize generated argv, never a shell command merely mentioning aeg."""
+    if hook.get("type") != "command":
+        return False
+    command = hook.get("command")
+    args = hook.get("args")
+    if isinstance(command, str) and _is_string_sequence(args):
+        name = command.replace("\\", "/").rsplit("/", 1)[-1]
+        prefix = () if name in {"aeg", "aeg.exe"} else ("-m", "src.cli")
+        if prefix and not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
+            return False
+        return tuple(args) in {(*prefix, "hook-run"), (*prefix, "hook-run", "--substrate", "codex")}
+    # Generated legacy strings include unquoted Windows paths with spaces.
+    # Require the executable + exact subcommand/module suffix and nothing else.
+    executable = r'(?:"[^"\r\n]+"|\'[^\'\r\n]+\'|[^\r\n;&|<>`$"\']+?)'
+    pattern = re.compile(
+        rf"^({executable})\s+(?:(-m\s+src\.cli)\s+)?hook-run"
+        r"(?:\s+--substrate\s+codex)?\s*$"
+    )
+    recognized: list[bool] = []
+    for field in ("command", "command_windows"):
+        value = hook.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return False
+        match = pattern.fullmatch(value.strip())
+        if not match:
+            return False
+        executable_path = match[1].strip().strip("\"'").replace("\\", "/")
+        name = executable_path.rsplit("/", 1)[-1]
+        if executable_path != name and not (
+            executable_path.startswith("/") or re.match(r"^[A-Za-z]:/", executable_path)
+        ):
+            return False
+        recognized.append((match[2] is None and name in {"aeg", "aeg.exe"}) or (
+            match[2] is not None and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name)
+        ))
+    return bool(recognized) and all(recognized)
+
+
+def build_uninstalled_codex_config_text(current_text: str) -> tuple[str, int]:
+    """Remove only managed hooks using a comment-preserving TOML syntax tree."""
+    import tomlkit
+    from tomlkit.exceptions import ParseError
+
+    try:
+        data = tomlkit.parse(current_text)
+    except ParseError as exc:
+        raise InstallStructureError("invalid Codex TOML; repair it before uninstalling") from exc
+    hooks = data.get("hooks")
+    if hooks is None:
+        return current_text, 0
+    if not isinstance(hooks, dict):
+        raise InstallStructureError("'hooks' is not a TOML table")
+    entries = hooks.get(HOOK_EVENT_NAME)
+    if entries is None:
+        return current_text, 0
+    if not isinstance(entries, list):
+        raise InstallStructureError("'hooks.PreToolUse' is not a TOML array")
+    removed = 0
+    for index in range(len(entries) - 1, -1, -1):
+        entry = entries[index]
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            raise InstallStructureError("unexpected Codex PreToolUse hook structure")
+        nested = entry["hooks"]
+        previous_count = len(nested)
+        for hook_index in range(len(nested) - 1, -1, -1):
+            hook = nested[hook_index]
+            if not isinstance(hook, dict):
+                raise InstallStructureError("unexpected Codex command hook structure")
+            if _is_managed_codex_hook(hook.unwrap()):
+                del nested[hook_index]
+                removed += 1
+        if previous_count and not nested:
+            del entries[index]
+    if not removed:
+        return current_text, 0
+    if not entries:
+        del hooks[HOOK_EVENT_NAME]
+    if not hooks:
+        del data["hooks"]
+    return tomlkit.dumps(data), removed
+
+
+def _cmd_uninstall_codex(
+    base_dir: str | Path, *, assume_yes: bool,
+    input_stream: TextIO | None, output_stream: TextIO,
+) -> int:
+    path = codex_config_path(base_dir)
+    before, existed, error = _load_text_file(path)
+    out = output_stream
+    if error:
+        _write(out, f"aeg uninstall: aborted — {error}")
+        return 1
+    if not existed:
+        _write(out, f"aeg uninstall: no {path}; nothing to uninstall.")
+        return 0
+    try:
+        after, removed = build_uninstalled_codex_config_text(before)
+    except InstallStructureError as exc:
+        _write(out, f"aeg uninstall: aborted — {exc}")
+        return 1
+    if not removed:
+        _write(out, "aeg uninstall: no Aegis Codex hook found; nothing to remove.")
+        return 0
+    _write(out, f"aeg uninstall: will remove {removed} Aegis hook entry(ies) from {path}")
+    _write_diff(out, before, after, path)
+    if not assume_yes and not _confirm(input_stream, out):
+        _write(out, "aeg uninstall: cancelled; no changes written.")
+        return 0
+    try:
+        backup = _backup_file(path)
+        _write(out, f"aeg uninstall: backed up existing config to {backup}")
+        path.write_text(after, encoding="utf-8")
+    except OSError as exc:
+        _write(out, f"aeg uninstall: failed to back up or write Codex config: {exc}")
+        return 1
     _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
     return 0
 

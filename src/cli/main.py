@@ -132,13 +132,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
-        help="remove the Aegis PreToolUse hook from project-local .claude/settings.json",
+        help="remove the Aegis PreToolUse hook from a project-local substrate config",
     )
     uninstall_parser.add_argument(
         "--path", default=None, help="project directory to uninstall from (default: cwd)"
     )
     uninstall_parser.add_argument(
         "--yes", action="store_true", help="skip the confirmation prompt"
+    )
+    uninstall_parser.add_argument(
+        "--target", choices=INSTALL_TARGETS, default=TARGET_CLAUDE_CODE,
+        help="hook substrate to remove: claude-code (default) or codex",
     )
 
     args = parser.parse_args(argv)
@@ -181,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_uninstall(
             Path(args.path) if args.path else Path.cwd(),
             assume_yes=args.yes,
+            target=args.target,
         )
     parser.error(f"unknown command: {args.command}")
     return 2
