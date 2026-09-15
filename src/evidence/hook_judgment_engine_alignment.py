@@ -1,6 +1,6 @@
 """Phase 11-C-8 hook judgment alignment with existing Aegis gates.
 
-This module is a pure adapter from validated Claude Code PreToolUse-shaped data
+This module is a side-effect-free adapter from validated Claude Code PreToolUse-shaped data
 to existing Aegis judgment components. It does not install hooks, emit hook
 output, execute tools, read secrets, write state, or grant authority.
 """
@@ -51,6 +51,7 @@ from src.evidence.claude_code_tool_call_mapping import RUN_COMMAND as MAPPING_RU
 from src.evidence.claude_code_tool_call_mapping import WRITE_FILE as MAPPING_WRITE_FILE
 from src.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
 from src.evidence.mediated_repo_boundary_write_path import resolve_repo_boundary_path
+from src.evidence.shell_read_only import classify_shell_read
 from src.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
@@ -128,6 +129,7 @@ _WRITE_LIKE_TOOL_NAMES = frozenset({"Write", "Edit", "apply_patch"})
 #    returned DENY before this check;
 #  - Bash maps to HOLD_CURRENT_STATE_CANDIDATE with impact NOT_CHECKED, so it is
 #    never a STRUCTURED_ACTION_CANDIDATE and never clearly-safe -> ask/defer;
+#    proven shell file reads have a separate allow gate before that fallback;
 #  - PowerShell uses its own target gate; read-only PowerShell is allowed only
 #    when the structural parser proves there is no write/delete target;
 #  - a NOT_CHECKED / NOT_CHECKED_NO_MUTATION impact (unclassifiable / unknown
@@ -280,10 +282,14 @@ def judge_pretooluse_with_aeg_engine(
     protected_path_gate = _protected_path_gate(request.target_paths)
     bash_target_gate = _bash_write_delete_target_gate(hook_input, repo_root)
     powershell_target_gate = _powershell_write_delete_target_gate(hook_input, repo_root)
+    shell_read_gate = _shell_read_only_gate(hook_input, repo_root)
     dangerous_bash_gate = {
         "risk_status": action_candidate.risk_status,
         "dangerous_bash": action_candidate.risk_status == BASH_DANGEROUS,
-        "unclassified_bash": action_candidate.risk_status == BASH_NOT_CHECKED,
+        "unclassified_bash": (
+            action_candidate.risk_status == BASH_NOT_CHECKED
+            and not shell_read_gate.get("classified")
+        ),
         "unclassified_bash_is_allow": False,
         "reasons": action_candidate.reasons,
     }
@@ -308,6 +314,7 @@ def judge_pretooluse_with_aeg_engine(
         "path_normalization": path_normalization,
         "bash_target_gate": bash_target_gate,
         "powershell_target_gate": powershell_target_gate,
+        "shell_read_gate": shell_read_gate,
         "dangerous_bash_gate": dangerous_bash_gate,
         "ignored_reported_only_fields": ignored_reported_only_fields,
         "reported_only_trusted_as_judgment_basis": False,
@@ -327,6 +334,7 @@ def judge_pretooluse_with_aeg_engine(
         classification=classification,
         bash_target_gate=bash_target_gate,
         powershell_target_gate=powershell_target_gate,
+        shell_read_gate=shell_read_gate,
     )
     hook_decision = engine_decision
     return _build_decision(
@@ -406,6 +414,8 @@ def build_hook_judgment_engine_alignment_evidence() -> dict[str, Any]:
         "clearly_safe_impact_risks": tuple(sorted(_CLEARLY_SAFE_IMPACT_RISKS)),
         "not_checked_impact_maps_to_allow": False,
         "unclassified_bash_maps_to_allow": False,
+        "structurally_classified_shell_read_only_maps_to_allow": True,
+        "shell_read_only_requires_in_repo_non_protected_regular_files": True,
         "ambiguous_input_maps_to_allow": False,
         "reported_only_trusted_as_judgment_basis": False,
         "not_checked_is_allow": False,
@@ -823,6 +833,34 @@ def _is_clearly_safe_normal_file_operation(
     return True
 
 
+def _shell_read_only_gate(
+    hook_input: ClaudeCodePreToolUseInput, repo_root: str | Path,
+) -> dict[str, Any]:
+    if hook_input.tool_name not in {"Bash", "PowerShell"}:
+        return {"classified": False, "allow": False}
+    extraction = classify_shell_read(
+        hook_input.tool_input.get("command"), tool_name=hook_input.tool_name,
+    )
+    if not extraction.classified:
+        return {"classified": False, "allow": False}
+    verdicts = []
+    for path in extraction.paths:
+        verdict = _classify_command_target(path, repo_root)
+        if verdict == "safe_in_repo":
+            try:
+                resolution = resolve_repo_boundary_path(repo_root=repo_root, submitted_target=path)
+                if not Path(resolution.canonical_target).is_file():
+                    verdict = "not_a_regular_file"
+            except OSError:
+                verdict = "unresolvable_ambiguous"
+        verdicts.append(verdict)
+    return {
+        "classified": True,
+        "allow": all(verdict == "safe_in_repo" for verdict in verdicts),
+        "path_verdicts": tuple(verdicts),
+    }
+
+
 def _collapse_engine_decision(
     *,
     candidate_action_type: str,
@@ -835,6 +873,7 @@ def _collapse_engine_decision(
     classification: Classification,
     bash_target_gate: Mapping[str, Any],
     powershell_target_gate: Mapping[str, Any],
+    shell_read_gate: Mapping[str, Any],
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -867,6 +906,13 @@ def _collapse_engine_decision(
 
     if reasons:
         return DENY, tuple((*reasons, "hook_decision_matches_or_is_stricter_than_engine"))
+
+    if shell_read_gate.get("allow") is True:
+        return ALLOW, (
+            "structurally_classified_read_only_shell_command",
+            "shell_read_paths_are_regular_non_protected_files_in_repo",
+            "hook_decision_matches_engine_decision",
+        )
 
     if (
         powershell_target_gate.get("applicable") is True
