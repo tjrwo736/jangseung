@@ -18,6 +18,7 @@ from src.contracts import (
     SAFE_DEFAULT,
 )
 from src.cli.hook_run import SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX, run_aeg_hook_run
+from src.cli.explain import cmd_explain
 from src.cli.install import INSTALL_TARGETS, TARGET_CLAUDE_CODE, cmd_install, cmd_uninstall
 from src.evidence import build_evidence_packet, verify_latest
 from src.evidence.mutation_boundary import (
@@ -47,7 +48,18 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="initialize folder-local .aeg/ state")
-    subparsers.add_parser("doctor", help="check local runtime prerequisites")
+    doctor_parser = subparsers.add_parser("doctor", help="check local runtime prerequisites")
+    doctor_parser.add_argument("--hooks", action="store_true", help="also inspect project-local hook setup without executing it")
+    doctor_parser.add_argument("--target", choices=(*INSTALL_TARGETS, "all"), default=None, help="hook target to inspect (requires --hooks; default: all)")
+    doctor_parser.add_argument("--json", action="store_true", dest="as_json")
+    explain_parser = subparsers.add_parser("explain", help="explain a hook decision without tool execution or recording")
+    explain_input = explain_parser.add_mutually_exclusive_group(required=True)
+    explain_input.add_argument("--command", dest="command_text", help="shell command to judge, never execute")
+    explain_input.add_argument("--file", help="file path for a simulated Read request; content is not read")
+    explain_input.add_argument("--stdin", action="store_true", help="read one PreToolUse JSON object from stdin")
+    explain_parser.add_argument("--tool", choices=("Bash", "PowerShell"), default=None, help="tool for --command (default: Bash)")
+    explain_parser.add_argument("--substrate", choices=(SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX), default=None)
+    explain_parser.add_argument("--json", action="store_true", dest="as_json")
     run_parser = subparsers.add_parser("run", help="record a contract-first no-op run")
     run_parser.add_argument(
         "--citizen-one",
@@ -149,7 +161,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init(Path.cwd())
     if args.command == "doctor":
-        return _cmd_doctor(Path.cwd())
+        if args.target is not None and not args.hooks:
+            parser.error("--target requires doctor --hooks")
+        return _cmd_doctor(Path.cwd(), hooks=args.hooks, target=args.target or "all", as_json=args.as_json)
+    if args.command == "explain":
+        if args.tool is not None and args.command_text is None:
+            parser.error("--tool requires explain --command")
+        return cmd_explain(Path.cwd(), command=args.command_text, file=args.file,
+                           tool=args.tool or "Bash", substrate=args.substrate, as_json=args.as_json,
+                           stdin=sys.stdin, stdout=sys.stdout)
     if args.command == "run":
         return _cmd_run(
             Path.cwd(),
@@ -215,10 +235,21 @@ def _cmd_init(cwd: Path) -> int:
     return 0 if ignored else 0
 
 
-def _cmd_doctor(cwd: Path) -> int:
+def _cmd_doctor(cwd: Path, *, hooks: bool = False, target: str = "all", as_json: bool = False) -> int:
     checks = run_doctor(cwd)
+    if hooks:
+        from src.cli.hook_doctor import run_hook_doctor
+        checks.extend(run_hook_doctor(cwd, target=target))
     status = doctor_status(checks)
-    _print_doctor_card(status, checks)
+    if as_json:
+        from dataclasses import asdict
+        print(json.dumps(sanitize_for_display({
+            "status": status, "checks": [asdict(check) for check in checks],
+            "store_write_performed": False, "hook_execution_performed": False,
+            "host_execution": "NOT_CHECKED",
+        }), ensure_ascii=True, sort_keys=True))
+    else:
+        _print_doctor_card(status, checks)
     return 1 if status == "FAIL" else 0
 
 
