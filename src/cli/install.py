@@ -524,13 +524,19 @@ def _managed_argv(argv: Sequence[str], substrates: tuple[str | None, ...]) -> bo
 
 
 def _managed_command(command: Any, substrates: tuple[str | None, ...]) -> bool:
+    return _parse_managed_command(command, substrates) is not None
+
+
+def _parse_managed_command(command: Any, substrates: tuple[str | None, ...]) -> tuple[str, ...] | None:
+    """Return only installer-recognized argv, for read-only diagnostics too."""
     if not isinstance(command, str) or any(char in command for char in "\r\n\x00"):
-        return False
+        return None
     try:
-        if _managed_argv(shlex.split(command), substrates):
-            return True
+        argv = tuple(shlex.split(command))
+        if _managed_argv(argv, substrates):
+            return argv
     except ValueError:
-        return False
+        return None
     # Compatibility with the unquoted native Windows paths emitted by 0.1.2.
     # Restrict this fallback to a single drive-absolute executable, never a
     # shell wrapper or POSIX command prefix which only mentions aeg.
@@ -538,7 +544,11 @@ def _managed_command(command: Any, substrates: tuple[str | None, ...]) -> bool:
         r"([A-Za-z]:[\\/][^:;&|<>`$\r\n\"']+?)\s+((?:-m\s+src\.cli\s+)?hook-run(?:\s+--substrate\s+(?:codex|claude-code))?)\s*",
         command.strip(),
     )
-    return bool(match and _managed_argv((match[1], *match[2].split()), substrates))
+    if match:
+        argv = (match[1], *match[2].split())
+        if _managed_argv(argv, substrates):
+            return argv
+    return None
 
 
 def _is_managed_hook(

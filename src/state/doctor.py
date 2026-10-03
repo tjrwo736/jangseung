@@ -310,7 +310,7 @@ def _state_checks(repo: Path) -> list[DoctorCheck]:
             )
         )
 
-    if git.is_ignored(repo, f"{STATE_DIR}/"):
+    if _state_contents_ignored(repo):
         checks.append(
             DoctorCheck(
                 f"{STATE_DIR}/ git ignored",
@@ -371,6 +371,18 @@ def _tracked_count_check(repo: Path, pathspec: str, name: str) -> DoctorCheck:
 
 def _state_dir_writable(path: Path) -> bool:
     return os.access(path, os.W_OK)
+
+
+def _state_contents_ignored(repo: Path) -> bool:
+    """Accept install's internal .aeg/.gitignore as well as a root ignore rule."""
+    candidates = (".gitignore", "config.json", "ledger.jsonl", "hook_ledger.jsonl",
+                  "hook_ledger.guard", "hook_ledger.lock", "runs/__doctor_probe__/evidence.json")
+    paths = {f"{STATE_DIR}/{name}" for name in candidates}
+    ignored = git.run_git(["check-ignore", "--", *sorted(paths)], repo, check=False)
+    if ignored.returncode != 0 or set(ignored.stdout.splitlines()) != paths:
+        return False
+    # This lists paths only; it neither creates probe files nor reads contents.
+    return not git.run_git(["ls-files", "--others", "--exclude-standard", "--", STATE_DIR], repo).stdout.strip()
 
 
 def _non_requirement_checks() -> list[DoctorCheck]:
