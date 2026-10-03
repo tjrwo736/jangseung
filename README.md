@@ -200,6 +200,43 @@ python -m pip install -e .
 
 이후 `aeg install` 사용법은 위와 동일합니다.
 
+## 판정 설명과 설치 상태 진단
+
+차단 제보를 확인할 때는 실제 도구를 실행하지 않는 `aeg explain`을 사용합니다. 실제 hook과 같은 판정 함수를 호출하지만, 명령 실행이나 `.aeg/` 기록은 하지 않습니다. hook이 실행될 프로젝트 디렉터리에서 사용하세요.
+
+```bash
+aeg explain --command "cat README.md" --substrate codex
+aeg explain --command "pwd" --substrate codex --json
+aeg explain --file README.md
+aeg explain --command "Get-Content README.md" --tool PowerShell
+```
+
+`--file`은 파일 내용이 아닌 `Read` 요청을 판정합니다. 완전한 PreToolUse JSON은 `aeg explain --stdin --substrate codex --json`의 표준 입력으로 전달할 수 있습니다. 셸 명령줄 기록에 민감한 내용이 남지 않도록 비밀값이 있는 입력은 명령줄에 직접 적지 마세요. 출력에는 raw 입력·명령·파일 경로·파일 내용을 넣지 않고, 검증기 reason code에 붙는 임의의 값도 표시하지 않습니다.
+
+예를 들어 현재 규칙에서 `pwd`를 Codex 대상으로 설명하면 다음과 같이 표시합니다(발췌).
+
+```text
+hook_decision: defer
+permission_decision: deny
+hook_exit_code: 0
+category: unclassified
+summary: Safety was not established by the current rules; this is not a finding that the command is dangerous.
+```
+
+즉, **위험하다고 판단한 차단**과 **안전성을 아직 확인하지 못한 차단**을 구분합니다. Codex에서 ask/defer가 deny로 매핑되는 이유도 별도로 표시합니다. 지원하는 셸 명령이나 허용 정책을 넓히는 기능은 아닙니다.
+
+프로젝트의 hook 등록 상태도 읽기 전용으로 점검할 수 있습니다.
+
+```bash
+aeg doctor --hooks --target codex
+aeg doctor --hooks --target claude-code --json
+aeg doctor --hooks --json  # 두 대상 모두 확인
+```
+
+등록된 설정의 형식·substrate·matcher, 현재 환경의 실행 파일 존재, 기록 폴더·PID 잠금·guard·hook chain을 확인합니다. 설정을 수정하거나 실행 파일을 실행하지 않고, 쓰기 가능 여부도 권한 정보만 확인합니다. 종료된 PID 잠금을 발견해도 doctor가 삭제하지 않습니다. `.aeg/.gitignore` 내부 규칙과 실제 추적 제외 예외도 점검합니다. `aeg doctor --json`은 기존 기본 진단을 JSON으로 출력하며, `--hooks`가 없으면 hook 등록을 요구하지 않습니다.
+
+주의: `explain`의 종료 코드 0은 **설명 완료**이지 실행 허가가 아닙니다. 실제 hook의 종료 코드는 별도 `hook_exit_code` 필드입니다. 잘못된 입력/fail-closed 또는 진단 실패는 1, 명령 사용법 오류는 2입니다. **설치된 `hook-run`을 `explain`으로 바꾸지 마세요.** 실제 앱의 신뢰 승인·전역 설정·hook 호출 여부, 기록 장치의 실제 쓰기 성공은 이 진단만으로 증명하지 않습니다(`NOT_CHECKED`).
+
 ## Evidence 조회와 라이브 hook 기록
 
 기존 run evidence는 쓰기 없이 조회할 수 있습니다.
