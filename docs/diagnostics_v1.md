@@ -73,6 +73,9 @@ paths are reported without following them. Configuration reads are limited to
 1 MiB and the automatic hook-chain check to 16 MiB. Larger data is explicitly
 NOT_CHECKED with a warning; `aeg evidence verify-hooks` remains the explicit
 full-ledger inspection command. Parser/config/lock payloads are not printed.
+Decoder recursion limits reached by deeply nested damaged ledger entries are
+reported as FAIL without a traceback or record contents on supported Python
+versions.
 
 No lock is acquired, stale lock removed, missing directory created, input file
 rewritten, or executable started. Concurrent writers may change the snapshot;

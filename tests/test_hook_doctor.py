@@ -255,7 +255,7 @@ def test_windows_override_is_used_only_on_windows(repo):
 @pytest.mark.parametrize("as_json", [False, True])
 def test_deeply_nested_ledger_is_reported_without_crash_or_writes(repo, monkeypatch, capsys, as_json):
     install(repo, "codex")
-    # Small on disk, but beyond the JSON decoder's recursion limit.
+    # Small on disk, but exceeds the decoder limit on older supported Pythons.
     (repo / ".aeg" / "hook_ledger.jsonl").write_text("[" * 1500 + "0" + "]" * 1500 + "\n", encoding="utf-8")
     before = snapshot(repo)
     monkeypatch.chdir(repo)
@@ -267,4 +267,18 @@ def test_deeply_nested_ledger_is_reported_without_crash_or_writes(repo, monkeypa
     else:
         assert "status: FAIL" in output
     assert "[[[[[" not in output
+    assert snapshot(repo) == before
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_ledger_decoder_recursion_error_is_sanitized(repo, monkeypatch, capsys, as_json):
+    install(repo, "codex")
+    (repo / ".aeg" / "hook_ledger.jsonl").write_text("{}\n", encoding="utf-8")
+    before = snapshot(repo)
+    monkeypatch.chdir(repo)
+    with patch("src.cli.hook_doctor.verify_hook_ledger", side_effect=RecursionError("sk-proj-NO-ECHO")):
+        args = ["doctor", "--hooks", "--target", "codex", *(["--json"] if as_json else [])]
+        assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "NO-ECHO" not in output and "RecursionError" not in output
     assert snapshot(repo) == before

@@ -151,7 +151,9 @@ def _recording_checks(repo: Path) -> list[DoctorCheck]:
                                       next_step="Use aeg evidence verify-hooks to inspect errors; no repair was performed.",
                                       details=(("record_count", str(len(result.records))), ("error_count", str(len(result.errors))))))
         return checks
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        # Deeply nested damaged JSON can exceed the decoder limit on supported
+        # Python versions. Report failure without echoing parser/record data.
         return [DoctorCheck(name, FAIL, "Recording metadata could not be inspected; no state was changed.")]
 
 
