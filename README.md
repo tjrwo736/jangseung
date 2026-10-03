@@ -109,7 +109,7 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이 포함됩니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이 포함됩니다.
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -132,6 +132,7 @@ Claude Code 대상 `aeg install`은 다음을 확인하고 진행합니다.
 - 기존 `.claude/settings.json`이 있으면 병합합니다. 기존에 등록된 다른 hook과 설정은 그대로 남고, 장승(Jangseung) hook만 추가됩니다.
 - 쓰기 전에 변경 내용을 diff로 보여주고 확인(`y/N`)을 받습니다. 이미 승인한 자동화 환경이라면 `--yes`로 확인을 건너뛸 수 있습니다.
 - 쓰기 전에 기존 파일을 `settings.json.aegis-backup-<timestamp>`로 백업합니다.
+- 0.1.3부터 확인 후 프로젝트의 `.aeg/` 기록 폴더도 준비합니다. 새 폴더에는 내부 `.gitignore`를 넣고, 기존 기록과 프로젝트의 `.gitignore`는 변경하지 않습니다. 설정 파일은 완성된 임시 파일로 원자적으로 교체합니다.
 
 Codex 대상은 명시적으로 설치해야 합니다.
 
@@ -140,6 +141,8 @@ aeg install --target codex
 ```
 
 Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.PreToolUse]]` command hook을 추가하고, hook command에 `aeg hook-run --substrate codex`를 기록합니다. 이 명시적 substrate 값이 있을 때만 장승(Jangseung)은 내부 판정이 `ask`/`defer`인 경계 사례를 `deny`로 격상합니다. `allow`와 기존 `deny` 판정은 바꾸지 않습니다.
+
+0.1.3부터 Codex 설치도 TOML 파서로 기존 설정·주석을 보존하며 병합하고, 잘못된 설정은 수정하지 않습니다. 기존에 `PreToolUse = []` 또는 inline 배열이 있어도 처리합니다. hook이 이미 설치되어 있지만 `.aeg/`가 없는 경우에는 다시 `aeg install --target codex`(Claude Code는 `aeg install`)을 실행하면, 확인 후 설정을 바꾸지 않고 기록 폴더만 준비합니다. 일반 `aeg run`에 필요한 전체 상태 초기화는 별도로 `aeg init`을 사용합니다.
 
 주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
 
@@ -221,6 +224,10 @@ aeg evidence verify-hooks
 hook 기록에 실패해도 이미 계산된 `permissionDecision`과 exit code는 바뀌지 않습니다. 대신 응답 reason code에 `hook_decision_recording_failed`가 추가됩니다. 이는 기록 장치 장애가 정상 판정을 임의로 allow/deny로 재분류하지 않도록 판정 브레인과 recorder를 분리하기 위한 선택입니다. 단, 기존 판정 자체가 fail-closed deny인 경우에는 그대로 deny를 유지합니다.
 
 두 ledger의 hash chain은 중간 레코드의 변경·삭제를 탐지하기 위한 tamper-evident 장치입니다. 외부 anchor가 없는 로컬 파일이므로 마지막 레코드와 파일 전체를 함께 삭제하는 공격까지 증명하는 tamper-proof 저장소는 아닙니다.
+
+0.1.3부터 잘못된 UTF-8 ledger 행은 `UNREADABLE`로 표시하면서 다른 항목을 계속 조회합니다. artifact가 없는 run도 목록에서 `UNREADABLE`로 표시합니다. 조회는 손상된 데이터를 고치거나 재작성하지 않으며, 손상된 hook chain은 검증에 실패하고 추가 기록도 거부됩니다.
+
+기록 시 `.aeg/hook_ledger.guard`의 OS 잠금과 기존 PID 잠금 파일을 함께 사용합니다. guard 파일이 남아 있는 것은 정상이며 삭제하지 마세요. 종료된 프로세스의 PID 잠금은 다음 기록 시 복구하지만, 실행 중이거나 소유자를 알 수 없는 잠금은 탈취하지 않습니다. 빈 파일·잘못된 PID 등은 관련 프로세스를 모두 중지한 뒤 별도 확인이 필요합니다. 네트워크 파일시스템의 잠금 동작까지 보장하지는 않습니다.
 
 ## 어떻게 작동하나
 
