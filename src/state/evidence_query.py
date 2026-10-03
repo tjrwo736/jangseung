@@ -103,7 +103,7 @@ def list_run_evidence(repo_root: str | Path, *, limit: int | None = None) -> lis
         return []
 
     try:
-        lines = ledger_path.read_text(encoding="utf-8").splitlines()
+        lines = ledger_path.read_bytes().split(b"\n")
     except OSError as exc:
         return [_unreadable_item(0, f"ledger unreadable: {exc.__class__.__name__}")]
 
@@ -112,7 +112,12 @@ def list_run_evidence(repo_root: str | Path, *, limit: int | None = None) -> lis
     for line_number, line in reversed(numbered_lines):
         if limit is not None and len(items) >= limit:
             break
-        items.append(_parse_ledger_line(repo_root, line_number, line))
+        try:
+            decoded = line.decode("utf-8")
+        except UnicodeDecodeError:
+            items.append(_unreadable_item(line_number, "invalid UTF-8 in ledger entry"))
+            continue
+        items.append(_parse_ledger_line(repo_root, line_number, decoded))
     return items
 
 
@@ -331,11 +336,13 @@ def _parse_ledger_line(repo_root: str | Path, line_number: int, line: str) -> Ru
         manifest_path = _artifact_path(repo_root, parsed, "manifest_path", run_id, "manifest.json")
     except ValueError as exc:
         return RunEvidenceItem(line_number, False, parsed, str(exc))
+    missing = [name for name, path in (("run", run_path), ("evidence", evidence_path), ("manifest", manifest_path))
+               if not path.is_file()]
     return RunEvidenceItem(
         line_number=line_number,
-        readable=True,
+        readable=not missing,
         entry=parsed,
-        error=None,
+        error="; ".join(f"{name} artifact is missing" for name in missing) or None,
         run_path=run_path,
         evidence_path=evidence_path,
         manifest_path=manifest_path,
