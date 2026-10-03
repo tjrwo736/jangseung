@@ -62,3 +62,27 @@ Writers use a cross-platform exclusive lock file, verify the existing chain,
 append one canonical JSON line, flush it, and call `fsync`. A lock acquisition
 timeout is reported through the recording-failure policy above. The lock is a
 local filesystem coordination mechanism, not a distributed lock.
+
+As of 0.1.3, a persistent `hook_ledger.guard` file carries an OS-backed lock
+(Windows byte-range lock or POSIX flock). It is not deleted between writers.
+The existing `hook_ledger.lock` PID sentinel is retained to coordinate with
+0.1.2 writers. While holding the OS guard, a new writer may remove a stale PID
+sentinel only after positively establishing that its process has exited.
+Active, inaccessible, reused or invalid PIDs are not treated as dead. Empty or
+malformed legacy sentinel files need operator inspection with writers stopped.
+The guard is released by the OS on process exit; network filesystem semantics
+are outside the tested local-filesystem contract.
+
+## Installation and damaged input (0.1.3)
+
+After explicit confirmation, `aeg install` now prepares a missing `.aeg/` for
+hook recording, including an internal `.gitignore` for newly created state.
+It never rewrites existing records or initializes the run ledger. Reinstalling
+an already registered hook may repair missing recording state after confirmation
+without changing that hook's config. `aeg init` remains the separate full run
+state initialization command.
+
+Read-only list/show keep their no-write boundary. Missing run artifacts and
+invalid UTF-8 ledger lines are UNREADABLE, while other lines remain inspectable.
+Invalid hook lines (including JSON null) still fail chain verification and block
+subsequent appends. Inspection does not repair or discard damaged records.

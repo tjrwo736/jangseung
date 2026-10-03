@@ -9,15 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.evidence.ledger_integrity import is_sha256_hex
 from src.state.store import state_root
+from src.state.file_lock import exclusive_hook_lock as _exclusive_lock
 
 HOOK_LEDGER_FILE = "hook_ledger.jsonl"
 HOOK_LEDGER_LOCK_FILE = "hook_ledger.lock"
@@ -155,15 +154,20 @@ def read_hook_ledger(repo_root: str | Path) -> list[HookLedgerItem]:
     if not ledger_path.is_file():
         return []
     try:
-        lines = ledger_path.read_text(encoding="utf-8").splitlines()
+        lines = ledger_path.read_bytes().split(b"\n")
     except OSError as exc:
         return [HookLedgerItem(0, False, None, f"hook ledger unreadable: {exc.__class__.__name__}")]
 
     items: list[HookLedgerItem] = []
     expected_previous_hash = HOOK_RECORD_HASH_GENESIS
     expected_sequence = 1
-    for line_number, line in enumerate(lines, start=1):
-        if not line.strip():
+    for line_number, raw_line in enumerate(lines, start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeDecodeError:
+            items.append(HookLedgerItem(line_number, False, None, "invalid UTF-8 in hook ledger entry"))
             continue
         record: dict[str, Any] | None = None
         errors: list[str] = []
@@ -185,7 +189,7 @@ def read_hook_ledger(repo_root: str | Path) -> list[HookLedgerItem]:
             if isinstance(candidate_hash, str) and is_sha256_hex(candidate_hash):
                 expected_previous_hash = candidate_hash
             expected_sequence += 1
-        elif parsed is not None:
+        elif not errors:
             errors.append("hook ledger entry is not a JSON object")
         items.append(
             HookLedgerItem(
@@ -293,31 +297,6 @@ def _contains_forbidden_key(value: Any) -> bool:
     elif isinstance(value, list):
         return any(_contains_forbidden_key(item) for item in value)
     return False
-
-
-@contextmanager
-def _exclusive_lock(lock_path: Path, *, timeout_seconds: float = 1.0) -> Iterator[None]:
-    deadline = time.monotonic() + timeout_seconds
-    descriptor: int | None = None
-    while descriptor is None:
-        try:
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("hook ledger append lock is busy")
-            time.sleep(0.02)
-    try:
-        os.write(descriptor, str(os.getpid()).encode("ascii"))
-        os.close(descriptor)
-        descriptor = None
-        yield
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _utc_timestamp() -> str:

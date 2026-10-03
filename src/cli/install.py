@@ -10,8 +10,9 @@ Safety model:
   * abort (do not write) on invalid Claude Code JSON or an unexpected hook
     structure.
 
-This module writes only substrate hook config files (outside the ``.aeg/``
-store); it does not run tools, call providers, or write Aegis state.
+After confirmation, this module writes substrate hook config and prepares the
+folder-local ``.aeg/`` directory for recording. It never changes existing run
+or hook records, runs tools, or calls providers.
 """
 
 from __future__ import annotations
@@ -19,10 +20,13 @@ from __future__ import annotations
 import datetime
 import difflib
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Sequence, TextIO
@@ -48,8 +52,7 @@ def resolve_hook_command(*, substrate: str | None = None) -> str:
     PYTHONPATH needed), else the current interpreter's module invocation."""
 
     command, args = resolve_hook_command_parts(substrate=substrate)
-    command = " ".join((command, *args))
-    return command
+    return shlex.join((command, *args))
 
 
 def resolve_hook_command_parts(
@@ -123,26 +126,13 @@ def is_aegis_hook_command(command: Any) -> bool:
     """Identify an Aegis-generated hook command without touching a user's own
     hooks. Matches the ``hook-run`` subcommand referencing this package."""
 
-    return (
-        isinstance(command, str)
-        and HOOK_RUN_MARKER in command
-        and ("aeg" in command or "src.cli" in command)
-    )
+    return _is_managed_hook({"type": "command", "command": command})
 
 
 def is_aegis_hook(hook: Any) -> bool:
     """Identify both legacy shell-form and Windows exec-form Aegis hooks."""
 
-    if not isinstance(hook, dict):
-        return False
-    if is_aegis_hook_command(hook.get("command")):
-        return True
-
-    command = hook.get("command")
-    args = hook.get("args")
-    if not isinstance(command, str) or not _is_string_sequence(args):
-        return False
-    return _is_aegis_exec_form_hook(command, tuple(args))
+    return isinstance(hook, dict) and _is_managed_hook(hook)
 
 
 def settings_path(base_dir: str | Path) -> Path:
@@ -161,7 +151,7 @@ def load_settings(path: Path) -> tuple[dict[str, Any] | None, bool, str | None]:
         return ({}, False, None)
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return (None, True, f"cannot read {path}: {exc}")
     if not text.strip():
         return ({}, True, None)
@@ -262,23 +252,46 @@ def build_installed_codex_config_text(
 ) -> tuple[str, bool]:
     """Return (new_config_text, already_installed) for project-local Codex TOML.
 
-    The Codex config format is TOML and often hand-edited, so this function
-    appends a small Aegis hook block instead of reserializing the whole file.
+    Parse and preserve the syntax tree, including comments, inline arrays and
+    quoted keys. Never append an array-of-tables onto a statically defined array.
     """
 
-    aegis_commands = tuple(_codex_aegis_hook_commands(current_text))
-    if any(_command_has_codex_substrate(command_text) for command_text in aegis_commands):
-        return (_ensure_trailing_newline(current_text), True)
-    if aegis_commands:
-        raise InstallStructureError(
-            "existing Aegis hook command in .codex/config.toml does not include "
-            "--substrate codex"
-        )
+    import tomlkit
+    from tomlkit.items import AoT
 
-    block = _codex_hook_block(command, command_windows=command_windows)
-    if not current_text.strip():
-        return (block, False)
-    return (_ensure_trailing_newline(current_text) + "\n" + block, False)
+    data = _parse_codex_config(current_text)
+    entries = _codex_entries(data)
+    installed = False
+    for entry in entries or []:
+        for hook in entry["hooks"]:
+            plain = hook.unwrap()
+            if not _is_managed_codex_hook(plain):
+                continue
+            if not _is_managed_hook(plain, substrates=(TARGET_CODEX,)):
+                raise InstallStructureError(
+                    "existing Aegis hook command in .codex/config.toml does not include --substrate codex"
+                )
+            installed = True
+    if installed:
+        return current_text, True
+
+    new = tomlkit.parse(_codex_hook_block(command, command_windows=command_windows))
+    if "hooks" not in data:
+        # Keep existing text byte-for-byte when a new root table can be appended.
+        result = _ensure_trailing_newline(current_text)
+        result += ("\n" if result else "") + tomlkit.dumps(new)
+    else:
+        hooks = data["hooks"]
+        if entries is None:
+            hooks[HOOK_EVENT_NAME] = new["hooks"][HOOK_EVENT_NAME].unwrap()
+        elif isinstance(entries, AoT):
+            entries.append(new["hooks"][HOOK_EVENT_NAME][0])
+        else:
+            entries.append(new["hooks"][HOOK_EVENT_NAME][0].unwrap())
+        result = tomlkit.dumps(data)
+    # Validate the serialized result too, before it is ever offered for writing.
+    _codex_entries(_parse_codex_config(result))
+    return result, False
 
 
 def cmd_install(
@@ -353,8 +366,7 @@ def _cmd_install_claude_code(
         return 1
 
     if already:
-        _write(out, "aeg install: an Aegis PreToolUse hook is already installed; no changes.")
-        return 0
+        return _repair_recording_setup(base_dir, assume_yes, input_stream, out)
 
     before_text = _json_text(data) if existed else "(no .claude/settings.json yet)\n"
     after_text = _json_text(new_data)
@@ -364,17 +376,14 @@ def _cmd_install_claude_code(
     _write(out, f"  matcher:      {matcher}")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
+    _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")
 
     if not assume_yes and not _confirm(input_stream, out):
         _write(out, "aeg install: cancelled; no changes written.")
         return 0
 
-    if existed:
-        backup = _backup_file(path)
-        _write(out, f"aeg install: backed up existing settings to {backup}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(after_text, encoding="utf-8")
+    if not _write_install(base_dir, path, after_text, existed, out):
+        return 1
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
     return 0
 
@@ -408,8 +417,7 @@ def _cmd_install_codex(
         return 1
 
     if already:
-        _write(out, "aeg install: an Aegis Codex PreToolUse hook is already installed; no changes.")
-        return 0
+        return _repair_recording_setup(base_dir, assume_yes, input_stream, out)
 
     preview_before = before_text if existed else "(no .codex/config.toml yet)\n"
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
@@ -420,17 +428,14 @@ def _cmd_install_codex(
     _write(out, f"  matcher:      {CODEX_AEGIS_HOOK_MATCHER}")
     _write(out, "")
     _write_diff(out, preview_before, after_text, path)
+    _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")
 
     if not assume_yes and not _confirm(input_stream, out):
         _write(out, "aeg install: cancelled; no changes written.")
         return 0
 
-    if existed:
-        backup = _backup_file(path)
-        _write(out, f"aeg install: backed up existing config to {backup}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(after_text, encoding="utf-8")
+    if not _write_install(base_dir, path, after_text, existed, out):
+        return 1
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
     _write(out, "aeg install: note: Codex hook trust/review is handled by Codex itself.")
     return 0
@@ -481,77 +486,113 @@ def cmd_uninstall(
         _write(out, "aeg uninstall: cancelled; no changes written.")
         return 0
 
-    backup = _backup_file(path)
-    _write(out, f"aeg uninstall: backed up existing settings to {backup}")
-    path.write_text(after_text, encoding="utf-8")
+    try:
+        backup = _backup_file(path)
+        _write(out, f"aeg uninstall: backed up existing settings to {backup}")
+        _atomic_write_text(path, after_text)
+    except OSError as exc:
+        _write(out, f"aeg uninstall: failed to back up or write settings: {exc}")
+        return 1
     _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
     return 0
 
 
 def _is_managed_codex_hook(hook: dict[str, Any]) -> bool:
     """Recognize generated argv, never a shell command merely mentioning aeg."""
+    return _is_managed_hook(hook, substrates=(None, TARGET_CODEX))
+
+
+def _managed_argv(argv: Sequence[str], substrates: tuple[str | None, ...]) -> bool:
+    if not argv:
+        return False
+    executable = argv[0].replace("\\", "/")
+    name = executable.rsplit("/", 1)[-1]
+    if executable != name and not (
+        executable.startswith("/") or re.match(r"^[A-Za-z]:/", executable)
+    ):
+        return False
+    if name.lower().endswith(".exe"):
+        name = name.lower()
+    if name in {"aeg", "aeg.exe"}:
+        prefix = ()
+    elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
+        prefix = ("-m", "src.cli")
+    else:
+        return False
+    return any(tuple(argv[1:]) == (*prefix, "hook-run", *(() if substrate is None else ("--substrate", substrate)))
+               for substrate in substrates)
+
+
+def _managed_command(command: Any, substrates: tuple[str | None, ...]) -> bool:
+    if not isinstance(command, str) or any(char in command for char in "\r\n\x00"):
+        return False
+    try:
+        if _managed_argv(shlex.split(command), substrates):
+            return True
+    except ValueError:
+        return False
+    # Compatibility with the unquoted native Windows paths emitted by 0.1.2.
+    # Restrict this fallback to a single drive-absolute executable, never a
+    # shell wrapper or POSIX command prefix which only mentions aeg.
+    match = re.fullmatch(
+        r"([A-Za-z]:[\\/][^:;&|<>`$\r\n\"']+?)\s+((?:-m\s+src\.cli\s+)?hook-run(?:\s+--substrate\s+(?:codex|claude-code))?)\s*",
+        command.strip(),
+    )
+    return bool(match and _managed_argv((match[1], *match[2].split()), substrates))
+
+
+def _is_managed_hook(
+    hook: dict[str, Any], *, substrates: tuple[str | None, ...] = (None, TARGET_CODEX, TARGET_CLAUDE_CODE),
+) -> bool:
     if hook.get("type") != "command":
         return False
     command = hook.get("command")
     args = hook.get("args")
-    if isinstance(command, str) and _is_string_sequence(args):
-        name = command.replace("\\", "/").rsplit("/", 1)[-1]
-        if name.lower().endswith(".exe"):
-            name = name.lower()
-        prefix = () if name in {"aeg", "aeg.exe"} else ("-m", "src.cli")
-        if prefix and not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
-            return False
-        return tuple(args) in {(*prefix, "hook-run"), (*prefix, "hook-run", "--substrate", "codex")}
-    # Generated legacy strings include unquoted Windows paths with spaces.
-    # Require the executable + exact subcommand/module suffix and nothing else.
-    executable = r'(?:"[^"\r\n]+"|\'[^\'\r\n]+\'|[^\r\n;&|<>`$"\']+?)'
-    pattern = re.compile(
-        rf"^({executable})\s+(?:(-m\s+src\.cli)\s+)?hook-run"
-        r"(?:\s+--substrate\s+codex)?\s*$"
-    )
-    recognized: list[bool] = []
-    for field in ("command", "command_windows"):
-        value = hook.get(field)
-        if value is None:
-            continue
-        if not isinstance(value, str):
-            return False
-        match = pattern.fullmatch(value.strip())
-        if not match:
-            return False
-        executable_path = match[1].strip().strip("\"'").replace("\\", "/")
-        name = executable_path.rsplit("/", 1)[-1]
-        if name.lower().endswith(".exe"):
-            name = name.lower()
-        if executable_path != name and not (
-            executable_path.startswith("/") or re.match(r"^[A-Za-z]:/", executable_path)
-        ):
-            return False
-        recognized.append((match[2] is None and name in {"aeg", "aeg.exe"}) or (
-            match[2] is not None and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name)
-        ))
-    return bool(recognized) and all(recognized)
+    if args is not None:
+        return (isinstance(command, str) and _is_string_sequence(args)
+                and hook.get("command_windows") is None
+                and _managed_argv((command, *args), substrates))
+    commands = [hook[field] for field in ("command", "command_windows") if field in hook]
+    return bool(commands) and all(_managed_command(value, substrates) for value in commands)
+
+
+def _parse_codex_config(current_text: str) -> Any:
+    import tomlkit
+    from tomlkit.exceptions import ParseError
+
+    try:
+        return tomlkit.parse(current_text)
+    except ParseError as exc:
+        raise InstallStructureError("invalid Codex TOML; repair it before changing hooks") from exc
+
+
+def _codex_entries(data: Any) -> Any:
+    hooks = data.get("hooks")
+    if hooks is None:
+        return None
+    if not isinstance(hooks, dict):
+        raise InstallStructureError("'hooks' is not a TOML table")
+    entries = hooks.get(HOOK_EVENT_NAME)
+    if entries is None:
+        return None
+    if not isinstance(entries, list):
+        raise InstallStructureError("'hooks.PreToolUse' is not a TOML array")
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            raise InstallStructureError("unexpected Codex PreToolUse hook structure")
+        if any(not isinstance(hook, dict) for hook in entry["hooks"]):
+            raise InstallStructureError("unexpected Codex command hook structure")
+    return entries
 
 
 def build_uninstalled_codex_config_text(current_text: str) -> tuple[str, int]:
     """Remove only managed hooks using a comment-preserving TOML syntax tree."""
     import tomlkit
-    from tomlkit.exceptions import ParseError
-
-    try:
-        data = tomlkit.parse(current_text)
-    except ParseError as exc:
-        raise InstallStructureError("invalid Codex TOML; repair it before uninstalling") from exc
-    hooks = data.get("hooks")
-    if hooks is None:
-        return current_text, 0
-    if not isinstance(hooks, dict):
-        raise InstallStructureError("'hooks' is not a TOML table")
-    entries = hooks.get(HOOK_EVENT_NAME)
+    data = _parse_codex_config(current_text)
+    entries = _codex_entries(data)
     if entries is None:
         return current_text, 0
-    if not isinstance(entries, list):
-        raise InstallStructureError("'hooks.PreToolUse' is not a TOML array")
+    hooks = data["hooks"]
     removed = 0
     for index in range(len(entries) - 1, -1, -1):
         entry = entries[index]
@@ -606,7 +647,7 @@ def _cmd_uninstall_codex(
     try:
         backup = _backup_file(path)
         _write(out, f"aeg uninstall: backed up existing config to {backup}")
-        path.write_text(after, encoding="utf-8")
+        _atomic_write_text(path, after)
     except OSError as exc:
         _write(out, f"aeg uninstall: failed to back up or write Codex config: {exc}")
         return 1
@@ -646,20 +687,6 @@ def _is_string_sequence(value: Any) -> bool:
     )
 
 
-def _is_aegis_exec_form_hook(command: str, args: tuple[str, ...]) -> bool:
-    if HOOK_RUN_MARKER not in args:
-        return False
-
-    command_name = command.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
-    if command_name in ("aeg", "aeg.exe"):
-        return True
-
-    return any(
-        args[index : index + 3] == ("-m", "src.cli", HOOK_RUN_MARKER)
-        for index in range(max(len(args) - 2, 0))
-    )
-
-
 def _is_windows_exe_path(path: str) -> bool:
     return path.replace("\\", "/").rstrip("/").lower().endswith(".exe")
 
@@ -669,8 +696,87 @@ def _load_text_file(path: Path) -> tuple[str, bool, str | None]:
         return ("", False, None)
     try:
         return (path.read_text(encoding="utf-8"), True, None)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return ("", True, f"cannot read {path}: {exc}")
+
+
+def _recording_directory(base_dir: str | Path) -> Path:
+    base = Path(base_dir).resolve()
+    root = base / ".aeg"
+    if root.is_symlink() or root.resolve().parent != base:
+        raise ValueError(".aeg must be a local directory, not a link outside the project")
+    if root.exists() and not root.is_dir():
+        raise ValueError(".aeg exists but is not a directory")
+    return root
+
+
+def _prepare_recording(base_dir: str | Path) -> None:
+    root = _recording_directory(base_dir)
+    if not root.exists():
+        root.mkdir(parents=True)
+        # Keep newly created local evidence out of Git without editing the
+        # project's .gitignore or rewriting existing state/records.
+        (root / ".gitignore").write_text("*\n", encoding="utf-8")
+
+
+def _repair_recording_setup(
+    base_dir: str | Path, assume_yes: bool, input_stream: TextIO | None, out: TextIO,
+) -> int:
+    try:
+        if _recording_directory(base_dir).is_dir():
+            _write(out, "aeg install: an Aegis hook is already installed; no changes.")
+            return 0
+        _write(out, "aeg install: hook already installed; will prepare .aeg/ for recording (config unchanged).")
+        if not assume_yes and not _confirm(input_stream, out):
+            _write(out, "aeg install: cancelled; no changes written.")
+            return 0
+        _prepare_recording(base_dir)
+    except (OSError, ValueError) as exc:
+        _write(out, f"aeg install: failed to prepare recording: {exc}")
+        return 1
+    _write(out, "aeg install: recording directory ready; existing hook config preserved.")
+    return 0
+
+
+def _write_install(base_dir: str | Path, path: Path, text: str, existed: bool, out: TextIO) -> bool:
+    try:
+        _recording_directory(base_dir)  # Reject invalid state before backup/write.
+        if existed:
+            backup = _backup_file(path)
+            _write(out, f"aeg install: backed up existing settings to {backup}")
+        _prepare_recording(base_dir)
+        _atomic_write_text(path, text)
+    except (OSError, ValueError) as exc:
+        _write(out, f"aeg install: failed to prepare recording or write config: {exc}")
+        return False
+    return True
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Stage complete config next to its destination, then replace atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                         dir=path.parent, prefix=".aeg-config-", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copymode(path, temporary)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except PermissionError:
+                if os.name != "nt":
+                    raise
+                # copymode may have copied Windows' read-only bit. Only this
+                # newly created temporary file is made writable for cleanup.
+                temporary.chmod(0o600)
+                temporary.unlink(missing_ok=True)
 
 
 def _codex_hook_block(command: str, *, command_windows: str | None = None) -> str:
@@ -689,51 +795,6 @@ def _codex_hook_block(command: str, *, command_windows: str | None = None) -> st
         f"command = {_toml_string(command)}\n"
         f"{windows_line}"
     )
-
-
-def _codex_aegis_hook_commands(text: str) -> list[str]:
-    commands: list[str] = []
-    current_array_table: str | None = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[[") and stripped.endswith("]]"):
-            current_array_table = stripped[2:-2].strip()
-            continue
-        if current_array_table != "hooks.PreToolUse.hooks":
-            continue
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        if key.strip() != "command":
-            continue
-        parsed = _parse_simple_toml_string(value.strip())
-        if parsed is not None and is_aegis_hook_command(parsed):
-            commands.append(parsed)
-    return commands
-
-
-def _command_has_codex_substrate(command: str) -> bool:
-    parts = command.split()
-    return any(
-        part == "--substrate"
-        and index + 1 < len(parts)
-        and parts[index + 1] == TARGET_CODEX
-        for index, part in enumerate(parts)
-    )
-
-
-def _parse_simple_toml_string(value: str) -> str | None:
-    if len(value) < 2:
-        return None
-    if value[0] == "'" and value[-1] == "'":
-        return value[1:-1]
-    if value[0] != '"' or value[-1] != '"':
-        return None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, str) else None
 
 
 def _toml_string(value: str) -> str:
