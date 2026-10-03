@@ -3,7 +3,10 @@
 ## Scope
 
 This is an additive presentation/inspection layer. Classification, law, hook
-judgment, permission mapping and live `hook-run` recording are unchanged.
+judgment, permission mapping and successful live `hook-run` recording are
+unchanged. The shared hook-ledger reader now annotates malformed nested/type-
+invalid records as UNREADABLE instead of propagating parser/validation errors;
+invalid chains still refuse appends without changing the hook decision.
 No provider, network, tool execution, configuration write, record append or
 lock recovery is performed by either diagnostic command.
 

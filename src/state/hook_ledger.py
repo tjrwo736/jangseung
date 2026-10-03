@@ -173,19 +173,27 @@ def read_hook_ledger(repo_root: str | Path) -> list[HookLedgerItem]:
         errors: list[str] = []
         try:
             parsed = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # JSONDecodeError is a ValueError. Decoder depth/integer limits also
+            # reject damaged records; none should abort a read-only inspection.
             parsed = None
             errors.append("invalid JSON object")
         if isinstance(parsed, dict):
             record = parsed
-            errors.extend(
-                _validate_record(
-                    record,
-                    expected_previous_hash=expected_previous_hash,
-                    expected_sequence=expected_sequence,
+            try:
+                errors.extend(
+                    _validate_record(
+                        record,
+                        expected_previous_hash=expected_previous_hash,
+                        expected_sequence=expected_sequence,
+                    )
                 )
-            )
-            candidate_hash = record.get("record_hash")
+            except (TypeError, ValueError, RecursionError):
+                # Keep malformed nested/type-invalid data out of renderers and
+                # never include exception text, which can contain record data.
+                record = None
+                errors.append("invalid hook record structure")
+            candidate_hash = parsed.get("record_hash")
             if isinstance(candidate_hash, str) and is_sha256_hex(candidate_hash):
                 expected_previous_hash = candidate_hash
             expected_sequence += 1

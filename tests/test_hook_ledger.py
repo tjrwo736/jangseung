@@ -198,6 +198,61 @@ class HookLedgerTests(unittest.TestCase):
         self.assertIn("permission_decision: allow", show_output)
         self.assertIn("status: PASS", verify_output)
 
+    def test_malformed_ledger_shapes_are_unreadable_without_crashing_or_writing(self):
+        self._git_init()
+        secret = "sk-proj-NO-ECHO-abcdefghijklmnop"
+        cases = (
+            "[" * 1500 + json.dumps(secret) + "]" * 1500,
+            '{"record_hash":"' + "0" * 64 + '","nested":' + "[" * 1500 + json.dumps(secret) + "]" * 1500 + "}",
+            json.dumps({"substrate": [], "private": secret}),
+            json.dumps({"substrate": "codex", "permission_decision": {}, "private": secret}),
+            '{"sequence_number":' + "1" * 10000 + "}",
+        )
+        path = self.repo / ".aeg" / HOOK_LEDGER_FILE
+        for index, content in enumerate(cases):
+            with self.subTest(case=index):
+                path.write_text(content + "\n", encoding="utf-8")
+                before = (path.stat().st_mtime_ns, path.read_bytes())
+                items = read_hook_ledger(self.repo)
+                self.assertEqual(len(items), 1)
+                self.assertFalse(items[0].readable)
+                self.assertFalse(verify_hook_ledger(self.repo).ok)
+                for as_json in (False, True):
+                    list_code, list_output = self._capture(_cmd_evidence_list, self.repo, as_json=as_json)
+                    verify_code, verify_output = self._capture(_cmd_evidence_verify_hooks, self.repo, as_json=as_json)
+                    self.assertEqual(list_code, 0)
+                    self.assertIn("UNREADABLE", list_output)
+                    self.assertEqual(verify_code, 1)
+                    self.assertIn("FAIL", verify_output)
+                    self.assertNotIn(secret, list_output + verify_output)
+                self.assertEqual((path.stat().st_mtime_ns, path.read_bytes()), before)
+
+    def test_nested_nonrecord_does_not_hide_following_valid_record(self):
+        self._run({"tool_name": "Read", "tool_input": {"file_path": "README.md"}, "tool_use_id": "nested"})
+        path = self.repo / ".aeg" / HOOK_LEDGER_FILE
+        valid = path.read_bytes()
+        path.write_bytes(("[" * 1500 + "0" + "]" * 1500 + "\n").encode() + valid)
+        items = read_hook_ledger(self.repo)
+        self.assertEqual(len(items), 2)
+        self.assertFalse(items[0].readable)
+        self.assertTrue(items[1].readable)
+
+    def test_malformed_ledger_append_failure_preserves_both_substrate_decisions(self):
+        path = self.repo / ".aeg" / HOOK_LEDGER_FILE
+        original = b'{"substrate":[]}\n'
+        path.write_bytes(original)
+        (self.repo / "README.md").write_text("fixture", encoding="utf-8")
+        for substrate in ("claude-code", "codex"):
+            for command in ("cat README.md", "rm -rf /"):
+                raw = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "malformed"})
+                before = render_hook_response(raw, repo_root=self.repo, substrate=substrate)
+                exit_code, payload, stderr = self._run(raw, substrate=substrate)
+                self.assertEqual(exit_code, before.exit_code)
+                self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], before.permission_decision)
+                self.assertIn(HOOK_DECISION_RECORDING_FAILED_REASON, json.dumps(payload))
+                self.assertEqual(bool(stderr), bool(before.stderr_text))
+                self.assertEqual(path.read_bytes(), original)
+
     def test_contract_matches_the_recording_wiring(self):
         contract = build_aeg_hook_run_contract_evidence()
         self.assertTrue(contract["store_write_performed"])
