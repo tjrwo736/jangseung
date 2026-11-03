@@ -117,13 +117,13 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이 포함됩니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이 포함됩니다.
 
 ```bash
 python -m pip install --upgrade jangseung
 ```
 
-**0.1.5로 올린 뒤에는 프로젝트마다 `aeg install`(Codex는 `aeg install --target codex`)을 다시 실행하세요.** 등록된 hook의 명령, 검사 도구 목록, 실패 시 차단 설정을 최신으로 고칩니다. 패키지 이름이 `src`에서 `jangseung`으로 바뀌어, 예전에 `python -m src.cli hook-run` 형태로 등록된 hook은 더 이상 시작되지 않습니다. `aeg doctor --hooks`로 확인할 수 있습니다. 자세한 내용은 [0.1.5 릴리스 노트](docs/release_0.1.5.md)에 있습니다.
+**0.1.5 이상으로 올린 뒤에는 프로젝트마다 `aeg install`(Codex는 `aeg install --target codex`)을 다시 실행하세요.** 등록된 hook의 명령, 검사 도구 목록, 실패 시 차단 설정을 최신으로 고칩니다. 0.1.4 이하가 `python -m src.cli hook-run` 형태로 등록한 hook은 0.1.6부터 호환 모듈을 거쳐 계속 판정하지만, 프로젝트에 `src`나 `src.cli`라는 자체 모듈이 있으면 닿지 못하고 새 검사 도구도 적용되지 않습니다. 이 형태의 hook은 0.1.5에서 시작되지 못해 Claude Code가 도구 호출을 그대로 통과시켰습니다. `aeg doctor --hooks`로 확인할 수 있습니다. 자세한 내용은 [0.1.6 릴리스 노트](docs/release_0.1.6.md)에 있습니다.
 
 ```bash
 cd /path/to/your-project

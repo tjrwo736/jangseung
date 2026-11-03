@@ -2,6 +2,8 @@
 
 보안 수정 릴리스입니다. 0.1.4 이하를 쓰고 있다면 올리는 것을 권장합니다.
 
+**0.1.5에는 구형 hook의 보호가 꺼지는 업그레이드 결함이 있습니다. 0.1.6으로 올리세요.**
+
 ## 업그레이드 절차
 
 ```bash
@@ -13,7 +15,7 @@ aeg doctor --hooks
 
 `aeg install`을 다시 실행해야 하는 이유는 다음과 같습니다.
 
-- Python 패키지 이름이 `src`에서 `jangseung`으로 바뀌었습니다. 예전에 `python -m src.cli hook-run` 형태로 등록된 hook은 더 이상 시작되지 않습니다. `aeg` 실행 파일로 등록된 hook은 계속 동작합니다.
+- Python 패키지 이름이 `src`에서 `jangseung`으로 바뀌었습니다. 0.1.4 이하가 `python -m src.cli hook-run` 형태로 등록한 hook은 0.1.5에서 시작되지 않습니다. **Claude Code는 이 실패를 막지 않고 도구 호출을 통과시키므로, `aeg install`을 다시 실행할 때까지 보호가 경고 없이 꺼집니다.** 0.1.6에서 고쳤습니다. `aeg` 실행 파일로 등록된 hook은 계속 동작합니다.
 - 검사 도구 목록에 `MultiEdit`, `NotebookEdit`, `Grep`, `Glob`이 추가되었습니다.
 - Claude Code hook에 `"onFailure": "block"`이 추가되었습니다. Claude Code v2.1.295 이상에서 동작합니다.
 

@@ -19,12 +19,12 @@ class PackagingMetadataTests(unittest.TestCase):
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         self.assertEqual(pyproject["project"]["name"], "jangseung")
-        self.assertEqual(pyproject["project"]["version"], "0.1.5")
+        self.assertEqual(pyproject["project"]["version"], "0.1.6")
         self.assertEqual(pyproject["project"]["dependencies"], ["tomlkit>=0.13,<1"])
         self.assertEqual(pyproject["project"]["scripts"]["aeg"], "jangseung.cli.entry:main")
         self.assertEqual(
             pyproject["tool"]["setuptools"]["packages"]["find"]["include"],
-            ["jangseung", "jangseung.*"],
+            ["jangseung", "jangseung.*", "src", "src.cli"],
         )
 
         module_name, function_name = pyproject["project"]["scripts"]["aeg"].split(":", 1)
