@@ -191,11 +191,11 @@ B3-1 makes no claim of:
 Read-only inspection for B3-1 covered:
 
 - `src/agents/noop.py`
-- `src/cli/main.py`
-- `src/evidence/action_boundary.py`
-- `src/evidence/capability_isolation.py`
-- `src/evidence/b2_executor_like_ingress_harness.py`
-- `src/evidence/b2_executor_like_routing_evidence.py`
+- `jangseung/cli/main.py`
+- `jangseung/evidence/action_boundary.py`
+- `jangseung/evidence/capability_isolation.py`
+- `jangseung/evidence/b2_executor_like_ingress_harness.py`
+- `jangseung/evidence/b2_executor_like_routing_evidence.py`
 - `docs/b2_executor_like_routing_evidence_status_note_v0.md`
 - `docs/live_executor_entry_gate_v0.md`
 - `src/contracts.py`

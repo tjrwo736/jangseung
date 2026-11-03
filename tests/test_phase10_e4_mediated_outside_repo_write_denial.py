@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     DENIED_BY_MEDIATOR,
     DENIED_BY_REPO_BOUNDARY_POLICY,
     EXTERNAL_ENFORCEMENT_NOT_IMPLEMENTED,
@@ -18,9 +18,8 @@ from src.contracts import (
     WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED,
     WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
 )
-from src.evidence import mediated_repo_boundary_write_path
-from src.evidence.mediated_repo_boundary_write_path import (
-    request_mediated_outside_repo_write_text,
+from jangseung.evidence import mediated_repo_boundary_write_path
+from jangseung.evidence.mediated_repo_boundary_write_path import (
     resolve_repo_boundary_path,
 )
 
@@ -65,86 +64,6 @@ class Phase10E4MediatedOutsideRepoWriteDenialTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def test_mediated_sibling_outside_repo_write_is_denied_and_target_is_not_created(self):
-        submitted = Path("..") / "outside-sibling" / "e4-sibling-outside.txt"
-        expected_target = self.fixture.sibling_outside / "e4-sibling-outside.txt"
-
-        result = request_mediated_outside_repo_write_text(
-            repo_root=self.fixture.repo,
-            submitted_target=submitted,
-            payload="phase10-e4 sibling outside write should not be written\n",
-            actor="phase10-e4-test",
-            request_id="e4-sibling-outside-write",
-        )
-
-        self._assert_mediated_outside_repo_denial(result, expected_target)
-        self.assertFalse(expected_target.exists())
-
-    def test_mediated_absolute_outside_repo_write_is_denied_and_target_is_not_created(self):
-        target = self.fixture.absolute_outside / "e4-absolute-outside.txt"
-
-        result = request_mediated_outside_repo_write_text(
-            repo_root=self.fixture.repo,
-            submitted_target=target,
-            payload="phase10-e4 absolute outside write should not be written\n",
-            actor="phase10-e4-test",
-            request_id="e4-absolute-outside-write",
-        )
-
-        self._assert_mediated_outside_repo_denial(result, target)
-        self.assertTrue(Path(result.path_resolution.submitted_target).is_absolute())
-        self.assertFalse(target.exists())
-
-    def test_mediated_traversal_escaping_repo_write_is_denied_and_target_is_not_created(self):
-        submitted = Path("work") / ".." / ".." / "outside-sibling" / "e4-traversal-outside.txt"
-        expected_target = self.fixture.sibling_outside / "e4-traversal-outside.txt"
-
-        result = request_mediated_outside_repo_write_text(
-            repo_root=self.fixture.repo,
-            submitted_target=submitted,
-            payload="phase10-e4 traversal outside write should not be written\n",
-            actor="phase10-e4-test",
-            request_id="e4-traversal-outside-write",
-        )
-
-        self._assert_mediated_outside_repo_denial(result, expected_target)
-        self.assertFalse(expected_target.exists())
-
-    def test_mediated_symlink_alias_escaping_repo_write_is_denied_and_target_is_not_created(self):
-        try:
-            alias = self.fixture.create_outside_alias_inside_repo()
-        except OSError as exc:
-            self.skipTest(f"symlink fixture unavailable: {exc}")
-        submitted = alias / "e4-symlink-outside.txt"
-        expected_target = self.fixture.sibling_outside / "e4-symlink-outside.txt"
-
-        result = request_mediated_outside_repo_write_text(
-            repo_root=self.fixture.repo,
-            submitted_target=submitted,
-            payload="phase10-e4 symlink outside write should not be written\n",
-            actor="phase10-e4-test",
-            request_id="e4-symlink-outside-write",
-        )
-
-        self._assert_mediated_outside_repo_denial(result, expected_target)
-        self.assertTrue(self._is_relative_to(Path(result.path_resolution.absolute_target), self.fixture.repo.resolve()))
-        self.assertFalse(expected_target.exists())
-
-    def test_denied_existing_outside_repo_write_does_not_modify_target(self):
-        before_digest = self.fixture.digest(self.fixture.existing_outside)
-
-        result = request_mediated_outside_repo_write_text(
-            repo_root=self.fixture.repo,
-            submitted_target=self.fixture.existing_outside,
-            payload="phase10-e4 outside overwrite should not be written\n",
-            actor="phase10-e4-test",
-            operation="replace",
-            request_id="e4-existing-outside-overwrite",
-        )
-
-        after_digest = self.fixture.digest(self.fixture.existing_outside)
-        self._assert_mediated_outside_repo_denial(result, self.fixture.existing_outside)
-        self.assertEqual(after_digest, before_digest)
 
     def test_resolve_repo_boundary_path_canonicalizes_outside_repo_cases(self):
         try:
@@ -217,15 +136,6 @@ class Phase10E4MediatedOutsideRepoWriteDenialTests(unittest.TestCase):
                 self.assertFalse(path_resolution.target_under_repo)
                 self.assertTrue(path_resolution.target_outside_repo)
 
-    def test_repo_internal_target_is_not_accepted_by_e4_outside_repo_helper(self):
-        with self.assertRaisesRegex(ValueError, "outside-repo"):
-            request_mediated_outside_repo_write_text(
-                repo_root=self.fixture.repo,
-                submitted_target=Path("work") / "inside-repo.txt",
-                payload="phase10-e4 inside repo request is out of scope\n",
-                actor="phase10-e4-test",
-                request_id="e4-inside-repo-out-of-scope",
-            )
 
     def test_e1_known_gap_vocabulary_remains_currently_bypassable(self):
         self.assertEqual(WRITE_BYPASS_HARNESS_RESULT_CURRENTLY_BYPASSABLE, "CURRENTLY_BYPASSABLE")

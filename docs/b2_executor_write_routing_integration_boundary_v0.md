@@ -28,7 +28,7 @@ Out of scope:
 
 ## 2. Current B2 state
 
-The B2-1 router exists at `src/evidence/b2_executor_write_router.py`. It
+The B2-1 router exists at `jangseung/evidence/b2_executor_write_router.py`. It
 accepts `PreLiveExecutorWriteRequest`, routes protected `.aeg/` targets through
 the B1-B guard, the B1-C evidence binding, and the deny-only mediator model,
 then returns a denial/no-mutation record.
@@ -49,22 +49,22 @@ component, not the runtime executor write path.
 
 Checked files and directories:
 
-- `src/cli/main.py`
+- `jangseung/cli/main.py`
 - `src/agents/noop.py`
 - `src/provider_adapter.py`
 - `src/citizen_one.py`
-- `src/state/store.py`
-- `src/state/git.py`
-- `src/evidence/packet.py`
-- `src/evidence/b2_executor_write_router.py`
-- `src/evidence/b1_aeg_integrity_guard.py`
-- `src/evidence/b1_aeg_integrity_evidence_binding.py`
-- `src/evidence/b1_aeg_integrity_verify.py`
-- `src/evidence/deny_only_mediator.py`
-- `src/evidence/mediated_aeg_write_path.py`
-- `src/evidence/mediated_repo_boundary_write_path.py`
-- `src/evidence/mediated_write_evidence_binding.py`
-- `src/evidence/mediated_write_boundary.py`
+- `jangseung/state/store.py`
+- `jangseung/state/git.py`
+- `jangseung/evidence/packet.py`
+- `jangseung/evidence/b2_executor_write_router.py`
+- `jangseung/evidence/b1_aeg_integrity_guard.py`
+- `jangseung/evidence/b1_aeg_integrity_evidence_binding.py`
+- `jangseung/evidence/b1_aeg_integrity_verify.py`
+- `jangseung/evidence/deny_only_mediator.py`
+- `jangseung/evidence/mediated_aeg_write_path.py`
+- `jangseung/evidence/mediated_repo_boundary_write_path.py`
+- `jangseung/evidence/mediated_write_evidence_binding.py`
+- `jangseung/evidence/mediated_write_boundary.py`
 - `docs/live_executor_entry_gate_v0.md`
 - `docs/b2_executor_write_routing_through_mediator_guard_path_v0.md`
 - `tests/test_b2_executor_write_routing.py`
@@ -72,20 +72,20 @@ Checked files and directories:
 
 Write-related candidates found:
 
-- `src/state/store.py::ensure_initialized` creates the folder-local `.aeg/`
+- `jangseung/state/store.py::ensure_initialized` creates the folder-local `.aeg/`
   state directory, config, runs directory, and ledger file.
-- `src/state/store.py::save_run` writes `run.json`, `manifest.json`,
+- `jangseung/state/store.py::save_run` writes `run.json`, `manifest.json`,
   `evidence.json`, and appends a ledger entry under `.aeg/`.
-- `src/state/store.py::append_ledger` appends to `.aeg/ledger.jsonl`.
+- `jangseung/state/store.py::append_ledger` appends to `.aeg/ledger.jsonl`.
 - Tests create temporary repo fixtures and perform known-gap or fixture writes
   under test-controlled temporary directories.
-- `src/evidence/mediated_aeg_write_path.py` and
-  `src/evidence/mediated_repo_boundary_write_path.py` model denied mediated
+- `jangseung/evidence/mediated_aeg_write_path.py` and
+  `jangseung/evidence/mediated_repo_boundary_write_path.py` model denied mediated
   write requests without mutating targets.
 
 Executor-like ingress candidates found:
 
-- `src/cli/main.py::_cmd_run` is the current CLI orchestration entry. It calls
+- `jangseung/cli/main.py::_cmd_run` is the current CLI orchestration entry. It calls
   `execute_contract`, builds evidence, and saves run artifacts.
 - `src/agents/noop.py::execute_contract` is the current Day-1 executor-like
   implementation. It returns a no-op contract and reports no file mutation,
@@ -94,7 +94,7 @@ Executor-like ingress candidates found:
   reported-only and is not a mutation ingress.
 - `src/provider_adapter.py` records disabled provider metadata and does not call
   provider SDKs, environment secrets, or network paths.
-- `src/evidence/b2_executor_write_router.py` is the B2-1 pre-live structured
+- `jangseung/evidence/b2_executor_write_router.py` is the B2-1 pre-live structured
   write routing component and is a direct candidate for a future harness seam.
 
 Candidates explicitly not found:
@@ -124,12 +124,12 @@ Assumptions not made:
 
 | Candidate seam | Path | Existing or future fixture-only | Why suitable for B2-3 harness | Must not be inferred yet |
 | --- | --- | --- | --- | --- |
-| Pre-live router API | `src/evidence/b2_executor_write_router.py::route_pre_live_executor_write_request` | Existing | Already accepts a structured executor-like request and returns a guard/mediator-compatible routed denial record. | It is not invoked by the runtime executor path. |
-| Request builder | `src/evidence/b2_executor_write_router.py::build_pre_live_executor_write_request` | Existing | Converts target, operation, payload digest, and metadata into the B2-1 request shape without storing raw payload. | It is not a production ingress and does not authorize writes. |
-| CLI run boundary after executor result | `src/cli/main.py::_cmd_run` around `execute_contract(...)` | Existing code, future harness only | It is the current orchestration point where an executor result is available before evidence packet construction. A B2-3 harness could model a scoped executor-like write intent here without changing production behavior. | Current `_cmd_run` has no executor write intent and no router call. |
+| Pre-live router API | `jangseung/evidence/b2_executor_write_router.py::route_pre_live_executor_write_request` | Existing | Already accepts a structured executor-like request and returns a guard/mediator-compatible routed denial record. | It is not invoked by the runtime executor path. |
+| Request builder | `jangseung/evidence/b2_executor_write_router.py::build_pre_live_executor_write_request` | Existing | Converts target, operation, payload digest, and metadata into the B2-1 request shape without storing raw payload. | It is not a production ingress and does not authorize writes. |
+| CLI run boundary after executor result | `jangseung/cli/main.py::_cmd_run` around `execute_contract(...)` | Existing code, future harness only | It is the current orchestration point where an executor result is available before evidence packet construction. A B2-3 harness could model a scoped executor-like write intent here without changing production behavior. | Current `_cmd_run` has no executor write intent and no router call. |
 | No-op executor result model | `src/agents/noop.py::execute_contract` | Existing code, future harness only | It is the current executor-like component and records no actions or mutation. A future harness can define how a write-intent fixture differs from this no-op result. | The current no-op executor is not a write ingress. |
-| Mediated request shape | `src/evidence/deny_only_mediator.py::WriteMediationRequest` | Existing downstream model | B2-1 already translates protected requests into this model, so B2-4 can bind routed decision/evidence/verify replay around it. | The mediator model is downstream of routing and is not runtime enforcement. |
-| Phase 10 denied write helpers | `src/evidence/mediated_aeg_write_path.py`, `src/evidence/mediated_repo_boundary_write_path.py` | Existing evidence helpers | They show canonical path-resolution patterns and denied no-mutation result shapes useful for comparison. | They are not executor ingress and should not be wired as production adapters by B2-2. |
+| Mediated request shape | `jangseung/evidence/deny_only_mediator.py::WriteMediationRequest` | Existing downstream model | B2-1 already translates protected requests into this model, so B2-4 can bind routed decision/evidence/verify replay around it. | The mediator model is downstream of routing and is not runtime enforcement. |
+| Phase 10 denied write helpers | `jangseung/evidence/mediated_aeg_write_path.py`, `jangseung/evidence/mediated_repo_boundary_write_path.py` | Existing evidence helpers | They show canonical path-resolution patterns and denied no-mutation result shapes useful for comparison. | They are not executor ingress and should not be wired as production adapters by B2-2. |
 | Scoped B2-3 harness seam | proposed `tests/...` fixture only | Future fixture-only | A B2-3 test harness can build a synthetic executor-like write intent, route it through B2-1, and assert evidence fields before runtime wiring is attempted. | It must not grant runtime authority, execute a command, call a provider, use the network, or mutate a target file. |
 
 ## 5. `save_run` / evidence packet / ledger flow versus executor write routing

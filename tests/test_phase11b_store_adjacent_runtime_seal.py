@@ -1,14 +1,14 @@
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     SAFE_DEFAULT,
     STORE_ADJACENT_PACKET_ORIGIN_BASIS_RUNTIME_BUILD_PATH,
     STORE_ADJACENT_RUNTIME_SEAL_COMPLETE_LABEL,
     STORE_ADJACENT_RUNTIME_SEAL_LIMITS,
 )
-from src.evidence.store_adjacent_runtime_seal import (
+from jangseung.evidence.store_adjacent_runtime_seal import (
     STORE_ADJACENT_RUNTIME_SEAL_VERIFY_ACCEPTED,
     STORE_ADJACENT_RUNTIME_SEAL_VERIFY_REJECTED,
     build_store_adjacent_runtime_seal_metadata,

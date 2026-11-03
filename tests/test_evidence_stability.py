@@ -8,9 +8,9 @@ import sys
 
 import pytest
 
-from src.cli.main import _cmd_evidence_list, _cmd_evidence_show, _cmd_evidence_verify_hooks
-from src.state.file_lock import exclusive_hook_lock
-from src.state.hook_ledger import append_hook_decision_record, read_hook_ledger, verify_hook_ledger
+from jangseung.cli.main import _cmd_evidence_list, _cmd_evidence_show, _cmd_evidence_verify_hooks
+from jangseung.state.file_lock import exclusive_hook_lock
+from jangseung.state.hook_ledger import append_hook_decision_record, read_hook_ledger, verify_hook_ledger
 
 
 @pytest.fixture
@@ -67,9 +67,10 @@ def test_non_utf8_hook_line_is_unreadable_and_chain_still_fails(repo, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "DEGRADED"
     assert _cmd_evidence_verify_hooks(repo, as_json=True) == 1
     assert json.loads(capsys.readouterr().out)["status"] == "FAIL"
-    with pytest.raises(ValueError, match="chain is invalid"):
-        append(repo)
     assert snapshot(repo) == state
+    # Recording stops only for a damaged tail, and new records do not hide the damage.
+    append(repo)
+    assert not verify_hook_ledger(repo).ok
 
 
 @pytest.mark.parametrize("missing", ["run.json", "evidence.json", "manifest.json"])
@@ -101,7 +102,7 @@ def test_dead_writer_lock_is_recovered_without_changing_records(repo):
     ledger = repo / ".aeg" / "hook_ledger.jsonl"
     before = ledger.read_bytes()
     lock = repo / ".aeg" / "hook_ledger.lock"
-    child = subprocess.run([sys.executable, "-B", "-c", "import os,sys\nfrom pathlib import Path\nfrom src.state.file_lock import exclusive_hook_lock\nwith exclusive_hook_lock(Path(sys.argv[1])):\n os._exit(17)\n", str(lock)],
+    child = subprocess.run([sys.executable, "-B", "-c", "import os,sys\nfrom pathlib import Path\nfrom jangseung.state.file_lock import exclusive_hook_lock\nwith exclusive_hook_lock(Path(sys.argv[1])):\n os._exit(17)\n", str(lock)],
                            env=child_env(), capture_output=True, timeout=15)
     assert child.returncode == 17, child.stderr
     assert lock.exists()
@@ -136,7 +137,7 @@ def test_os_guard_is_exclusive_and_file_is_reused(repo):
 
 
 def test_concurrent_writers_preserve_chain(repo):
-    code = "from src.state.hook_ledger import append_hook_decision_record\nimport sys\nfor i in range(4):\n append_hook_decision_record(sys.argv[1],substrate='codex',tool_name='Read',hook_decision='ALLOW',permission_decision='allow',fail_closed=False,reason_codes=['test'],exit_code=0)\n"
+    code = "from jangseung.state.hook_ledger import append_hook_decision_record\nimport sys\nfor i in range(4):\n append_hook_decision_record(sys.argv[1],substrate='codex',tool_name='Read',hook_decision='ALLOW',permission_decision='allow',fail_closed=False,reason_codes=['test'],exit_code=0)\n"
     workers = [subprocess.Popen([sys.executable, "-B", "-c", code, str(repo)], env=child_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
     try:
         for process in workers:

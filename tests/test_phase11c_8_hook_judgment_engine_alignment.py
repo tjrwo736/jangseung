@@ -2,26 +2,24 @@ import inspect
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     CLEAN_CORE,
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     NEEDS_USER_GATE,
     NOT_CHECKED,
     SAFE_DEFAULT,
 )
-from src.evidence import hook_judgment_engine_alignment
-from src.evidence.claude_code_tool_call_mapping import (
+from jangseung.evidence import hook_judgment_engine_alignment
+from jangseung.evidence.claude_code_tool_call_mapping import (
     DENY_CANDIDATE,
     STRUCTURED_ACTION_CANDIDATE,
 )
-from src.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
-from src.evidence.hook_judgment_engine_alignment import (
+from jangseung.evidence.hook_decision_adapter import ALLOW, ASK, DEFER, DENY
+from jangseung.evidence.hook_judgment_engine_alignment import (
     ENGINE_BASIS_SOURCES,
-    PHASE11C_8_COMPLETE_LABEL,
-    build_hook_judgment_engine_alignment_evidence,
     judge_pretooluse_with_aeg_engine,
 )
-from src.evidence.structured_action_capabilities import (
+from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_LIMITED_ALLOWED,
     SCOPE_LIMIT_REJECTED,
@@ -73,11 +71,11 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
             (
                 "Edit",
                 {
-                    "file_path": "src/law/policy.py",
+                    "file_path": "jangseung/law/policy.py",
                     "old_string": "old",
                     "new_string": "new",
                 },
-                "src/law/policy.py",
+                "jangseung/law/policy.py",
             ),
         )
 
@@ -287,8 +285,6 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
     def test_hook_decision_record_includes_engine_basis(self):
         decision = self._judge("Read", {"file_path": "docs/guide.md"})
         record = decision.to_record()
-
-        self.assertEqual(record["completion_label"], PHASE11C_8_COMPLETE_LABEL)
         self.assertIn("engine_decision_basis", record)
         self.assertEqual(record["engine_basis_sources"], ENGINE_BASIS_SOURCES)
         for key in (
@@ -304,48 +300,6 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
                 self.assertIn(key, record["engine_decision_basis"])
         self._assert_engine_parity(decision)
 
-    def test_alignment_evidence_records_forbidden_scope_and_reuse_points(self):
-        evidence = build_hook_judgment_engine_alignment_evidence()
-
-        self.assertEqual(evidence["completion_label"], PHASE11C_8_COMPLETE_LABEL)
-        self.assertEqual(
-            evidence["protected_path_policy_source"],
-            "src.classify.is_protected_path",
-        )
-        self.assertIn("src.classify.classify_task", evidence["engine_basis_sources"])
-        self.assertIn("src.law.apply_law", evidence["engine_basis_sources"])
-        self.assertIn(
-            "src.evidence.structured_action_capabilities.evaluate_action_capabilities",
-            evidence["engine_basis_sources"],
-        )
-        self.assertTrue(evidence["hook_decision_matches_or_is_stricter_than_engine"])
-        self.assertFalse(evidence["protected_path_policy_duplicated_in_hook"])
-        self.assertFalse(evidence["hook_policy_divergence_allowed"])
-        self.assertFalse(evidence["unclassified_bash_is_allow"])
-        self.assertFalse(evidence["reported_only_trusted_as_judgment_basis"])
-        self.assertFalse(evidence["not_checked_is_allow"])
-        self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
-        self.assertEqual(
-            evidence["live_executor_authority"],
-            LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
-        )
-        for field in (
-            "adapter_output_is_actual_hook_response",
-            "hook_command_implemented",
-            "hook_installation_implemented",
-            "claude_code_execution_performed",
-            "real_hook_response_emitted",
-            "stdout_stderr_hook_output_written",
-            "provider_model_network_implemented",
-            "api_key_env_secret_loading_implemented",
-            "store_write_binding_implemented",
-            "aeg_write_performed",
-            "write_authority_granted",
-            "public_release_performed",
-            "main_merge_performed",
-        ):
-            with self.subTest(field=field):
-                self.assertFalse(evidence[field])
 
     def test_adapter_source_has_no_runtime_provider_store_or_process_surface(self):
         source = inspect.getsource(hook_judgment_engine_alignment)
@@ -370,8 +324,8 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
             "ev" + "al(",
             "__im" + "port__(",
             "import" + "lib",
-            "src.state." + "store",
-            "from src.state import " + "store",
+            "jangseung.state." + "store",
+            "from jangseung.state import " + "store",
             "sto" + "re.",
         )
 
@@ -383,11 +337,10 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         doc = DOC_PATH.read_text(encoding="utf-8")
 
         for marker in (
-            PHASE11C_8_COMPLETE_LABEL,
             "hook policy divergence was unsafe",
             "existing engine reuse rule",
-            "src.classify",
-            "src.law",
+            "jangseung.classify",
+            "jangseung.law",
             "structured_action_capabilities",
             "is_protected_path",
             "dangerous Bash safety net",
@@ -422,7 +375,7 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         self.assertTrue(basis["protected_path_gate"]["protected_path_detected"])
         self.assertEqual(
             basis["protected_path_gate"]["policy_source"],
-            "src.classify.is_protected_path",
+            "jangseung.classify.is_protected_path",
         )
         self.assertFalse(
             basis["protected_path_gate"]["protected_path_policy_duplicated_in_hook"]
@@ -685,7 +638,7 @@ class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
         # Bash (unclassified) and out-of-scope inputs must never reach allow.
         never_allow = [
             ("Bash", {"command": "dd if=/dev/zero of=x"}),
-            ("Bash", {"command": "ls -la"}),
+            ("Bash", {"command": "python script.py"}),
             ("Bash", {"command": "some-unknown-tool --flag"}),
             ("Read", {"file_path": "/etc/passwd"}),
         ]
@@ -697,16 +650,6 @@ class Phase11C8ClearlySafeAllowPolicyTests(unittest.TestCase):
     def test_unclassified_bash_is_defer_not_allow(self):
         decision = self._judge("Bash", {"command": "dd if=/dev/zero of=x"})
         self.assertEqual(decision.hook_decision, DEFER)
-
-    def test_evidence_records_clearly_safe_allow_policy(self):
-        evidence = build_hook_judgment_engine_alignment_evidence()
-        self.assertTrue(evidence["clearly_safe_normal_file_operation_maps_to_allow"])
-        self.assertFalse(evidence["not_checked_impact_maps_to_allow"])
-        self.assertFalse(evidence["unclassified_bash_maps_to_allow"])
-        self.assertFalse(evidence["ambiguous_input_maps_to_allow"])
-        self.assertTrue(evidence["apply_patch_tool_supported"])
-        self.assertTrue(evidence["apply_patch_targets_reuse_existing_path_gates"])
-        self.assertTrue(evidence["apply_patch_unparseable_maps_to_deny"])
 
 
 class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
@@ -803,7 +746,7 @@ class Phase11C8ApplyPatchTargetPathGateTests(unittest.TestCase):
                 self.assertTrue(basis["protected_path_gate"]["protected_path_detected"])
                 self.assertTrue(
                     any(
-                        reason.startswith("src.classify.is_protected_path_maps_to_deny_candidate:")
+                        reason.startswith("jangseung.classify.is_protected_path_maps_to_deny_candidate:")
                         for reason in basis["tool_call_mapping"]["reasons"]
                     )
                 )
@@ -893,14 +836,19 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
 
     def test_unclassified_bash_stays_ask_no_false_positive(self):
         # Known file reads now have a separate positive classification.
-        for command in ("pwd", "ls -la", "git status", "echo x > src/app.py"):
+        for command in ("python script.py", "npm install", "make build", "echo x > src/app.py"):
             with self.subTest(command=command):
                 decision = self._judge_bash(command)
                 self.assertEqual(decision.hook_decision, DEFER)
                 self.assertNotEqual(decision.hook_decision, ALLOW)
 
+    def test_read_only_commands_are_allowed_by_the_positive_grammar(self):
+        for command in ("pwd", "ls -la", "git status"):
+            with self.subTest(command=command):
+                self.assertEqual(self._judge_bash(command).hook_decision, ALLOW)
+
     def test_bypass_and_complex_bash_never_allow(self):
-        # Unparseable target => ask/defer, never allow, and NOT falsely denied.
+        # A literal secret anywhere in the command denies, even when unparseable.
         for command in (
             "bash -c 'echo x > .env'",
             "E=.env; echo x > $E",
@@ -909,7 +857,15 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 decision = self._judge_bash(command)
-                self.assertNotEqual(decision.hook_decision, ALLOW)
+                self.assertEqual(decision.hook_decision, DENY)
+                gate = decision.engine_decision_basis["bash_target_gate"]
+                self.assertTrue(gate["parse_ambiguous"])
+
+    def test_unparseable_target_without_a_literal_secret_is_deferred(self):
+        # Unparseable target => ask/defer, never allow, and NOT falsely denied.
+        for command in ("echo x > $TARGET", "rm $(cat list.txt)", "bash -c \"$CMD\""):
+            with self.subTest(command=command):
+                decision = self._judge_bash(command)
                 self.assertEqual(decision.hook_decision, DEFER)
                 gate = decision.engine_decision_basis["bash_target_gate"]
                 self.assertTrue(gate["parse_ambiguous"])
@@ -919,16 +875,6 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
         for command in ("rm -rf /", "git reset --hard", "git clean -fd", "sudo rm .env"):
             with self.subTest(command=command):
                 self.assertEqual(self._judge_bash(command).hook_decision, DENY)
-
-    def test_evidence_records_bash_target_gate(self):
-        evidence = build_hook_judgment_engine_alignment_evidence()
-        self.assertTrue(
-            evidence["bash_write_delete_target_protected_or_out_of_scope_maps_to_deny"]
-        )
-        self.assertTrue(evidence["bash_target_parsing_is_structural_shlex_not_string_match"])
-        self.assertTrue(
-            evidence["bash_unparseable_target_maps_to_ask_defer_not_deny_not_allow"]
-        )
 
 
 class Phase11C8PowerShellTargetPathGateTests(unittest.TestCase):
@@ -991,7 +937,6 @@ class Phase11C8PowerShellTargetPathGateTests(unittest.TestCase):
     def test_read_only_powershell_commands_do_not_false_positive_deny(self):
         for command in (
             "Get-ChildItem .github\\workflows\\",
-            "Get-Content .env",
             "Test-Path .env",
         ):
             with self.subTest(command=command):
@@ -1002,10 +947,15 @@ class Phase11C8PowerShellTargetPathGateTests(unittest.TestCase):
                 self.assertFalse(gate["deny"])
                 self.assertEqual(gate["targets"], tuple())
 
+    def test_powershell_secret_read_is_denied(self):
+        decision = self._judge_powershell("Get-Content .env")
+        self.assertEqual(decision.hook_decision, DENY)
+        self.assertIn("shell_read_targets_secret_state_or_outside_repo", decision.decision_reasons)
+
     def test_ambiguous_powershell_never_allows(self):
         for command in (
             'Remove-Item $target',
-            '$p = ".env"; Remove-Item $p',
+            '$p = "notes.txt"; Remove-Item $p',
             "Get-Content x | Where-Object { $_ }",
         ):
             with self.subTest(command=command):
@@ -1015,19 +965,6 @@ class Phase11C8PowerShellTargetPathGateTests(unittest.TestCase):
                 gate = decision.engine_decision_basis["powershell_target_gate"]
                 self.assertTrue(gate["parse_ambiguous"])
                 self.assertFalse(gate["deny"])
-
-    def test_evidence_records_powershell_target_gate(self):
-        evidence = build_hook_judgment_engine_alignment_evidence()
-        self.assertTrue(
-            evidence["powershell_write_delete_target_protected_or_out_of_scope_maps_to_deny"]
-        )
-        self.assertTrue(
-            evidence["powershell_target_parsing_is_structural_tokenizer_not_string_match"]
-        )
-        self.assertTrue(
-            evidence["powershell_unparseable_target_maps_to_ask_defer_not_allow"]
-        )
-        self.assertTrue(evidence["powershell_read_only_commands_do_not_deny_protected_paths"])
 
 
 if __name__ == "__main__":

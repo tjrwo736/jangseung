@@ -56,7 +56,7 @@ module, test module, and document.
 
 ## Settings Candidate
 
-Source: `src/evidence/claude_code_hook_install_dry_run_candidate.py`,
+Source: `jangseung/evidence/claude_code_hook_install_dry_run_candidate.py`,
 `build_claude_code_settings_candidate()`.
 
 ```json

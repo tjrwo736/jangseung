@@ -21,7 +21,7 @@ the current policy. It does not execute the action.
 Implementation:
 
 ```text
-src/evidence/structured_action_capabilities.py
+jangseung/evidence/structured_action_capabilities.py
 tests/test_phase11b_action_capability_gate.py
 ```
 

@@ -5,14 +5,14 @@ import unittest
 from pathlib import Path
 from types import MappingProxyType
 
-from src.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
-from src.evidence import claude_code_tool_call_mapping
-from src.evidence.claude_code_pretooluse_input_contract import (
+from jangseung.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
+from jangseung.evidence import claude_code_tool_call_mapping
+from jangseung.evidence.claude_code_pretooluse_input_contract import (
     ClaudeCodePreToolUseInput,
     validate_claude_code_pretooluse_input,
 )
-from src.evidence.claude_code_tool_call_mapping import (
+from jangseung.evidence.claude_code_tool_call_mapping import (
     BASH_DANGEROUS,
     BASH_NOT_CHECKED,
     DENY_CANDIDATE,
@@ -21,7 +21,6 @@ from src.evidence.claude_code_tool_call_mapping import (
     HOLD_CURRENT_STATE_CANDIDATE,
     INVALID_TOOL_INPUT,
     NORMAL_REPO_PATH,
-    PHASE11C_2_COMPLETE_LABEL,
     POWERSHELL_NOT_CHECKED,
     POWERSHELL_SAFE_READ_ONLY,
     POWERSHELL_TARGETS_EXTRACTED,
@@ -31,7 +30,6 @@ from src.evidence.claude_code_tool_call_mapping import (
     STRUCTURED_ACTION_CANDIDATE,
     UNKNOWN_TOOL,
     WRITE_FILE,
-    build_tool_call_mapping_contract_evidence,
     extract_apply_patch_targets,
     extract_powershell_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
@@ -107,7 +105,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             (
                 "Edit",
                 {
-                    "file_path": "src/law/policy.py",
+                    "file_path": "jangseung/law/policy.py",
                     "old_string": "old",
                     "new_string": "new",
                 },
@@ -409,81 +407,6 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             self.assertEqual(before, after)
             self._assert_candidate_only_no_authority(candidate)
 
-    def test_evidence_records_contract_only_boundaries(self):
-        evidence = build_tool_call_mapping_contract_evidence()
-
-        self.assertEqual(evidence["completion_label"], PHASE11C_2_COMPLETE_LABEL)
-        self.assertEqual(
-            evidence["supported_tool_mappings"],
-            {
-                "Read": READ_REPO,
-                "Write": WRITE_FILE,
-                "Edit": EDIT_FILE,
-                "Bash": RUN_COMMAND,
-                "PowerShell": RUN_COMMAND,
-                "apply_patch": WRITE_FILE,
-            },
-        )
-        self.assertEqual(
-            evidence["protected_path_policy_source"],
-            "src.classify.is_protected_path",
-        )
-        self.assertEqual(evidence["state_dir_boundary_source"], "src.contracts.STATE_DIR")
-        self.assertTrue(evidence["absolute_or_traversal_path_deny_candidate"])
-        self.assertTrue(evidence["apply_patch_tool_supported"])
-        self.assertTrue(evidence["codex_apply_patch_tool_call_supported"])
-        self.assertTrue(evidence["apply_patch_maps_to_write_file_candidate"])
-        self.assertTrue(evidence["apply_patch_target_parsing_is_structural_directive_parse"])
-        self.assertTrue(evidence["apply_patch_unparseable_maps_to_deny_candidate"])
-        self.assertTrue(evidence["powershell_tool_call_supported"])
-        self.assertTrue(evidence["powershell_maps_to_run_command_candidate"])
-        self.assertTrue(
-            evidence["powershell_target_parsing_is_structural_tokenizer_not_string_match"]
-        )
-        self.assertTrue(
-            evidence["powershell_complex_or_dynamic_commands_fail_closed_to_ask_defer"]
-        )
-        self.assertTrue(
-            evidence["powershell_read_only_commands_do_not_create_write_delete_targets"]
-        )
-        self.assertTrue(evidence["git_reset_hard_is_dangerous"])
-        self.assertTrue(evidence["git_clean_force_delete_is_dangerous"])
-        self.assertNotIn("protected_path_segments", evidence)
-        self.assertNotIn("protected_path_filenames", evidence)
-        self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
-        self.assertEqual(
-            evidence["live_executor_authority"],
-            LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
-        )
-        self.assertTrue(evidence["mapping_output_is_structured_action_candidate_only"])
-        for field in (
-            "mapping_output_is_execution",
-            "mapping_output_is_permission_decision",
-            "mapping_output_is_hook_response",
-            "mapping_output_grants_write_authority",
-            "mapping_output_applies_patch",
-            "hook_input_trusted_as_decision",
-            "hook_input_trusted_as_capability_grant",
-            "unsupported_unknown_or_not_checked_is_pass",
-            "hook_command_implemented",
-            "hook_installation_implemented",
-            "claude_code_execution_performed",
-            "codex_implementation_added",
-            "provider_model_network_implemented",
-            "api_key_env_secret_loading_implemented",
-            "network_client_implemented",
-            "action_execution_engine_implemented",
-            "tool_runtime_implemented",
-            "write_authority_granted",
-            "filesystem_mutation_by_mapping",
-            "patch_application_implemented",
-            "public_release_performed",
-            "universal_prompt_injection_prevention_claimed",
-            "sandbox_process_isolation_claimed",
-            "bash_safe_claimed",
-        ):
-            with self.subTest(field=field):
-                self.assertFalse(evidence[field])
 
     def test_mapping_source_has_no_hook_runtime_provider_store_or_process_surface(self):
         source = inspect.getsource(claude_code_tool_call_mapping)
@@ -508,8 +431,8 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             "ev" + "al(",
             "__im" + "port__(",
             "import" + "lib",
-            "src.state." + "store",
-            "from src.state import " + "store",
+            "jangseung.state." + "store",
+            "from jangseung.state import " + "store",
             "sto" + "re.",
         )
 
@@ -521,7 +444,6 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         doc = DOC_PATH.read_text(encoding="utf-8")
 
         for marker in (
-            PHASE11C_2_COMPLETE_LABEL,
             "Read(file_path)",
             "-> READ_REPO candidate",
             "Write(file_path, content)",
@@ -539,7 +461,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             "mapping output != patch application",
             "mapping output preserves tool_use_id provenance",
             "hook input remains untrusted raw executor output",
-            "src.classify.is_protected_path",
+            "jangseung.classify.is_protected_path",
             "unsupported/unknown/NOT_CHECKED != PASS",
             "safe default = hold_current_state",
             "live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD",
@@ -559,7 +481,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             "Dockerfile -> DENY_CANDIDATE",
             "pyproject.toml -> DENY_CANDIDATE",
             "deploy/prod.yml -> DENY_CANDIDATE",
-            "src/law/policy.py -> DENY_CANDIDATE",
+            "jangseung/law/policy.py -> DENY_CANDIDATE",
             "rm -rf",
             "git reset --hard",
             "git clean -fd",
@@ -643,7 +565,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
 
 class BashTargetExtractionTests(unittest.TestCase):
     def _extract(self, command):
-        from src.evidence.claude_code_tool_call_mapping import (
+        from jangseung.evidence.claude_code_tool_call_mapping import (
             extract_bash_write_delete_targets,
         )
 
@@ -655,7 +577,13 @@ class BashTargetExtractionTests(unittest.TestCase):
             "echo x >> .env": [".env"],
             "echo x | tee .env": [".env"],
             "cp src/a.py .env": [".env"],
-            "mv src/a.py .env": [".env"],
+            "mv src/a.py .env": ["src/a.py", ".env"],
+            "mv .env backup": [".env", "backup"],
+            "sed -i s/a/b/ .env": [".env"],
+            "echo x>.env": [".env"],
+            "rm .env;ls": [".env"],
+            "ls\nrm .env": [".env"],
+            "git rm .env": [".env"],
             "rm .env": [".env"],
             "dd of=.env if=/dev/zero": [".env"],
             "truncate -s 0 .env": [".env"],
@@ -682,8 +610,6 @@ class BashTargetExtractionTests(unittest.TestCase):
             "E=.env; echo x > $E",
             "echo x > $(echo .env)",
             "echo x > `echo .env`",
-            "bash -c 'echo x > .env'",
-            "sh -c 'rm .env'",
             "echo x | xargs rm",
             "find . -name '*.env' -delete",
         ):
@@ -691,6 +617,13 @@ class BashTargetExtractionTests(unittest.TestCase):
                 extraction = self._extract(command)
                 self.assertTrue(extraction.parse_ambiguous)
                 self.assertEqual(extraction.write_delete_targets, tuple())
+
+    def test_literal_targets_inside_a_nested_shell_are_still_reported(self):
+        for command in ("bash -c 'echo x > .env'", "sh -c 'rm .env'", "echo $X > .env"):
+            with self.subTest(command=command):
+                extraction = self._extract(command)
+                self.assertTrue(extraction.parse_ambiguous)
+                self.assertEqual(extraction.write_delete_targets, (".env",))
 
     def test_safe_commands_have_no_targets(self):
         for command in ("pwd", "ls -la", "git status", "cat README.md", "grep foo x.txt"):
@@ -715,7 +648,20 @@ class PowerShellTargetExtractionTests(unittest.TestCase):
             'Out-File -FilePath ".env"': [("write", ".env")],
             '"x" | Out-File ".env"': [("write", ".env")],
             '"x" > .env': [("write", ".env")],
-            'Move-Item -Path "x" -Destination ".env"': [("write", ".env")],
+            'Move-Item -Path "x" -Destination ".env"': [("delete", "x"), ("write", ".env")],
+            'Move-Item .env y': [("delete", ".env"), ("write", "y")],
+            'Rename-Item .env y': [("delete", ".env"), ("write", "y")],
+            'ri .env': [("delete", ".env")],
+            'erase .env': [("delete", ".env")],
+            'Add-Content .env x': [("write", ".env")],
+            'Clear-Content .env': [("write", ".env")],
+            'New-Item .env': [("write", ".env")],
+            'cp a .env': [("write", ".env")],
+            'Get-ChildItem\nRemove-Item .env': [("delete", ".env")],
+            'ls & Remove-Item .env': [("delete", ".env")],
+            'ls # note\nRemove-Item .env': [("delete", ".env")],
+            'Test-Path (Remove-Item .env)': [("delete", ".env")],
+            'pwsh -c "Remove-Item .env"': [("delete", ".env")],
             'Copy-Item -Path "x" -Destination ".env"': [("write", ".env")],
             'Copy-Item "x" ".env"': [("write", ".env")],
         }

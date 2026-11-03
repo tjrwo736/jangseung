@@ -26,7 +26,7 @@ The fixture ingress record captures:
 - `phase11a_status = PHASE11A_NOT_STARTED` through the routed result.
 
 The implementation lives in
-`src/evidence/b2_executor_like_ingress_harness.py` as fixture support and is
+`jangseung/evidence/b2_executor_like_ingress_harness.py` as fixture support and is
 covered by `tests/test_b2_executor_like_write_ingress_harness.py`.
 
 ## 3. Harness routing flow
@@ -45,7 +45,7 @@ router. The traversal fixture resolves under `.aeg/` before denial.
 
 ## 4. Boundary preservation
 
-B2-3 does not alter `src/cli/main.py`, `src/agents/noop.py`,
+B2-3 does not alter `jangseung/cli/main.py`, `src/agents/noop.py`,
 `src/provider_adapter.py`, or production state recording paths.
 
 Current authority and phase state remain:

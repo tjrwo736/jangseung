@@ -37,7 +37,7 @@ live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 Implemented file:
 
 ```text
-src/evidence/demo_runtime_flow.py
+jangseung/evidence/demo_runtime_flow.py
 ```
 
 Test coverage:

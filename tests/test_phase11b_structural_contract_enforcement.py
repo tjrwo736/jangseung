@@ -1,8 +1,8 @@
 import dataclasses
 import unittest
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
-from src.evidence.action_decision_routing import (
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
+from jangseung.evidence.action_decision_routing import (
     ACTION_DECISION_PACKET_VERIFY_ACCEPTED,
     ACTION_DECISION_PACKET_VERIFY_REJECTED,
     DENIED_CAPABILITY_STORE_PATH_REJECTED,
@@ -13,17 +13,13 @@ from src.evidence.action_decision_routing import (
     REPORTED_ONLY_STORE_PATH_REJECTED,
     SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
     STORE_ADJACENT_CANDIDATE_ACCEPTED,
-    STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION,
-    STRUCTURAL_CONTRACT_REJECTION_FIXTURES_VERSION,
     UNVALIDATED_ACTION_STORE_PATH_REJECTED,
     bind_action_decision_packet_evidence,
-    build_structural_contract_rejection_fixture_results,
-    build_validator_enforced_routing_batch_evidence,
     evaluate_store_adjacent_candidate_gate,
     expected_action_decision_packet_evidence_hash,
     verify_action_decision_packet_evidence,
 )
-from src.evidence.executor_output_ingress import (
+from jangseung.evidence.executor_output_ingress import (
     ActionDecisionPacket,
     DIRECT_PACKET_EVIDENCE_SUBMISSION_PARSE_REJECTED,
     DIRECT_PACKET_SUBMISSION_PARSE_REJECTED,
@@ -33,8 +29,8 @@ from src.evidence.executor_output_ingress import (
     ingest_executor_output,
     is_runtime_built_action_decision_packet,
 )
-from src.evidence.structured_action_capabilities import CAPABILITY_GATE_ALLOWED
-from src.evidence.structured_actions import NOOP, PROPOSE_PATCH
+from jangseung.evidence.structured_action_capabilities import CAPABILITY_GATE_ALLOWED
+from jangseung.evidence.structured_actions import NOOP, PROPOSE_PATCH
 
 
 class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
@@ -239,106 +235,6 @@ class Phase11bStructuralContractEnforcementTests(unittest.TestCase):
                 self.assertEqual(gate.gate_status, expected_status)
                 self._assert_no_execution_or_store_route(dataclasses.asdict(gate))
 
-    def test_structural_rejection_fixture_builder_covers_required_cases(self):
-        records = build_structural_contract_rejection_fixture_results()
-        by_name = {record["fixture_name"]: record for record in records}
-
-        self.assertEqual(
-            set(by_name),
-            {
-                "direct_action_decision_packet_shaped_dict",
-                "created_by_runtime_ingress_adapter_spoof",
-                "packet_id_spoof",
-                "capability_gate_allowed_self_report",
-                "execution_allowed_true",
-                "mutation_allowed_true",
-                "write_authority_granted_true",
-                "store_routing_allowed_true",
-                "store_path_reachable_true",
-                "live_executor_ready_true",
-                "live_executor_authority_promotion",
-                "raw_output_skipping_ingress",
-                "unvalidated_action_reaching_store_adjacent_path",
-                "denied_capability_reaching_store_adjacent_path",
-                "reported_only_authority_reaching_store_adjacent_path",
-                "direct_store_adjacent_candidate_submission",
-            },
-        )
-
-        expected_statuses = {
-            "direct_action_decision_packet_shaped_dict": (
-                DIRECT_PACKET_SUBMISSION_STORE_PATH_REJECTED
-            ),
-            "created_by_runtime_ingress_adapter_spoof": (
-                SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
-            ),
-            "packet_id_spoof": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "capability_gate_allowed_self_report": (
-                SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
-            ),
-            "execution_allowed_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "mutation_allowed_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "write_authority_granted_true": (
-                SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
-            ),
-            "store_routing_allowed_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "store_path_reachable_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "live_executor_ready_true": SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED,
-            "live_executor_authority_promotion": (
-                SELF_REPORTED_AUTHORITY_STORE_PATH_REJECTED
-            ),
-            "raw_output_skipping_ingress": RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
-            "unvalidated_action_reaching_store_adjacent_path": (
-                UNVALIDATED_ACTION_STORE_PATH_REJECTED
-            ),
-            "denied_capability_reaching_store_adjacent_path": (
-                DENIED_CAPABILITY_STORE_PATH_REJECTED
-            ),
-            "reported_only_authority_reaching_store_adjacent_path": (
-                REPORTED_ONLY_STORE_PATH_REJECTED
-            ),
-            "direct_store_adjacent_candidate_submission": (
-                DIRECT_STORE_ADJACENT_CANDIDATE_STORE_PATH_REJECTED
-            ),
-        }
-
-        for name, expected_status in expected_statuses.items():
-            with self.subTest(name=name):
-                record = by_name[name]
-                self.assertEqual(
-                    record["fixture_set_version"],
-                    STRUCTURAL_CONTRACT_REJECTION_FIXTURES_VERSION,
-                )
-                self.assertEqual(record["expected_gate_status"], expected_status)
-                self.assertEqual(record["actual_gate_status"], expected_status)
-                self.assertFalse(record["candidate_accepted"])
-                self._assert_no_execution_or_store_route(record)
-
-    def test_batch_evidence_records_structural_contract_rules(self):
-        evidence = build_validator_enforced_routing_batch_evidence()
-
-        self.assertEqual(
-            evidence["structural_contract_enforcement_version"],
-            STRUCTURAL_CONTRACT_ENFORCEMENT_VERSION,
-        )
-        self.assertEqual(
-            evidence["phase11b_3_1_structural_contract_enforcement"],
-            "COMPLETE",
-        )
-        self.assertEqual(evidence["structural_contract_rejection_fixture_count"], 16)
-        self.assertTrue(evidence["action_decision_packet_runtime_built_only"])
-        self.assertTrue(evidence["direct_action_decision_packet_submission_rejected"])
-        self.assertTrue(evidence["direct_packet_evidence_submission_rejected"])
-        self.assertTrue(evidence["direct_store_adjacent_candidate_submission_rejected"])
-        self.assertFalse(evidence["executor_self_report_is_authority"])
-        self.assertFalse(evidence["capability_gate_self_report_is_authority"])
-        self.assertFalse(evidence["valid_structured_action_is_authorized_capability"])
-        self.assertFalse(evidence["authorized_capability_is_action_executed"])
-        self.assertFalse(evidence["propose_patch_is_write"])
-        self.assertFalse(evidence["propose_patch_is_mutation"])
-        self.assertFalse(evidence["metadata_only_candidate_is_store_write"])
-        self.assertFalse(evidence["store_adjacent_metadata_is_store_path_reachability"])
-        self._assert_no_execution_or_store_route(evidence)
 
     def test_valid_runtime_built_propose_patch_still_yields_metadata_only_candidate(self):
         packet = ingest_executor_output(self._valid_propose_patch())

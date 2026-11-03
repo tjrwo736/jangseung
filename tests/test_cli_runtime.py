@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import src.state.git as git_state
-from src.agents.noop import execute_contract as noop_execute_contract
-from src.cli.main import _cmd_doctor, _cmd_run
-from src.contracts import (
+import jangseung.state.git as git_state
+from jangseung.agents.noop import execute_contract as noop_execute_contract
+from jangseung.cli.main import _cmd_doctor, _cmd_run
+from jangseung.contracts import (
     ACTION_AUTHORITY_FIELDS,
     ACTION_BOUNDARY_CLEAN,
     ACTION_BOUNDARY_FIELDS,
@@ -199,39 +199,39 @@ from src.contracts import (
     WRITE_CLASSES,
     WRITE_CLASS_DEFAULT_MEDIATION_STATUSES,
 )
-from src.evidence.action_boundary import expected_action_log_hash
-from src.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
-from src.evidence.binding import sha256_json
-from src.evidence.capability_exposure import (
+from jangseung.evidence.action_boundary import expected_action_log_hash
+from jangseung.evidence.aeg_state_write_denial import expected_aeg_state_write_denial_metadata_hash
+from jangseung.evidence.binding import sha256_json
+from jangseung.evidence.capability_exposure import (
     expected_executor_capability_exposure_hash,
     expected_executor_capability_exposure_metadata_hash,
 )
-from src.evidence.capability_isolation import (
+from jangseung.evidence.capability_isolation import (
     expected_capability_isolation_proof_hash,
     expected_capability_matrix_hash,
 )
-from src.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
-from src.evidence.ledger_integrity import (
+from jangseung.evidence.evidence_store import expected_evidence_store_trust_metadata_hash
+from jangseung.evidence.ledger_integrity import (
     expected_current_evidence_hash,
     expected_current_manifest_hash,
     expected_ledger_chain_hash,
     expected_ledger_entry_hash,
     expected_ledger_integrity_metadata_hash,
 )
-from src.evidence.mediated_write_boundary import (
+from jangseung.evidence.mediated_write_boundary import (
     expected_mediated_write_boundary_metadata_hash,
     expected_write_mediation_decision_hash,
 )
-from src.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
-from src.evidence.tool_surface import (
+from jangseung.evidence.pre_live_executor_gate import expected_pre_live_executor_gate_metadata_hash
+from jangseung.evidence.tool_surface import (
     expected_tool_authority_grant_hash,
     expected_tool_surface_metadata_hash,
 )
-from src.evidence.write_bypass_harness import (
+from jangseung.evidence.write_bypass_harness import (
     expected_write_bypass_harness_metadata_hash,
     expected_write_bypass_harness_registry_hash,
 )
-from src.evidence import (
+from jangseung.evidence import (
     manifest_hash,
     validate_completion_contract_v0,
     validate_evidence_binding_v0,
@@ -254,8 +254,8 @@ class CliRuntimeTests(unittest.TestCase):
         (self.repo / "README.md").write_text("# Test\n", encoding="utf-8")
         (self.repo / "src" / "agents").mkdir(parents=True)
         (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 1\n", encoding="utf-8")
-        (self.repo / "src" / "classify").mkdir(parents=True)
-        (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (self.repo / "jangseung" / "classify").mkdir(parents=True)
+        (self.repo / "jangseung" / "classify" / "rules.py").write_text("VALUE = 1\n", encoding="utf-8")
         self._git("add", ".")
         self._git("commit", "-m", "init")
 
@@ -293,7 +293,7 @@ class CliRuntimeTests(unittest.TestCase):
             env = os.environ.copy()
             env["PYTHONPATH"] = str(REPO_ROOT)
             doctor = subprocess.run(
-                [sys.executable, "-m", "src.cli", "doctor"],
+                [sys.executable, "-m", "jangseung.cli", "doctor"],
                 cwd=outside,
                 env=env,
                 text=True,
@@ -323,7 +323,7 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertIn("[PASS] network not required", doctor.stdout)
 
     def test_doctor_reports_missing_git_command_readably(self):
-        with patch("src.state.doctor.git.git_available", return_value=False):
+        with patch("jangseung.state.doctor.git.git_available", return_value=False):
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 exit_code = _cmd_doctor(self.repo)
 
@@ -338,7 +338,7 @@ class CliRuntimeTests(unittest.TestCase):
     def test_doctor_reports_unwritable_aeg_state_readably(self):
         self._aeg("init")
 
-        with patch("src.state.doctor._state_dir_writable", return_value=False):
+        with patch("jangseung.state.doctor._state_dir_writable", return_value=False):
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 exit_code = _cmd_doctor(self.repo)
 
@@ -3064,7 +3064,7 @@ class CliRuntimeTests(unittest.TestCase):
 
     def test_protected_working_tree_change_escalates_runtime_risk(self):
         self._aeg("init")
-        (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
+        (self.repo / "jangseung" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
 
         run = self._aeg("run", "fix typo in README")
         self.assertIn("status: NEEDS_USER_GATE", run.stdout)
@@ -3072,9 +3072,9 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["intent_risk"], LOW)
         self.assertEqual(evidence["impact_risk"], HIGH)
         self.assertEqual(evidence["risk_level"], HIGH)
-        self.assertEqual(evidence["changed_files"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["changed_files"], ["jangseung/classify/rules.py"])
         self.assertEqual(evidence["changed_files_source"], GIT_WORKING_TREE)
-        self.assertEqual(evidence["protected_paths_touched"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["protected_paths_touched"], ["jangseung/classify/rules.py"])
         self.assertTrue(evidence["risk_escalation_applied"])
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
 
@@ -3121,7 +3121,7 @@ class CliRuntimeTests(unittest.TestCase):
     def test_changed_files_source_failure_is_not_checked(self):
         self._aeg("init")
         with patch(
-            "src.evidence.mutation_boundary.git.changed_file_snapshot",
+            "jangseung.evidence.mutation_boundary.git.changed_file_snapshot",
             side_effect=git_state.GitError("status unavailable"),
         ):
             with contextlib.redirect_stdout(io.StringIO()):
@@ -3157,7 +3157,7 @@ class CliRuntimeTests(unittest.TestCase):
             (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 2\n", encoding="utf-8")
             return noop_execute_contract(task_text, classification, law_result)
 
-        with patch("src.cli.main.execute_contract", side_effect=mutating_executor):
+        with patch("jangseung.cli.main.execute_contract", side_effect=mutating_executor):
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = _cmd_run(self.repo, "fix typo in README")
 
@@ -3173,10 +3173,10 @@ class CliRuntimeTests(unittest.TestCase):
         self._aeg("init")
 
         def mutating_executor(task_text, classification, law_result):
-            (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
+            (self.repo / "jangseung" / "classify" / "rules.py").write_text("VALUE = 2\n", encoding="utf-8")
             return noop_execute_contract(task_text, classification, law_result)
 
-        with patch("src.cli.main.execute_contract", side_effect=mutating_executor):
+        with patch("jangseung.cli.main.execute_contract", side_effect=mutating_executor):
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = _cmd_run(self.repo, "fix typo in README")
 
@@ -3187,26 +3187,26 @@ class CliRuntimeTests(unittest.TestCase):
         self.assertEqual(evidence["status"], NEEDS_USER_GATE)
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_DELTA_DETECTED)
         self.assertTrue(evidence["protected_path_mutation_detected"])
-        self.assertEqual(evidence["protected_paths_touched"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["protected_paths_touched"], ["jangseung/classify/rules.py"])
 
     def test_executor_reported_mutation_is_reported_only_not_judgment_basis(self):
         self._aeg("init")
 
         def reporting_executor(task_text, classification, law_result):
             result = noop_execute_contract(task_text, classification, law_result)
-            result["changed_files"] = ["src/classify/rules.py"]
-            result["mutation_delta"] = [{"path": "src/classify/rules.py"}]
+            result["changed_files"] = ["jangseung/classify/rules.py"]
+            result["mutation_delta"] = [{"path": "jangseung/classify/rules.py"}]
             return result
 
-        with patch("src.cli.main.execute_contract", side_effect=reporting_executor):
+        with patch("jangseung.cli.main.execute_contract", side_effect=reporting_executor):
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = _cmd_run(self.repo, "fix typo in README")
 
         self.assertEqual(exit_code, 0)
         evidence = self._latest_evidence()
-        self.assertEqual(evidence["executor_reported_changed_files"], ["src/classify/rules.py"])
+        self.assertEqual(evidence["executor_reported_changed_files"], ["jangseung/classify/rules.py"])
         self.assertEqual(evidence["executor_reported_changed_files_source"], REPORTED_ONLY)
-        self.assertEqual(evidence["executor_reported_mutation_delta"], [{"path": "src/classify/rules.py"}])
+        self.assertEqual(evidence["executor_reported_mutation_delta"], [{"path": "jangseung/classify/rules.py"}])
         self.assertEqual(evidence["executor_reported_mutation_delta_source"], REPORTED_ONLY)
         self.assertEqual(evidence["computed_mutation_delta"], [])
         self.assertEqual(evidence["mutation_boundary_status"], MUTATION_BOUNDARY_CLEAN)
@@ -3440,7 +3440,7 @@ class CliRuntimeTests(unittest.TestCase):
         self._aeg("run", "fix typo in README")
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
-        fake_delta = [{"path": "src/classify/rules.py", "transition": "executor_reported_only"}]
+        fake_delta = [{"path": "jangseung/classify/rules.py", "transition": "executor_reported_only"}]
         evidence["executor_reported_mutation_delta"] = fake_delta
         evidence["computed_mutation_delta"] = fake_delta
         evidence["bound_computed_mutation_delta_hash"] = sha256_json(fake_delta)
@@ -3470,7 +3470,7 @@ class CliRuntimeTests(unittest.TestCase):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(REPO_ROOT)
         return subprocess.run(
-            [sys.executable, "-m", "src.cli", *args],
+            [sys.executable, "-m", "jangseung.cli", *args],
             cwd=self.repo,
             env=env,
             text=True,

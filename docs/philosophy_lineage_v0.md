@@ -12,8 +12,8 @@ marketing copy, or a claim that future philosophy candidates are implemented.
   accepted merely because it has not been falsified.
 - Implemented behavior: `NOT_CHECKED` is a first-class status and `PASS` is
   rejected in evidence and replay validation.
-- Code / module location: `src/contracts.py`, `src/law/gates.py`,
-  `src/evidence/schema.py`, `src/evidence/verify.py`.
+- Code / module location: `src/contracts.py`, `jangseung/law/gates.py`,
+  `jangseung/evidence/schema.py`, `jangseung/evidence/verify.py`.
 - Observed behavior or test evidence: `tests/test_classify_law.py` covers
   medium and missing-source paths as `NOT_CHECKED`; `tests/test_cli_runtime.py`
   covers rejection of `NOT_CHECKED` promotion to `CLEAN_CORE` or `PASS`.
@@ -27,9 +27,9 @@ marketing copy, or a claim that future philosophy candidates are implemented.
 - Implemented behavior: `reported_only` metadata is allowed as context for
   Citizen One, proposals, provider responses, executor mutation reports, and
   action reports, while schema and replay reject it as a judgment basis.
-- Code / module location: `src/contracts.py`, `src/evidence/schema.py`,
-  `src/evidence/mutation_boundary.py`, `src/evidence/verify.py`,
-  `src/evidence/action_boundary.py`.
+- Code / module location: `src/contracts.py`, `jangseung/evidence/schema.py`,
+  `jangseung/evidence/mutation_boundary.py`, `jangseung/evidence/verify.py`,
+  `jangseung/evidence/action_boundary.py`.
 - Observed behavior or test evidence: `tests/test_cli_runtime.py` covers
   reported-only binding rejection, proposal reported-only preservation,
   executor-reported mutation replay rejection, and executor-reported action
@@ -44,7 +44,7 @@ marketing copy, or a claim that future philosophy candidates are implemented.
 - Implemented behavior: `SAFE_DEFAULT` is `hold_current_state`; high-risk
   tasks require a user gate, medium/unchecked paths remain `NOT_CHECKED`, and
   disabled provider runtime records hold metadata instead of executing.
-- Code / module location: `src/contracts.py`, `src/law/gates.py`,
+- Code / module location: `src/contracts.py`, `jangseung/law/gates.py`,
   `src/provider_adapter.py`, `src/citizen_one.py`.
 - Observed behavior or test evidence: `tests/test_classify_law.py` covers
   high-risk gating and medium `NOT_CHECKED`; `tests/test_cli_runtime.py`
@@ -62,8 +62,8 @@ marketing copy, or a claim that future philosophy candidates are implemented.
   hashes for changed files, mutation boundary metadata, provider/proposal
   metadata, and action scaffold metadata; replay rejects missing or tampered
   bindings.
-- Code / module location: `src/evidence/binding.py`,
-  `src/evidence/schema.py`, `src/evidence/verify.py`, `src/state/store.py`.
+- Code / module location: `jangseung/evidence/binding.py`,
+  `jangseung/evidence/schema.py`, `jangseung/evidence/verify.py`, `jangseung/state/store.py`.
 - Observed behavior or test evidence: `tests/test_cli_runtime.py` covers
   manifest hash mismatch, missing manifest, run/path mismatches, bound hash
   mismatches, and action scaffold manifest tamper rejection.
@@ -77,9 +77,9 @@ marketing copy, or a claim that future philosophy candidates are implemented.
 - Implemented behavior: Mutation judgment is computed from pre/post snapshots,
   not executor-reported mutation; action reports are scaffolded as
   `reported_only` and cannot become judgment basis.
-- Code / module location: `src/evidence/mutation_boundary.py`,
-  `src/evidence/schema.py`, `src/evidence/verify.py`,
-  `src/evidence/action_boundary.py`, `src/agents/noop.py`.
+- Code / module location: `jangseung/evidence/mutation_boundary.py`,
+  `jangseung/evidence/schema.py`, `jangseung/evidence/verify.py`,
+  `jangseung/evidence/action_boundary.py`, `src/agents/noop.py`.
 - Observed behavior or test evidence: `tests/test_cli_runtime.py` covers
   recomputation of mutation delta from snapshots, ignored executor mutation
   self-report, and rejection of executor-reported actions as judgment basis.
@@ -94,8 +94,8 @@ marketing copy, or a claim that future philosophy candidates are implemented.
 - Implemented behavior: HIGH risk remains `NEEDS_USER_GATE`; deterministic
   proposal stubs and disabled provider metadata are recorded as reported-only
   context and cannot satisfy, downgrade, or bypass law status.
-- Code / module location: `src/law/gates.py`, `src/citizen_one.py`,
-  `src/provider_adapter.py`, `src/evidence/schema.py`.
+- Code / module location: `jangseung/law/gates.py`, `src/citizen_one.py`,
+  `src/provider_adapter.py`, `jangseung/evidence/schema.py`.
 - Observed behavior or test evidence: `tests/test_cli_runtime.py` covers high
   risk remaining user-gated with Citizen One and deterministic proposal stubs,
   plus provider-disabled guard behavior with no provider/model call.
@@ -110,8 +110,8 @@ marketing copy, or a claim that future philosophy candidates are implemented.
 - Implemented behavior: `aeg verify` loads latest evidence, validates schema
   and binding, replays classification/law/mutation/action scaffold checks, and
   prints `independent_oracle: false`.
-- Code / module location: `src/evidence/verify.py`, `src/evidence/schema.py`,
-  `src/evidence/binding.py`, `src/cli/main.py`.
+- Code / module location: `jangseung/evidence/verify.py`, `jangseung/evidence/schema.py`,
+  `jangseung/evidence/binding.py`, `jangseung/cli/main.py`.
 - Observed behavior or test evidence: `tests/test_cli_runtime.py` covers
   `REPLAY_CONSISTENT`, `REPLAY_FAILED`, manifest tamper failures, deterministic
   law replay, and action scaffold replay without provider/model/network/shell

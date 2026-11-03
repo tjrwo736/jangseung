@@ -28,7 +28,7 @@ runtime write authority grant.
 The module added for this phase is:
 
 ```text
-src/evidence/phase11a_completion_baseline.py
+jangseung/evidence/phase11a_completion_baseline.py
 ```
 
 The replay tests are:

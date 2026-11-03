@@ -36,7 +36,7 @@ Hook policy divergence was unsafe because a hook-local protected path list could
 be weaker than the existing Aegis judgment engine. That created a path where
 `Write` or `Edit` calls against protected files such as
 `.github/workflows/ci.yml`, `Dockerfile`, `pyproject.toml`, `deploy/prod.yml`,
-or `src/law/policy.py` could leak into an `ask` posture even when the existing
+or `jangseung/law/policy.py` could leak into an `ask` posture even when the existing
 engine classified the target as protected/high-risk and capability/law gates
 would deny or require a stronger hold.
 
@@ -49,7 +49,7 @@ existing engine reuse rule
 hook policy must reuse existing Aegis judgment components
 hook decision must match or be stricter than existing engine decision
 hook-local protected path taxonomy = forbidden
-protected path policy source = src.classify.is_protected_path
+protected path policy source = jangseung.classify.is_protected_path
 ```
 
 ## Engine Reuse Points
@@ -57,15 +57,15 @@ protected path policy source = src.classify.is_protected_path
 The adapter records an engine decision basis from these existing components:
 
 ```text
-src.classify.classify_task
-src.classify.is_protected_path
-src.law.apply_law
-src.evidence.structured_action_capabilities.evaluate_action_capabilities
-src.evidence.b1_aeg_integrity_guard.decide_b1_aeg_integrity_guard
-src.evidence.mediated_repo_boundary_write_path.resolve_repo_boundary_path
+jangseung.classify.classify_task
+jangseung.classify.is_protected_path
+jangseung.law.apply_law
+jangseung.evidence.structured_action_capabilities.evaluate_action_capabilities
+jangseung.evidence.b1_aeg_integrity_guard.decide_b1_aeg_integrity_guard
+jangseung.evidence.mediated_repo_boundary_write_path.resolve_repo_boundary_path
 ```
 
-`src.classify` supplies risk and protected-path taxonomy. `src.law` supplies
+`jangseung.classify` supplies risk and protected-path taxonomy. `jangseung.law` supplies
 the law gate. `structured_action_capabilities` supplies capability denial,
 limited read scope, reported-only rejection, and write/run-command denial.
 The existing `.aeg` guard and repo-boundary helpers supply state-dir and
@@ -106,7 +106,7 @@ must not leak as `ask` for `Write` or `Edit`:
 Dockerfile -> deny
 pyproject.toml -> deny
 deploy/prod.yml -> deny
-src/law/policy.py -> deny
+jangseung/law/policy.py -> deny
 ```
 
 Additional existing gate coverage:

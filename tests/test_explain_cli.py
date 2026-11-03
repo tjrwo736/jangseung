@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from src.cli.explain import MAX_INPUT_CHARACTERS, build_explanation, cmd_explain
-from src.cli.hook_run import render_hook_response
-from src.cli.main import main
+from jangseung.cli.explain import MAX_INPUT_CHARACTERS, build_explanation, cmd_explain
+from jangseung.cli.hook_run import render_hook_response
+from jangseung.cli.main import main
 
 
 @pytest.fixture
@@ -30,13 +30,15 @@ def snapshot(repo):
 @pytest.mark.parametrize("payload,category", [
     ({"tool_name": "Read", "tool_input": {"file_path": "README.md"}}, "allowed"),
     ({"tool_name": "Read", "tool_input": {"file_path": "../outside.md"}}, "outside_repository"),
-    ({"tool_name": "Write", "tool_input": {"file_path": ".env", "content": "fixture"}}, "policy_gate"),
+    ({"tool_name": "Write", "tool_input": {"file_path": ".env", "content": "fixture"}}, "protected_or_outside_target"),
     ({"tool_name": "Write", "tool_input": {"file_path": ".aeg/ledger.jsonl", "content": "fixture"}}, "protected_state"),
     ({"tool_name": "Bash", "tool_input": {"command": "cat README.md"}}, "allowed"),
     ({"tool_name": "Bash", "tool_input": {"command": "cat 'docs/한글 문서.md'"}}, "allowed"),
     ({"tool_name": "PowerShell", "tool_input": {"command": "Get-Content README.md"}}, "allowed"),
     ({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}, "dangerous_command"),
-    ({"tool_name": "Bash", "tool_input": {"command": "pwd"}}, "unclassified"),
+    ({"tool_name": "Bash", "tool_input": {"command": "pytest"}}, "unclassified"),
+    ({"tool_name": "Bash", "tool_input": {"command": "pwd"}}, "allowed"),
+    ({"tool_name": "Bash", "tool_input": {"command": "cat .env"}}, "secret_or_outside_read"),
     ({"tool_name": "Bash", "tool_input": {"command": "cat missing.md"}}, "unclassified"),
     ({"tool_name": "Bash", "tool_input": {"command": "rg --no-config --color never x README.md"}}, "unclassified"),
     ("not-json", "invalid_input"),
@@ -47,7 +49,7 @@ def test_explanation_preserves_real_judgment_and_state(repo, substrate, payload,
     raw = payload if isinstance(payload, str) else json.dumps(dict(payload, tool_use_id="explain-test"))
     expected = render_hook_response(raw, repo_root=repo, substrate=substrate)
     before = snapshot(repo)
-    with patch("src.cli.hook_run.append_hook_decision_record", side_effect=AssertionError("must not record")), \
+    with patch("jangseung.cli.hook_run.append_hook_decision_record", side_effect=AssertionError("must not record")), \
          patch("subprocess.run", side_effect=AssertionError("must not execute")):
         report = build_explanation(raw, repo_root=repo, substrate=substrate)
     assert report["category"] == category
@@ -77,7 +79,7 @@ def test_secret_and_arbitrary_input_never_echoed(repo, as_json, place):
 
 def test_unclassified_is_not_described_as_dangerous_and_codex_mapping_is_visible(repo):
     out = io.StringIO()
-    assert cmd_explain(repo, command="pwd", substrate="codex", stdin=io.StringIO(), stdout=out) == 0
+    assert cmd_explain(repo, command="pytest", substrate="codex", stdin=io.StringIO(), stdout=out) == 0
     assert "not a finding that the command is dangerous" in out.getvalue()
     assert "upgrades ask/defer to deny" in out.getvalue()
     assert "exit 0 does not mean allow" in out.getvalue()
@@ -130,7 +132,7 @@ def test_oversized_or_unreadable_input_is_not_echoed(repo):
 
 
 def test_internal_diagnostic_failure_does_not_echo_exception(repo):
-    with patch("src.cli.explain.render_hook_response", side_effect=RuntimeError("private diagnostic input")):
+    with patch("jangseung.cli.explain.render_hook_response", side_effect=RuntimeError("private diagnostic input")):
         out = io.StringIO()
         assert cmd_explain(repo, command="private command", stdin=io.StringIO(), stdout=out) == 1
     assert "private" not in out.getvalue()

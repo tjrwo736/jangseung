@@ -10,21 +10,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.cli.hook_run import (
+from jangseung.cli.hook_run import (
     EXIT_ALLOW_OR_ASK,
     EXIT_BLOCK,
     HOOK_DECISION_RECORDING_FAILED_REASON,
     SUBSTRATE_CODEX,
-    build_aeg_hook_run_contract_evidence,
     render_hook_response,
     run_aeg_hook_run,
 )
-from src.cli.main import (
+from jangseung.cli.main import (
     _cmd_evidence_list,
     _cmd_evidence_show,
     _cmd_evidence_verify_hooks,
 )
-from src.state.hook_ledger import (
+from jangseung.state.hook_ledger import (
     HOOK_LEDGER_FILE,
     HOOK_RECORD_HASH_GENESIS,
     read_hook_ledger,
@@ -99,7 +98,7 @@ class HookLedgerTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
 
-        with patch("src.cli.hook_run.append_hook_decision_record", side_effect=OSError("disk unavailable")):
+        with patch("jangseung.cli.hook_run.append_hook_decision_record", side_effect=OSError("disk unavailable")):
             exit_code = run_aeg_hook_run(
                 stdin=io.StringIO(raw),
                 stdout=stdout,
@@ -253,15 +252,6 @@ class HookLedgerTests(unittest.TestCase):
                 self.assertEqual(bool(stderr), bool(before.stderr_text))
                 self.assertEqual(path.read_bytes(), original)
 
-    def test_contract_matches_the_recording_wiring(self):
-        contract = build_aeg_hook_run_contract_evidence()
-        self.assertTrue(contract["store_write_performed"])
-        self.assertEqual(contract["store_write_scope"], ".aeg/hook_ledger.jsonl")
-        self.assertTrue(contract["hook_recording_append_only"])
-        self.assertTrue(contract["hook_recording_tamper_evident_not_tamper_proof"])
-        self.assertFalse(contract["raw_tool_input_stored_in_hook_ledger"])
-        self.assertFalse(contract["recording_failure_changes_permission_decision"])
-        self.assertFalse(contract["recording_failure_changes_exit_code"])
 
     def _run(self, payload_or_text, *, substrate=None):
         raw = payload_or_text if isinstance(payload_or_text, str) else json.dumps(payload_or_text)

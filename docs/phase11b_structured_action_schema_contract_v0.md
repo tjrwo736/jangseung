@@ -23,7 +23,7 @@ surface, or filesystem permission boundary.
 Implementation:
 
 ```text
-src/evidence/structured_actions.py
+jangseung/evidence/structured_actions.py
 tests/test_phase11b_structured_actions.py
 ```
 
@@ -164,7 +164,7 @@ statuses. This is a policy contract, not a grant.
 | `READ_SECRET` | `secret_read` | `DENIED` |
 
 The B3 reference fields in the mapping are checked against
-`src.evidence.b3_capability_policy_contract.CAPABILITY_FIELDS`. The contract
+`jangseung.evidence.b3_capability_policy_contract.CAPABILITY_FIELDS`. The contract
 preserves the B3 distinction:
 
 ```text

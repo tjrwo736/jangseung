@@ -14,7 +14,7 @@ hook to a real Claude Code session blocked ordinary safe work.
 
 A normalization layer was added at the hook boundary, **before** the input
 reaches the judgment engine, in
-`src/evidence/hook_judgment_engine_alignment.py`
+`jangseung/evidence/hook_judgment_engine_alignment.py`
 (`_normalize_hook_input_repo_paths` / `_normalize_repo_internal_absolute_path`,
 called at the top of `judge_pretooluse_with_aeg_engine`):
 

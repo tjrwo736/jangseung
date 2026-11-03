@@ -20,7 +20,7 @@ isolation.
 
 In scope:
 
-- `src/evidence/b2_executor_write_router.py`
+- `jangseung/evidence/b2_executor_write_router.py`
 - `tests/test_b2_executor_write_routing.py`
 - This status note.
 - Minimal B2 routing vocabulary in `src/contracts.py`.

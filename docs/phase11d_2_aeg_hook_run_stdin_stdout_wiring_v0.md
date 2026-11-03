@@ -31,7 +31,7 @@ live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 Done (verified by direct stdin subprocess tests):
 
 ```text
-added an "aeg hook-run" CLI subcommand (src/cli/hook_run.py, wired in src/cli/main.py)
+added an "aeg hook-run" CLI subcommand (jangseung/cli/hook_run.py, wired in jangseung/cli/main.py)
 real stdin read + stdout write + exit code: the 11-D-1 diagnostic now reports
   entrypoint_stdin_stdout_exit_wired = True and hook_run_subcommand_exists = True
 fed JSON directly into "aeg hook-run" via stdin and observed the permissionDecision
@@ -110,7 +110,7 @@ become `ask` by skipping path judgment).
 ### Measured fail-closed results (direct stdin, no Claude Code)
 
 ```text
-Write .env / .github/workflows / .aeg/x / Dockerfile / pyproject.toml / src/law/x.py -> deny, exit 2
+Write .env / .github/workflows / .aeg/x / Dockerfile / pyproject.toml / jangseung/law/x.py -> deny, exit 2
 Bash rm -rf / , git reset --hard , git clean -fd                                     -> deny, exit 2
 Write .env with missing tool_use_id                                                  -> deny, exit 2
 invalid JSON / empty stdin / whitespace / array / string / number / null            -> deny, exit 2
@@ -158,13 +158,13 @@ deny        -> exit 2 (Claude Code blocking exit code) AND the reason on stderr
 For `deny`, both the exit-code blocking mechanism (exit 2 + stderr reason) and
 the JSON `permissionDecision "deny"` are emitted, so the tool call is blocked
 even if one mechanism were ignored (belt-and-suspenders fail-closed). Verified
-end-to-end via an actual subprocess (`python -m src.cli hook-run` with piped
+end-to-end via an actual subprocess (`python -m jangseung.cli hook-run` with piped
 stdin): dangerous input returns exit code 2, normal input returns exit code 0.
 
 ## Judgment Brain Unchanged (Safety Boundary E)
 
 ```text
-judgment_brain_source = src.evidence.hook_judgment_engine_alignment.judge_pretooluse_with_aeg_engine
+judgment_brain_source = jangseung.evidence.hook_judgment_engine_alignment.judge_pretooluse_with_aeg_engine
 judgment_brain_modified = False
 ```
 

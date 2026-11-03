@@ -5,20 +5,16 @@ import unittest
 from pathlib import Path
 from types import MappingProxyType
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, NOT_CHECKED, SAFE_DEFAULT
-from src.evidence import claude_code_pretooluse_input_contract
-from src.evidence.claude_code_pretooluse_input_contract import (
-    HOOK_COVERAGE_REPORT_UNTRUSTED,
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, NOT_CHECKED, SAFE_DEFAULT
+from jangseung.evidence import claude_code_pretooluse_input_contract
+from jangseung.evidence.claude_code_pretooluse_input_contract import (
     INVALID_PRETOOLUSE_INPUT_CONTRACT,
     OPTIONAL_HOOK_METADATA_FIELDS,
-    PHASE11C_1_COMPLETE_LABEL,
     REQUIRED_HOOK_INPUT_FIELDS,
     SUPPORTED_INITIAL_TARGET,
     SUPPORTED_INITIAL_TARGET_TOOLS,
     UNSUPPORTED_UNKNOWN_OR_NOT_CHECKED,
     VALID_PRETOOLUSE_INPUT_CONTRACT,
-    assess_hook_coverage_report,
-    build_claude_code_pretooluse_input_contract_evidence,
     validate_claude_code_pretooluse_input,
 )
 
@@ -147,7 +143,7 @@ class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
         self._assert_no_trust_or_authority(result)
 
     def test_unknown_unsupported_and_not_checked_tools_fail_closed_not_pass(self):
-        for tool_name in ("Task", "NotebookEdit", "UNKNOWN", "UNSUPPORTED", NOT_CHECKED):
+        for tool_name in ("Task", "WebFetch", "UNKNOWN", "UNSUPPORTED", NOT_CHECKED):
             with self.subTest(tool_name=tool_name):
                 result = validate_claude_code_pretooluse_input(
                     {
@@ -217,66 +213,6 @@ class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             result.hook_input.tool_input["file_path"] = "mutated.md"
 
-    def test_hook_coverage_report_is_not_coverage_proof(self):
-        for status in (
-            SUPPORTED_INITIAL_TARGET,
-            "UNSUPPORTED",
-            "UNKNOWN",
-            NOT_CHECKED,
-            "PASS",
-            None,
-        ):
-            with self.subTest(status=status):
-                assessment = assess_hook_coverage_report(status)
-
-                self.assertEqual(
-                    assessment.assessment_status,
-                    HOOK_COVERAGE_REPORT_UNTRUSTED,
-                )
-                self.assertFalse(assessment.report_is_coverage_proof)
-                self.assertFalse(assessment.pass_accepted)
-                self.assertFalse(assessment.unsupported_unknown_or_not_checked_is_pass)
-                self.assertEqual(assessment.decision, SAFE_DEFAULT)
-
-    def test_evidence_records_contract_only_boundaries(self):
-        evidence = build_claude_code_pretooluse_input_contract_evidence()
-
-        self.assertEqual(evidence["completion_label"], PHASE11C_1_COMPLETE_LABEL)
-        self.assertEqual(evidence["required_fields"], REQUIRED_HOOK_INPUT_FIELDS)
-        self.assertEqual(
-            evidence["optional_metadata_fields"],
-            OPTIONAL_HOOK_METADATA_FIELDS,
-        )
-        self.assertEqual(
-            evidence["supported_initial_tools"],
-            SUPPORTED_INITIAL_TARGET_TOOLS,
-        )
-        self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
-        self.assertEqual(
-            evidence["live_executor_authority"],
-            LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
-        )
-        self.assertFalse(evidence["hook_input_trusted_as_decision"])
-        self.assertFalse(evidence["hook_input_trusted_as_capability_grant"])
-        self.assertFalse(evidence["hook_coverage_report_is_coverage_proof"])
-        self.assertFalse(evidence["unsupported_unknown_or_not_checked_is_pass"])
-        self.assertFalse(evidence["hook_command_implemented"])
-        self.assertFalse(evidence["hook_installation_implemented"])
-        self.assertFalse(evidence["claude_code_execution_performed"])
-        self.assertFalse(evidence["codex_implementation_added"])
-        self.assertFalse(evidence["provider_model_network_implemented"])
-        self.assertFalse(evidence["api_key_env_secret_loading_implemented"])
-        self.assertFalse(evidence["network_client_implemented"])
-        self.assertFalse(evidence["action_execution_engine_implemented"])
-        self.assertFalse(evidence["tool_runtime_implemented"])
-        self.assertFalse(evidence["write_authority_granted"])
-        self.assertFalse(evidence["filesystem_mutation_by_contract_validation"])
-        self.assertFalse(evidence["patch_application_implemented"])
-        self.assertFalse(evidence["public_release_performed"])
-        self.assertFalse(evidence["safe_default_changed"])
-        self.assertFalse(evidence["universal_prompt_injection_prevention_claimed"])
-        self.assertFalse(evidence["sandbox_process_isolation_claimed"])
-        self.assertFalse(evidence["bash_safe_claimed"])
 
     def test_contract_validation_does_not_mutate_filesystem(self):
         with tempfile.TemporaryDirectory() as tempdir:
@@ -319,8 +255,8 @@ class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
             "ev" + "al(",
             "__im" + "port__(",
             "import" + "lib",
-            "src.state." + "store",
-            "from src.state import " + "store",
+            "jangseung.state." + "store",
+            "from jangseung.state import " + "store",
             "sto" + "re.",
         )
 
@@ -330,8 +266,6 @@ class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
 
     def test_doc_records_required_contract_and_boundaries(self):
         doc = DOC_PATH.read_text(encoding="utf-8")
-
-        self.assertIn(PHASE11C_1_COMPLETE_LABEL, doc)
         for marker in (
             "tool_name",
             "tool_input",

@@ -2,8 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
-from src.evidence.structured_actions import (
+from jangseung.evidence.structured_actions import (
     B3_CAPABILITY_REFERENCE_MISMATCHES,
     DIRECT_LEDGER_APPEND,
     DIRECT_STORE_WRITE,
@@ -12,7 +11,6 @@ from src.evidence.structured_actions import (
     FORBIDDEN_PAYLOAD_FIELD_REJECTED,
     FUTURE_GATE_REQUIRED,
     IMPORT_MODULE,
-    LIVE_EXECUTOR_AUTHORITY_ON_HOLD as RESULT_LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     NETWORK_REQUEST,
     NOOP,
     PROCESS_SPAWN,
@@ -23,18 +21,13 @@ from src.evidence.structured_actions import (
     REQUEST_REPO_READ,
     REQUEST_RISK_CLASSIFICATION,
     PROPOSE_PATCH,
-    PR_81_DRAFT_RELEASE_NOT_PERFORMED,
-    PR_81_MERGE_NOT_PERFORMED,
-    PR_81_STATUS_HOLD_OPEN_DRAFT,
     READ_ENV,
     READ_SECRET,
     RUN_COMMAND,
-    STRUCTURED_ACTION_CONTRACT_EVIDENCE,
     UNKNOWN_ACTION_TYPE_REJECTED,
     VALID_STRUCTURED_ACTION,
     WRITE_AEG_STATE,
     WRITE_FILE,
-    build_structured_action_contract_evidence,
     validate_structured_action,
 )
 
@@ -197,45 +190,10 @@ class Phase11bStructuredActionTests(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertFalse(result.filesystem_mutated)
 
-    def test_live_executor_authority_remains_on_hold(self):
-        evidence = build_structured_action_contract_evidence()
-        result = validate_structured_action(self._valid_noop())
-
-        self.assertEqual(result.live_executor_authority, LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
-        self.assertEqual(RESULT_LIVE_EXECUTOR_AUTHORITY_ON_HOLD, LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
-        self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
-        self.assertFalse(result.live_executor_ready)
-
-    def test_pr_81_remains_untouched_draft_hold_by_contract(self):
-        evidence = build_structured_action_contract_evidence()
-
-        self.assertEqual(evidence["pr_81_status"], PR_81_STATUS_HOLD_OPEN_DRAFT)
-        self.assertEqual(evidence["pr_81_draft_release"], PR_81_DRAFT_RELEASE_NOT_PERFORMED)
-        self.assertEqual(evidence["pr_81_merge"], PR_81_MERGE_NOT_PERFORMED)
 
     def test_b3_capability_taxonomy_references_are_connected(self):
         self.assertEqual(B3_CAPABILITY_REFERENCE_MISMATCHES, frozenset())
 
-    def test_contract_evidence_records_data_not_code_and_no_authority(self):
-        evidence = build_structured_action_contract_evidence()
-
-        self.assertEqual(
-            evidence["structured_action_contract_version"],
-            STRUCTURED_ACTION_CONTRACT_EVIDENCE["structured_action_contract_version"],
-        )
-        self.assertEqual(evidence["executor_output_model"], "DATA_NOT_CODE")
-        self.assertTrue(evidence["structured_action_schema_enforced"])
-        self.assertFalse(evidence["arbitrary_python_execution_allowed"])
-        self.assertFalse(evidence["eval_exec_allowed"])
-        self.assertFalse(evidence["import_allowed"])
-        self.assertFalse(evidence["raw_shell_allowed"])
-        self.assertFalse(evidence["run_command_allowed"])
-        self.assertFalse(evidence["process_spawn_allowed"])
-        self.assertFalse(evidence["store_sink_direct_access_allowed"])
-        self.assertFalse(evidence["aeg_state_write_allowed"])
-        self.assertFalse(evidence["general_write_file_allowed"])
-        self.assertFalse(evidence["network_allowed"])
-        self.assertFalse(evidence["provider_model_call_allowed"])
 
     def test_allowed_read_risk_and_explanation_actions_pass(self):
         examples = (
