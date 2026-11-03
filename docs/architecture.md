@@ -47,6 +47,7 @@
 | `jangseung/evidence/` | hook 판정 엔진과 초기 run evidence 계약 |
 | `jangseung/state/` | `.aeg/` 저장소, hook ledger(`hook_ledger`), Git 도우미 |
 | `jangseung/agents/` | `aeg run`에서 쓰는 no-op 실행기 |
+| `src/cli/__main__.py` | 0.1.4 이하가 등록한 `python -m src.cli hook-run`을 진입점으로 넘기는 호환 모듈. `__init__.py`를 두지 않아 프로젝트의 `src`를 가리지 않습니다 |
 
 ## `aeg run` 계열
 
