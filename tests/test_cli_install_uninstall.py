@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.cli.install import (
+from jangseung.cli.install import (
     AEGIS_HOOK_MATCHER,
     CODEX_AEGIS_HOOK_MATCHER,
     HOOK_EVENT_NAME,
@@ -68,14 +68,14 @@ class BuildMergeLogicTests(unittest.TestCase):
 
     def test_windows_claude_code_hook_uses_exec_form_args(self):
         python_path = r"C:\Users\Name With Space\AppData\Local\Temp\aeg venv\Scripts\python.exe"
-        with mock.patch("src.cli.install.shutil.which", return_value=None), mock.patch(
-            "src.cli.install.sys.executable",
+        with mock.patch("jangseung.cli.install._installed_console_script", return_value=None), mock.patch(
+            "jangseung.cli.install.sys.executable",
             python_path,
         ):
             command, args = resolve_claude_code_hook_command(platform="win32")
 
         self.assertEqual(command, python_path)
-        self.assertEqual(args, ("-m", "src.cli", "hook-run"))
+        self.assertEqual(args, ("-I", "-m", "jangseung.cli", "hook-run"))
 
         data, already = build_installed_settings(
             {},
@@ -90,7 +90,7 @@ class BuildMergeLogicTests(unittest.TestCase):
         )
         hook = data["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
         self.assertEqual(hook["command"], python_path)
-        self.assertEqual(hook["args"], ["-m", "src.cli", "hook-run"])
+        self.assertEqual(hook["args"], ["-I", "-m", "jangseung.cli", "hook-run"])
         self.assertTrue(is_aegis_hook(hook))
 
     def test_claude_code_matcher_adds_powershell_only_on_windows(self):
@@ -103,7 +103,7 @@ class BuildMergeLogicTests(unittest.TestCase):
 
     def test_windows_hook_uses_aeg_exe_when_available(self):
         aeg_path = r"C:\Users\Name With Space\venv\Scripts\aeg.exe"
-        with mock.patch("src.cli.install.shutil.which", return_value=aeg_path):
+        with mock.patch("jangseung.cli.install._installed_console_script", return_value=aeg_path):
             command, args = resolve_windows_hook_command_parts()
 
         self.assertEqual(command, aeg_path)
@@ -112,25 +112,25 @@ class BuildMergeLogicTests(unittest.TestCase):
     def test_windows_hook_ignores_non_exe_aeg_shim(self):
         python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
         with mock.patch(
-            "src.cli.install.shutil.which",
+            "jangseung.cli.install.shutil.which",
             return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
-        ), mock.patch("src.cli.install.sys.executable", python_path):
+        ), mock.patch("jangseung.cli.install.sys.executable", python_path):
             command, args = resolve_windows_hook_command_parts()
 
         self.assertEqual(command, python_path)
-        self.assertEqual(args, ("-m", "src.cli", "hook-run"))
+        self.assertEqual(args, ("-I", "-m", "jangseung.cli", "hook-run"))
 
     def test_codex_windows_command_uses_quoted_windows_command_string(self):
         python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
         with mock.patch(
-            "src.cli.install.shutil.which",
+            "jangseung.cli.install.shutil.which",
             return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
-        ), mock.patch("src.cli.install.sys.executable", python_path):
+        ), mock.patch("jangseung.cli.install.sys.executable", python_path):
             command = resolve_codex_windows_hook_command(platform="win32")
 
         self.assertIsNotNone(command)
         self.assertTrue(command.startswith('"C:\\Users\\Name With Space\\venv\\Scripts\\python.exe"'))
-        self.assertIn("-m src.cli hook-run", command)
+        self.assertIn("-m jangseung.cli hook-run", command)
         self.assertIn("--substrate codex", command)
 
     def test_codex_windows_command_omitted_off_windows(self):
@@ -143,7 +143,7 @@ class BuildMergeLogicTests(unittest.TestCase):
         self.assertIn("hook-run", command)
         data, _ = build_installed_settings({}, command, args=args)
         hook = data["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
-        self.assertEqual(hook, {"type": "command", "command": command})
+        self.assertEqual(hook, {"type": "command", "command": command, "onFailure": "block"})
 
     def test_is_aegis_hook_command_does_not_match_user_hooks(self):
         self.assertFalse(is_aegis_hook_command(_USER_HOOK))
@@ -193,12 +193,23 @@ class BuildMergeLogicTests(unittest.TestCase):
         data, _ = build_installed_settings(
             {},
             r"C:\Users\Name With Space\venv\Scripts\python.exe",
-            args=["-m", "src.cli", "hook-run"],
+            args=["-m", "jangseung.cli", "hook-run"],
         )
-        again, already = build_installed_settings(data, "aeg hook-run")
+        again, already = build_installed_settings(
+            data,
+            r"C:\Users\Name With Space\venv\Scripts\python.exe",
+            args=["-m", "jangseung.cli", "hook-run"],
+        )
 
         self.assertTrue(already)
         self.assertEqual(len(again["hooks"][HOOK_EVENT_NAME]), 1)
+
+        upgraded, already = build_installed_settings(data, "aeg hook-run")
+
+        self.assertFalse(already)
+        self.assertEqual(len(upgraded["hooks"][HOOK_EVENT_NAME]), 1)
+        hook = upgraded["hooks"][HOOK_EVENT_NAME][0]["hooks"][0]
+        self.assertEqual(hook, {"type": "command", "command": "aeg hook-run", "onFailure": "block"})
 
     def test_uninstall_removes_only_aegis_keeps_user(self):
         data = {
@@ -228,7 +239,7 @@ class BuildMergeLogicTests(unittest.TestCase):
                             {
                                 "type": "command",
                                 "command": r"C:\Users\x\venv\Scripts\python.exe",
-                                "args": ["-m", "src.cli", "hook-run"],
+                                "args": ["-m", "jangseung.cli", "hook-run"],
                             }
                         ],
                     },
@@ -293,7 +304,7 @@ class BuildMergeLogicTests(unittest.TestCase):
     def test_codex_config_can_include_windows_command_field(self):
         windows_command = (
             r'"C:\Users\Name With Space\venv\Scripts\python.exe" '
-            r"-m src.cli hook-run --substrate codex"
+            r"-m jangseung.cli hook-run --substrate codex"
         )
 
         text, already = build_installed_codex_config_text(
@@ -443,10 +454,10 @@ class CmdFlowTests(unittest.TestCase):
     def test_install_target_codex_writes_command_windows_on_windows(self):
         python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
         with tempfile.TemporaryDirectory() as tmp, mock.patch(
-            "src.cli.install.sys.platform",
+            "jangseung.cli.install.sys.platform",
             "win32",
-        ), mock.patch("src.cli.install.sys.executable", python_path), mock.patch(
-            "src.cli.install.shutil.which",
+        ), mock.patch("jangseung.cli.install.sys.executable", python_path), mock.patch(
+            "jangseung.cli.install.shutil.which",
             return_value=None,
         ):
             out = io.StringIO()
@@ -508,7 +519,7 @@ class SubprocessInstallTests(unittest.TestCase):
     def test_subprocess_install_creates_working_hook_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run(
-                [sys.executable, "-m", "src.cli", "install", "--path", tmp, "--yes"],
+                [sys.executable, "-m", "jangseung.cli", "install", "--path", tmp, "--yes"],
                 capture_output=True, text=True, cwd=tmp, env=self._env(),
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -523,7 +534,7 @@ class SubprocessInstallTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "src.cli",
+                    "jangseung.cli",
                     "install",
                     "--path",
                     tmp,

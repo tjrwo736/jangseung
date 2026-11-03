@@ -45,11 +45,11 @@ Impact-aware classification must treat these paths as protected:
 - `requirements*.txt`
 - `setup.py`
 - `setup.cfg`
-- `src/cli/**`
-- `src/classify/**`
-- `src/law/**`
-- `src/evidence/**`
-- `src/state/**`
+- `jangseung/cli/**`
+- `jangseung/classify/**`
+- `jangseung/law/**`
+- `jangseung/evidence/**`
+- `jangseung/state/**`
 - `.env`
 - `.env.*`
 - `secrets/**`

@@ -131,7 +131,7 @@ The mapping does not maintain a hook-local protected path taxonomy.
 Repository protected path classification is delegated to:
 
 ```text
-src.classify.is_protected_path
+jangseung.classify.is_protected_path
 ```
 
 The only extra path checks here are boundary checks needed to keep the
@@ -161,7 +161,7 @@ Protected path handling:
 Dockerfile -> DENY_CANDIDATE
 pyproject.toml -> DENY_CANDIDATE
 deploy/prod.yml -> DENY_CANDIDATE
-src/law/policy.py -> DENY_CANDIDATE
+jangseung/law/policy.py -> DENY_CANDIDATE
 .aeg state dir target -> DENY_CANDIDATE
 absolute path -> DENY_CANDIDATE
 parent traversal path -> DENY_CANDIDATE

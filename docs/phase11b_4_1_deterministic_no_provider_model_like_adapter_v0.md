@@ -47,7 +47,7 @@ live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 Implemented adapter:
 
 ```text
-src/evidence/deterministic_model_like_adapter.py
+jangseung/evidence/deterministic_model_like_adapter.py
 ```
 
 Focused tests:

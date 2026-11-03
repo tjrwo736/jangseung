@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     BYPASS_RESULT_MISMATCH_REJECTED,
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
     MEDIATED_WRITE_BOUNDARY_FIELDS,
@@ -20,8 +20,8 @@ from src.contracts import (
     WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
     WRITE_MEDIATION_COMPONENT_MISMATCH_REJECTED,
 )
-from src.evidence.binding import manifest_hash, sha256_json
-from src.evidence.mediated_write_boundary import expected_mediated_write_boundary_metadata_hash
+from jangseung.evidence.binding import manifest_hash, sha256_json
+from jangseung.evidence.mediated_write_boundary import expected_mediated_write_boundary_metadata_hash
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,8 +38,8 @@ class Phase10E6WriteMediationVerifyMismatchRejectionTests(unittest.TestCase):
         (self.repo / "README.md").write_text("# Test\n", encoding="utf-8")
         (self.repo / "src" / "agents").mkdir(parents=True)
         (self.repo / "src" / "agents" / "executor.py").write_text("VALUE = 1\n", encoding="utf-8")
-        (self.repo / "src" / "classify").mkdir(parents=True)
-        (self.repo / "src" / "classify" / "rules.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (self.repo / "jangseung" / "classify").mkdir(parents=True)
+        (self.repo / "jangseung" / "classify" / "rules.py").write_text("VALUE = 1\n", encoding="utf-8")
         self._git("add", ".")
         self._git("commit", "-m", "init")
         self._aeg("init")
@@ -205,7 +205,7 @@ class Phase10E6WriteMediationVerifyMismatchRejectionTests(unittest.TestCase):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(REPO_ROOT)
         return subprocess.run(
-            [sys.executable, "-m", "src.cli", *args],
+            [sys.executable, "-m", "jangseung.cli", *args],
             cwd=self.repo,
             env=env,
             text=True,

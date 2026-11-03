@@ -53,7 +53,7 @@ reported-only authority field is accepted as store-adjacent candidate material.
 
 ## Store Sink Boundary
 
-The `src/state/store.py` write sinks remain guarded:
+The `jangseung/state/store.py` write sinks remain guarded:
 
 - `_write_json` before `Path.write_text`
 - `_append_ledger_unmediated` before append-mode ledger writes

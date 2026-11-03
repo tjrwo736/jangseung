@@ -5,7 +5,7 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     B1_AEG_INTEGRITY_KNOWN_GAP_BASELINE,
     B1_AEG_INTEGRITY_KNOWN_GAP_VOCABULARY,
     B1_AEG_INTEGRITY_NOT_EXECUTOR_ISOLATED,

@@ -63,7 +63,7 @@ Hook checks are a project-local snapshot at the detected Git root:
   substrate and the literal current installer matcher (custom matchers are
   NOT_CHECKED, not inferred to cover tools).
 - Current-platform executable existence/permissions. Nothing is executed;
-  Python `-m src.cli` imports in another interpreter are NOT_CHECKED.
+  Python `-m jangseung.cli` imports in another interpreter are NOT_CHECKED.
 - Recording directory metadata and permissions, without any write probe.
 - Persistent guard metadata (presence is normal; actual OS lock activity is
   NOT_CHECKED), PID sentinel state and existing ledger hash chain.

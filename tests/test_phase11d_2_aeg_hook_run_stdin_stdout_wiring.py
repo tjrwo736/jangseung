@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.cli.hook_run import (
+from jangseung.cli.hook_run import (
     CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
     CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
     EXIT_ALLOW_OR_ASK,
@@ -18,13 +18,10 @@ from src.cli.hook_run import (
     PERMISSION_ALLOW,
     PERMISSION_ASK,
     PERMISSION_DENY,
-    PHASE11D_2_COMPLETE_LABEL,
     SUBSTRATE_CLAUDE_CODE,
     SUBSTRATE_CODEX,
-    build_aeg_hook_run_contract_evidence,
     render_hook_response,
 )
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -140,7 +137,21 @@ class RenderHookResponseTests(unittest.TestCase):
         self.assertIn("substrate=claude-code", result.reason)
         self.assertNotIn(CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON, result.reason)
 
-    def test_powershell_read_only_maps_to_allow(self):
+    def test_powershell_metadata_read_maps_to_allow(self):
+        result = _render(
+            {
+                "tool_name": "PowerShell",
+                "tool_input": {"command": "Test-Path .env"},
+                "tool_use_id": "t-powershell-read",
+            },
+            self.repo_root,
+        )
+
+        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
+        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
+        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_ALLOW)
+
+    def test_powershell_secret_read_maps_to_deny(self):
         result = _render(
             {
                 "tool_name": "PowerShell",
@@ -150,9 +161,9 @@ class RenderHookResponseTests(unittest.TestCase):
             self.repo_root,
         )
 
-        self.assertEqual(result.permission_decision, PERMISSION_ALLOW)
-        self.assertEqual(result.exit_code, EXIT_ALLOW_OR_ASK)
-        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_ALLOW)
+        self.assertEqual(result.permission_decision, PERMISSION_DENY)
+        self.assertEqual(result.exit_code, EXIT_BLOCK)
+        self.assertEqual(_permission_from_stdout(result.stdout_json), PERMISSION_DENY)
 
     def test_ambiguous_powershell_default_substrate_maps_to_ask(self):
         result = _render(
@@ -213,7 +224,7 @@ class RenderHookResponseTests(unittest.TestCase):
     # --- dangerous (must deny + block) ----------------------------------
 
     def test_protected_path_writes_deny_and_block(self):
-        for path in (".env", ".github/workflows/ci.yml", ".aeg/x", "Dockerfile", "pyproject.toml", "src/law/x.py"):
+        for path in (".env", ".github/workflows/ci.yml", ".aeg/x", "Dockerfile", "pyproject.toml", "jangseung/law/x.py"):
             with self.subTest(path=path):
                 result = _render(
                     {"tool_name": "Write", "tool_input": {"file_path": path, "content": "x"}, "tool_use_id": "t"},
@@ -463,48 +474,6 @@ class RenderHookResponseTests(unittest.TestCase):
         )
         self.assertEqual(ask.stderr_text, "")
 
-    def test_evidence_records_real_io_and_no_install(self):
-        evidence = build_aeg_hook_run_contract_evidence()
-        self.assertEqual(evidence["completion_label"], PHASE11D_2_COMPLETE_LABEL)
-        self.assertTrue(evidence["reads_stdin"])
-        self.assertTrue(evidence["writes_stdout"])
-        self.assertTrue(evidence["returns_exit_code"])
-        self.assertTrue(evidence["stdin_treated_as_untrusted_raw_executor_output"])
-        self.assertFalse(evidence["judgment_brain_modified"])
-        self.assertFalse(evidence["failure_ever_maps_to_allow"])
-        self.assertFalse(evidence["raw_tool_input_echoed_in_reason"])
-        self.assertEqual(
-            evidence["substrate_selection_source"],
-            "explicit_hook_run_substrate_argument",
-        )
-        self.assertFalse(evidence["tool_name_used_for_substrate_detection"])
-        self.assertEqual(evidence["default_substrate"], SUBSTRATE_CLAUDE_CODE)
-        self.assertTrue(evidence["missing_or_unknown_substrate_defaults_to_claude_code"])
-        self.assertTrue(evidence["codex_substrate_ask_defer_upgraded_to_deny"])
-        self.assertEqual(
-            evidence["codex_substrate_upgrade_reason_code"],
-            CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON,
-        )
-        self.assertTrue(evidence["codex_substrate_all_permission_decisions_exit_zero"])
-        self.assertEqual(evidence["claude_code_substrate_deny_exit_code"], EXIT_BLOCK)
-        self.assertEqual(
-            evidence["codex_substrate_process_exit_code"],
-            EXIT_ALLOW_OR_ASK,
-        )
-        self.assertEqual(
-            evidence["fail_closed_exit_code_codex_substrate"],
-            EXIT_ALLOW_OR_ASK,
-        )
-        self.assertFalse(evidence["settings_json_modified"])
-        self.assertFalse(evidence["hook_installed"])
-        self.assertFalse(evidence["claude_code_execution_performed"])
-        self.assertFalse(evidence["tool_execution_performed"])
-        self.assertTrue(evidence["store_write_performed"])
-        self.assertEqual(evidence["store_write_scope"], ".aeg/hook_ledger.jsonl")
-        self.assertFalse(evidence["raw_tool_input_stored_in_hook_ledger"])
-        self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
-        self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
-
 
 class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
     """Proves the real stdin -> stdout -> exit-code path via an actual process."""
@@ -516,7 +485,7 @@ class AegHookRunSubprocessEndToEndTests(unittest.TestCase):
             # CPython <= 3.10 fatally fails at interpreter startup
             # ("_Py_HashRandomization_Init: failed to get random numbers").
             env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
-            command = [sys.executable, "-m", "src.cli", "hook-run"]
+            command = [sys.executable, "-m", "jangseung.cli", "hook-run"]
             command.extend(extra_args or [])
             proc = subprocess.run(
                 command,

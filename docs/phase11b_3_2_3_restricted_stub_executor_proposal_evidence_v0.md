@@ -41,7 +41,7 @@ not return or submit an `ActionDecisionPacket`.
 Implemented file:
 
 ```text
-src/evidence/restricted_propose_only_executor.py
+jangseung/evidence/restricted_propose_only_executor.py
 ```
 
 The stub accepts only deterministic fixture input:
@@ -84,7 +84,7 @@ executor_authority_claim_allowed = false
 Implemented file:
 
 ```text
-src/evidence/proposal_evidence.py
+jangseung/evidence/proposal_evidence.py
 ```
 
 Proposal evidence binds only verified runtime-built `PROPOSE_PATCH` packet

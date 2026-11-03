@@ -18,6 +18,25 @@ permissions:
   contents: read
 
 jobs:
+  # Syntax errors and undefined names only; these are bugs in any style of code.
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install ruff
+        run: python -m pip install "ruff==0.17.3"
+
+      - name: Run ruff
+        run: python -m ruff check --select E9,F63,F7,F82 jangseung tests aeg
+
   test:
     name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -52,7 +71,7 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Install package and test runner
-        # Editable install puts the `src` package (and the `aeg` entry point) on
+        # Editable install puts the `jangseung` package (and the `aeg` entry point) on
         # the path along with its declared runtime dependencies.
         run: |
           python -m pip install --upgrade pip

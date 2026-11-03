@@ -10,7 +10,7 @@ from unittest import mock
 import pytest
 import tomlkit
 
-from src.cli.install import (
+from jangseung.cli.install import (
     InstallStructureError, build_installed_codex_config_text,
     build_uninstalled_codex_config_text, cmd_uninstall,
 )
@@ -21,10 +21,10 @@ from src.cli.install import (
     "'/home/some user/bin/aeg' hook-run --substrate codex",
     "C:\\Python\\Scripts\\aeg.exe hook-run --substrate codex",
     "C:\\Python\\Scripts\\aeg.EXE hook-run --substrate codex",
-    '"C:\\Program Files\\Python\\PYTHON.EXE" -m src.cli hook-run --substrate codex',
-    '"C:\\Program Files\\Python\\python.exe" -m src.cli hook-run --substrate codex',
-    "C:\\Program Files\\Python\\python.exe -m src.cli hook-run --substrate codex",
-    "/usr/bin/python3.10 -m src.cli hook-run --substrate codex",
+    '"C:\\Program Files\\Python\\PYTHON.EXE" -m jangseung.cli hook-run --substrate codex',
+    '"C:\\Program Files\\Python\\python.exe" -m jangseung.cli hook-run --substrate codex',
+    "C:\\Program Files\\Python\\python.exe -m jangseung.cli hook-run --substrate codex",
+    "/usr/bin/python3.10 -m jangseung.cli hook-run --substrate codex",
     "aeg hook-run",  # legacy config remains removable
 ])
 def test_generated_commands_removed(command):
@@ -102,8 +102,8 @@ command_windows = "aeg hook-run --substrate codex"
 @pytest.mark.parametrize("executable,args,removed", [
     ("aeg.exe", ["hook-run", "--substrate", "codex"], 1),
     ("AEG.EXE", ["hook-run", "--substrate", "codex"], 1),
-    ("python.exe", ["-m", "src.cli", "hook-run", "--substrate", "codex"], 1),
-    ("other.exe", ["-m", "src.cli", "hook-run"], 0),
+    ("python.exe", ["-m", "jangseung.cli", "hook-run", "--substrate", "codex"], 1),
+    ("other.exe", ["-m", "jangseung.cli", "hook-run"], 0),
     ("aeg.exe", ["other", "hook-run"], 0),
 ])
 def test_exec_form_requires_exact_generated_argv(executable, args, removed):
@@ -149,7 +149,7 @@ def test_backup_failure_does_not_modify_config(tmp_path):
     config.parent.mkdir()
     text, _ = build_installed_codex_config_text("", "aeg hook-run --substrate codex")
     config.write_text(text, encoding="utf-8")
-    with mock.patch("src.cli.install._backup_file", side_effect=PermissionError("test")):
+    with mock.patch("jangseung.cli.install._backup_file", side_effect=PermissionError("test")):
         assert cmd_uninstall(tmp_path, target="codex", assume_yes=True, output_stream=io.StringIO()) == 1
     assert config.read_text(encoding="utf-8") == text
 
@@ -161,7 +161,7 @@ def test_cli_install_uninstall_round_trip_preserves_claude(tmp_path):
     original = claude.read_bytes()
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]), PYTHONIOENCODING="utf-8")
     for command in ("install", "uninstall", "uninstall"):
-        result = subprocess.run([sys.executable, "-m", "src.cli", command, "--target", "codex", "--yes", "--path", str(tmp_path)], cwd=tmp_path, env=env, capture_output=True)
+        result = subprocess.run([sys.executable, "-m", "jangseung.cli", command, "--target", "codex", "--yes", "--path", str(tmp_path)], cwd=tmp_path, env=env, capture_output=True)
         assert result.returncode == 0, result.stderr
     assert not tomlkit.parse((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")).get("hooks")
     assert claude.read_bytes() == original

@@ -56,11 +56,11 @@ payload cannot claim `trusted_runtime_internal`.
 
 ## save_run routing design
 
-`src/state/store.py::save_run` is the real state recorder. It writes run,
+`jangseung/state/store.py::save_run` is the real state recorder. It writes run,
 evidence, manifest, and ledger records under `.aeg`. Phase 11-A-1 does not call
 that function and does not replace it.
 
-The new adapter in `src/evidence/phase11a_save_run_write_routing.py` only
+The new adapter in `jangseung/evidence/phase11a_save_run_write_routing.py` only
 models one expected target at a time. The default request target is:
 
 ```text
@@ -90,7 +90,7 @@ adapter does not create a guard bypass.
 
 ## fallback / kill-path integration with 11-A-0
 
-11-A-1 reuses `src/evidence/phase11a_rollback_kill_path.py`.
+11-A-1 reuses `jangseung/evidence/phase11a_rollback_kill_path.py`.
 
 When the mediator route returns a failure-like result or raises an exception,
 11-A-1 records:
@@ -210,7 +210,7 @@ handling remains Phase 11-A-2 scope.
 - treat caller or executor self-report as trusted-runtime authority.
 - allow self-mediation avoidance to become a guard bypass.
 - implement Phase 11-B.
-- change `src/cli/main.py`, `src/agents`, or `pyproject.toml`.
+- change `jangseung/cli/main.py`, `src/agents`, or `pyproject.toml`.
 - write `.aeg`, `.env`, ledger, secret, or runtime artifact files.
 - activate enforcement or harden OS/filesystem/sandbox/container behavior.
 

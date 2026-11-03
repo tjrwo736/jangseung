@@ -1,7 +1,7 @@
 import unittest
 
-from src.classify import classify_task, is_protected_path
-from src.contracts import (
+from jangseung.classify import classify_task, is_protected_path
+from jangseung.contracts import (
     CLEAN_CORE,
     GIT_WORKING_TREE,
     HIGH,
@@ -13,7 +13,7 @@ from src.contracts import (
     NOT_CHECKED,
     SAFE_DEFAULT,
 )
-from src.law import apply_law
+from jangseung.law import apply_law
 
 
 class ClassifyLawTests(unittest.TestCase):
@@ -95,7 +95,7 @@ class ClassifyLawTests(unittest.TestCase):
             ".github/workflows/ci.yml",
             ".env",
             "scripts/deploy_prod.sh",
-            "src/classify/rules.py",
+            "jangseung/classify/rules.py",
         ]
         for path in protected_paths:
             with self.subTest(path=path):
@@ -122,11 +122,11 @@ class ClassifyLawTests(unittest.TestCase):
             "requirements-dev.txt",
             "setup.py",
             "setup.cfg",
-            "src/cli/main.py",
-            "src/classify/rules.py",
-            "src/law/gates.py",
-            "src/evidence/packet.py",
-            "src/state/git.py",
+            "jangseung/cli/main.py",
+            "jangseung/classify/rules.py",
+            "jangseung/law/gates.py",
+            "jangseung/evidence/packet.py",
+            "jangseung/state/git.py",
             ".env",
             ".env.local",
             "secrets/prod.key",

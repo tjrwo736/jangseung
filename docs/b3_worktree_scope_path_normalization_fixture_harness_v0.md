@@ -26,7 +26,7 @@ path-boundary proof.
 
 ## 3. B3-4 Scope
 
-B3-4 adds `src/evidence/b3_worktree_scope_path_fixtures.py` as a pure
+B3-4 adds `jangseung/evidence/b3_worktree_scope_path_fixtures.py` as a pure
 in-memory fixture harness. It classifies fixture cases into candidate/status
 labels and required future closure labels.
 

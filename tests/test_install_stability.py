@@ -2,18 +2,16 @@
 import io
 import json
 import os
-from pathlib import Path
 import shlex
 import subprocess
-import sys
 from unittest.mock import patch
 
 import pytest
 import tomlkit
 
-from src.cli.hook_run import run_aeg_hook_run
-from src.cli.install import (
-    InstallStructureError, build_installed_codex_config_text,
+from jangseung.cli.hook_run import run_aeg_hook_run
+from jangseung.cli.install import (
+    build_installed_codex_config_text,
     build_uninstalled_codex_config_text, build_uninstalled_settings,
     cmd_install, cmd_uninstall, is_aegis_hook, resolve_hook_command,
 )
@@ -62,7 +60,7 @@ def test_codex_invalid_config_has_no_side_effects(tmp_path, bad):
 @pytest.mark.parametrize("command", [
     "echo 'aeg hook-run maintenance notice'", "/bin/echo /usr/bin/aeg hook-run",
     "other hook-run", "aeg hook-run && user-hook", "aeg hook-run --unrelated-option",
-    "python -c 'src.cli hook-run'", "my-aeg hook-run",
+    "python -c 'jangseung.cli hook-run'", "my-aeg hook-run",
 ])
 def test_claude_uninstall_preserves_mentions_and_wrappers(tmp_path, command):
     hook = {"type": "command", "command": command}
@@ -79,7 +77,7 @@ def test_claude_uninstall_preserves_mentions_and_wrappers(tmp_path, command):
 
 
 @pytest.mark.parametrize("hook", [
-    {"type": "command", "command": "echo", "args": ["-m", "src.cli", "hook-run"]},
+    {"type": "command", "command": "echo", "args": ["-m", "jangseung.cli", "hook-run"]},
     {"type": "command", "command": "aeg", "args": ["other", "hook-run"]},
     {"type": "prompt", "command": "aeg hook-run"},
     {"type": "command", "command": "aeg hook-run", "command_windows": "user-hook"},
@@ -140,9 +138,9 @@ def test_bad_state_does_not_change_config(tmp_path, target):
 @pytest.mark.parametrize("executable", ["/tmp/my project/aeg", "/tmp/O'Brien/aeg", "/tmp/my project/python3.10"])
 def test_shell_hook_path_is_quoted_and_removable(executable):
     python = executable.endswith("python3.10")
-    with patch("src.cli.install.shutil.which", return_value=None if python else executable), patch("src.cli.install.sys.executable", executable):
+    with patch("jangseung.cli.install._installed_console_script", return_value=None if python else executable), patch("jangseung.cli.install.sys.executable", executable):
         command = resolve_hook_command(substrate="codex")
-    assert shlex.split(command) == [executable, *(["-m", "src.cli"] if python else []), "hook-run", "--substrate", "codex"]
+    assert shlex.split(command) == [executable, *(["-I", "-m", "jangseung.cli"] if python else []), "hook-run", "--substrate", "codex"]
     assert is_aegis_hook({"type": "command", "command": command})
 
 
@@ -153,7 +151,7 @@ def test_shell_executes_spaced_path(tmp_path):
     executable = directory / "aeg"
     executable.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
     executable.chmod(0o700)
-    with patch("src.cli.install.shutil.which", return_value=str(executable)):
+    with patch("jangseung.cli.install.shutil.which", return_value=str(executable)):
         command = resolve_hook_command(substrate="codex")
     result = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True)
     assert result.returncode == 0
@@ -166,7 +164,7 @@ def test_atomic_write_failure_keeps_config(tmp_path, target):
     config.parent.mkdir()
     config.write_text("model = 'example'\n" if target == "codex" else '{"model":"example"}', encoding="utf-8")
     original = config.read_bytes()
-    with patch("src.cli.install.os.replace", side_effect=OSError("disk unavailable")):
+    with patch("jangseung.cli.install.os.replace", side_effect=OSError("disk unavailable")):
         assert cmd_install(tmp_path, target=target, assume_yes=True, output_stream=io.StringIO()) == 1
     assert config.read_bytes() == original
     assert not list(config.parent.glob(".aeg-config-*"))
@@ -185,12 +183,12 @@ def test_non_utf8_settings_are_rejected_without_writes(tmp_path, target):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows read-only attribute cleanup")
 def test_readonly_temp_is_cleaned_on_replace_failure(tmp_path):
-    from src.cli.install import _atomic_write_text
+    from jangseung.cli.install import _atomic_write_text
     config = tmp_path / "settings.json"
     config.write_text("original", encoding="utf-8")
     config.chmod(0o444)
     try:
-        with patch("src.cli.install.os.replace", side_effect=PermissionError("read only")):
+        with patch("jangseung.cli.install.os.replace", side_effect=PermissionError("read only")):
             with pytest.raises(PermissionError):
                 _atomic_write_text(config, "new")
         assert config.read_text(encoding="utf-8") == "original"

@@ -15,7 +15,7 @@ schema-valid-looking action data must not bypass the capability gate
 Implementation:
 
 ```text
-src/evidence/structured_action_injection_fixtures.py
+jangseung/evidence/structured_action_injection_fixtures.py
 tests/test_phase11b_tool_injection_escape_fixtures.py
 ```
 

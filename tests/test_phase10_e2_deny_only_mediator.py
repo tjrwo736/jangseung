@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     DENIED_BY_MEDIATOR_SKELETON,
     DENY_ONLY_MEDIATOR_SKELETON_PRESENT,
     ENFORCEMENT_NOT_IMPLEMENTED,
@@ -15,8 +15,8 @@ from src.contracts import (
     WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
     WRITE_CLASSES,
 )
-from src.evidence import deny_only_mediator
-from src.evidence.deny_only_mediator import (
+from jangseung.evidence import deny_only_mediator
+from jangseung.evidence.deny_only_mediator import (
     DenyOnlyWriteMediator,
     WriteMediationRequest,
     decide_write_request,

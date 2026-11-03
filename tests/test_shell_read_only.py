@@ -7,13 +7,13 @@ import sys
 
 import pytest
 
-from src.cli.hook_run import render_hook_response
-from src.evidence.shell_read_only import classify_shell_read
+from jangseung.cli.hook_run import render_hook_response
+from jangseung.evidence.shell_read_only import classify_shell_read
 
 
 @pytest.fixture
 def repo(tmp_path):
-    for path in ("README.md", "docs/guide.md", "docs/한글 문서.md", ".env", "src/law/README.md", ".aeg/log.md"):
+    for path in ("README.md", "docs/guide.md", "docs/한글 문서.md", ".env", "jangseung/law/README.md", ".aeg/log.md"):
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# harmless fixture\n", encoding="utf-8")
@@ -49,7 +49,7 @@ def test_normal_reads_allowed(repo, command, substrate):
     "cat $(whoami)", "cat `whoami`", "cat <(whoami)", "cat $FILE",
     "cat README.md &", "cat README.md || evil", "cat README.md |", "cat 'README.md",
     "cat *", "cat ../README.md", "cat ~/README.md", "cat /dev/null",
-    "cat docs", "cat missing.md", "cat .env", "cat src/law/README.md", "cat .aeg/log.md",
+    "cat docs", "cat missing.md", "cat .env", "cat .aeg/log.md",
     "sed -i '1p' README.md", "sed -n '1e touch pwn' README.md",
     "sed -n '1w output' README.md", "sed -f instructions README.md", "sed -n -e '1p' -e '1e evil' README.md",
     "rg -n example README.md",  # no --no-config: env config could inject --pre
@@ -112,9 +112,11 @@ def test_unsupported_tool_still_fails_closed(repo):
 
 
 def test_cli_read_records_allow_without_raw_command(repo):
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]), PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
     payload = {"tool_name": "Bash", "tool_input": {"command": "cat README.md"}, "tool_use_id": "smoke"}
-    result = subprocess.run([sys.executable, "-m", "src.cli", "hook-run", "--substrate", "codex"], input=json.dumps(payload), text=True, encoding="utf-8", cwd=repo, env=env, capture_output=True)
+    result = subprocess.run([sys.executable, "-m", "jangseung.cli", "hook-run", "--substrate", "codex"], input=json.dumps(payload), text=True, encoding="utf-8", cwd=repo, env=env, capture_output=True)
     assert result.returncode == 0
     assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "allow"
     ledger = (repo / ".aeg" / "hook_ledger.jsonl").read_text(encoding="utf-8")

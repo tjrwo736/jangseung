@@ -1,137 +1,53 @@
-# Aegis Architecture v0
+# 장승(Jangseung) 아키텍처
 
-This document defines the Day-1 v0.1 architecture boundary for Aegis. It is a
-contract-first runtime spine, not a model-backed executor.
+이 문서는 현재 코드의 구조를 설명합니다. `docs/` 안의 `phase*`, `b1_*` 같은 문서는 개발 과정의 기록이며 현재 동작의 기준이 아닙니다. 그 문서들이 말하는 모듈 일부는 0.1.5에서 제거되었습니다.
 
-## Purpose
+## 무엇을 하는 도구인가
 
-Aegis is a standalone, portable governed coding-agent runtime. Its architecture
-starts from governance semantics rather than provider integration. The system is
-intended to preserve evidence-first operation, risk-proportional gates, a single
-CLI entry point, and folder-local state.
+장승은 Claude Code와 Codex의 PreToolUse hook입니다. 에이전트의 도구 호출이 실행되기 직전에 입력을 받아 `allow`, `ask`, `deny` 중 하나로 답하고, 판정 메타데이터를 `.aeg/hook_ledger.jsonl`에 기록합니다.
 
-## Architectural Principles
+## 판정 흐름
 
-- The executor is not the source of truth.
-- Repository state and validation evidence outrank executor self-report.
-- Risk controls should scale with the blast radius of an action.
-- Local project state should live under a folder-local `.aeg/` directory.
-- Core runtime behavior should be usable without Slack, GitHub API automation,
-  OpenAI runtime, Claude runtime, Gemini runtime, DRA, Hermes, or Agent Civitas.
-- Main merge, release, publish, deploy, provider integration, and autonomous
-  execution require explicit user-gated scope.
+1. **진입점** `jangseung/cli/entry.py`: 패키지를 불러오기 전에 보호를 시작합니다. hook 경로의 어떤 실패도 deny로 응답합니다. `hook-run`은 다른 명령의 모듈을 불러오지 않아 빠르게 시작합니다.
+2. **입출력** `jangseung/cli/hook_run.py`: stdin을 UTF-8로 읽고, 고정된 프로젝트 루트와 실제 작업 폴더를 정합니다.
+3. **입력 계약** `jangseung/evidence/claude_code_pretooluse_input_contract.py`: 지원 도구와 필수 필드를 확인합니다. 그 외에는 deny합니다.
+4. **경로 정규화** `jangseung/evidence/hook_judgment_engine_alignment.py`: 대상 경로를 작업 폴더 기준으로 풀고, 심볼릭 링크와 표기 변형을 없앤 프로젝트 상대 경로로 바꿉니다.
+5. **관문 판정**: 다음 관문을 모두 계산하고 하나라도 걸리면 deny합니다.
+   - 프로젝트 경계, `.aeg` 보호, 보호 경로
+   - 명령의 위험도(`jangseung/evidence/shell_command_risk.py`)
+   - 명령의 쓰기·삭제 대상(`jangseung/evidence/claude_code_tool_call_mapping.py`)
+   - 비밀 파일 읽기, 명령 인자에 든 비밀 경로
+6. **허용 판정**: 다음 경우에만 allow합니다.
+   - 명령이 좁은 읽기 문법을 통과하고 대상이 안전합니다(`jangseung/evidence/shell_read_only.py`).
+   - 사람이 승인한 명령입니다(`.aeg/policy.json`).
+   - 프로젝트 안 일반 파일을 다루는 `Read`, `Write`, `Edit` 계열입니다.
+7. **나머지**: 위에 해당하지 않으면 `defer`이며, Claude Code에서는 `ask`, Codex에서는 `deny`로 응답합니다.
 
-## Module Boundaries
+핵심 원칙은 **명령을 자동 허용하는 경로가 읽기 문법과 사람의 승인 둘뿐**이라는 점입니다. 위험 명령 파서는 deny만 만들 수 있으므로, 파서가 놓친 명령은 `ask`로 갑니다.
 
-The Day-1 source layout keeps the module areas small and explicit:
+## 경로 정책
 
-| Path | Boundary |
+`jangseung/classify/rules.py` 한곳에서 정합니다. 강한 순서대로 다음과 같습니다.
+
+| 분류 | 예 | 쓰기 | 읽기 | 승인 정책으로 해제 |
+| --- | --- | --- | --- | --- |
+| 장승 자체 설정 | `.aeg`, `.git`, `.claude/settings*.json`, `.codex`, `.mcp.json` | deny | `.aeg`만 deny | 불가 |
+| 비밀 | `.env`, `*.pem`, `id_rsa`, `.aws/`, `.ssh/` | deny | deny | 가능 |
+| 보호 | `.github/workflows`, `Dockerfile`, `pyproject.toml` | deny | allow | 가능 |
+
+경로는 비교 전에 대소문자, 구분자, `.`, 빈 경로 조각, NTFS의 끝 점·공백·`:stream`을 정규화합니다.
+
+## 모듈 지도
+
+| 경로 | 역할 |
 | --- | --- |
-| `src/cli/` | Single CLI entry point and command dispatch for `init`, `doctor`, `run`, and `verify`. |
-| `src/classify/` | CLASSIFY is the heart. This module classifies each task or action as LOW, MEDIUM, or HIGH risk before gates or execution are selected. |
-| `src/law/` | LAW selects gate thickness by risk and keeps deterministic STOP precedence. |
-| `src/agents/` | AGENTS contains the Day-1 contract-first no-op executor. It does not mutate repository files. |
-| `src/evidence/` | EVIDENCE writes and verifies bound packets tied to repo, branch, commit, tree, changed files, risk, and status. |
-| `src/state/` | `.aeg/` is folder-local state and ledger. This module owns runtime state and ledger records under `.aeg/`. |
-| `tests/` | Contract and behavior tests for classification, law, state, evidence, and verification. |
+| `jangseung/cli/` | CLI 명령. `hook_run`, `install`, `hook_doctor`, `explain` |
+| `jangseung/classify/` | 경로 정책(`rules`), 승인 정책 파일(`hook_policy`) |
+| `jangseung/law/` | 위험도별 판정 규칙 |
+| `jangseung/evidence/` | hook 판정 엔진과 초기 run evidence 계약 |
+| `jangseung/state/` | `.aeg/` 저장소, hook ledger(`hook_ledger`), Git 도우미 |
+| `jangseung/agents/` | `aeg run`에서 쓰는 no-op 실행기 |
 
-Day-1 v0.1 defines Python packages and executable commands. It does not define
-provider adapters or model-backed execution.
+## `aeg run` 계열
 
-## Runtime Shape
-
-The intended runtime shape is:
-
-```text
-user intent
-  -> single Aegis CLI
-  -> CLASSIFY is the heart: classify task/action risk as LOW, MEDIUM, or HIGH
-  -> LAW selects gate thickness by risk
-  -> contract-first no-op execution
-  -> EVIDENCE writes bound packets
-  -> STATE appends .aeg/ ledger records
-  -> VERIFY replays deterministic classification and law
-  -> user-gated decisions where required
-```
-
-This shape is implemented only as a local no-op contract. No autonomous loop or
-model-backed executor is implemented in Day-1 v0.1.
-
-## Local State
-
-Runtime state is folder-local under `.aeg/`. That directory is local
-operational state and is ignored by Git. Day-1 writes only:
-
-- `.aeg/config.json`
-- `.aeg/ledger.jsonl`
-- `.aeg/runs/<run_id>/run.json`
-- `.aeg/runs/<run_id>/evidence.json`
-
-.aeg/ is folder-local state and ledger: it is the intended home for runtime
-state and ledger records, never a committed artifact.
-
-Expected future state categories may include:
-
-- run metadata
-- evidence packets
-- gate decisions
-- validation summaries
-- local runtime cache
-
-Day-1 v0.1 creates `.aeg/` only at runtime. No `.aeg/` content is committed.
-
-## Evidence and Validation
-
-Aegis completion claims should be backed by direct evidence:
-
-- workspace path confirmation
-- Git branch and status
-- changed files
-- tree summary
-- validation output
-- secret-like scan
-- forbidden-scope scan
-
-Reported-only evidence is not sufficient by itself. Not-checked evidence is not
-a pass. DRA or other executor self-report is input to review, not the source of
-truth.
-
-Bound packets should connect claims to concrete repository facts: commit, tree,
-changed files, and status. Without those bindings, evidence is only narrative
-and cannot carry a gate decision.
-
-## Forbidden Scope in Day-1 v0.1
-
-Day-1 v0.1 does not implement or connect:
-
-- OpenAI, Claude, or Gemini providers
-- OpenAI API calls or any model API calls
-- model-backed executor
-- autonomous loop
-- GitHub API automation
-- Slack integration
-- DRA integration
-- Hermes integration
-- release, publish, or deploy flow
-- secret, token, API key, or actual `.env` value handling
-
-## Day-1 Runtime Boundary
-
-Day-1 v0.1 defines contracts before mutating behavior:
-
-1. CLI command contract.
-2. Local `.aeg/` state contract.
-3. Evidence packet contract.
-4. Risk classification contract.
-5. Validation strategy.
-
-v0.1 minimum cut is Citizen One. It remains an executor stub and
-contract-first spine: enough structure to prove the CLI, classification, law,
-evidence, state, and verification contracts before adding provider-backed
-execution.
-
-The safe default for ambiguous or high-risk actions remains:
-
-```text
-hold_current_state
-```
+`aeg run`, `aeg verify`, `aeg evidence`는 hook과 별개인 run 기록 기능입니다. `jangseung/evidence/verify.py`, `schema.py`, `action_decision_routing.py`, `jangseung/state/store.py`가 여기에 속합니다. 실행기는 no-op이고 provider는 꺼져 있습니다. hook 판정은 이 모듈들을 불러오지 않습니다.

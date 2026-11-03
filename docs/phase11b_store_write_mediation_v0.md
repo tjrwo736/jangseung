@@ -1,6 +1,6 @@
 # Phase 11-B-0 store write mediation v0
 
-PR #81 is a draft store write mediation layer for `src/state/store.py`
+PR #81 is a draft store write mediation layer for `jangseung/state/store.py`
 disk-write sinks. It records and mediates a narrow trusted-context path for
 protected `.aeg` writes under a structured-executor assumption.
 

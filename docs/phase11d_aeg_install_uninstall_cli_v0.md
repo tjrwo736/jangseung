@@ -10,15 +10,15 @@ subcommands are now `{init, doctor, run, verify, hook-run, install, uninstall}`.
 ## What was done
 
 ```text
-added `aeg install` and `aeg uninstall` (src/cli/install.py, wired in src/cli/main.py)
+added `aeg install` and `aeg uninstall` (jangseung/cli/install.py, wired in jangseung/cli/main.py)
 project-local only: writes ./.claude/settings.json; --global is explicitly unsupported (rc 2 + message)
 merge, not overwrite: preserves every other hook and every other field; adds/removes only the Aegis hook
 diff preview + y/N confirmation before any write (--yes to skip); default is to prompt
 backs up an existing settings.json to settings.json.aegis-backup-<timestamp> before writing
 aborts without writing on invalid JSON or an unexpected settings structure
 idempotent install ("already installed"); uninstall with no Aegis hook exits quietly
-generated hook command resolves the installed `aeg` (or `{sys.executable} -m src.cli`) so no PYTHONPATH is needed
-pyproject.toml: version 0.1.0; console_scripts entry `aeg = src.cli:main` (already present) verified installable
+generated hook command resolves the installed `aeg` (or `{sys.executable} -m jangseung.cli`) so no PYTHONPATH is needed
+pyproject.toml: version 0.1.0; console_scripts entry `aeg = jangseung.cli:main` (already present) verified installable
 ```
 
 ## What was NOT done (honest scope)
@@ -34,7 +34,7 @@ does not change the judgment engine, store seal, propose-only policy, or live_ex
 ## Aegis hook identity
 
 An Aegis hook is identified by its command containing `hook-run` and referencing
-this package (`aeg` or `src.cli`). Install/uninstall/duplicate-detection all key
+this package (`aeg` or `jangseung.cli`). Install/uninstall/duplicate-detection all key
 off this, so a user's own hooks are never matched, added-over, or removed.
 
 ## Measured reproduction (isolated temp dirs)

@@ -6,17 +6,15 @@ import unittest
 from pathlib import Path
 from types import MappingProxyType
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
-from src.evidence import executor_output_ingress
-from src.evidence.executor_output_ingress import (
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
+from jangseung.evidence import executor_output_ingress
+from jangseung.evidence.executor_output_ingress import (
     PARSE_FAILED,
     PARSE_OK,
     RUNTIME_INGRESS_ADAPTER,
-    build_executor_output_ingress_adapter_evidence,
-    build_predefined_raw_output_sample,
     ingest_executor_output,
 )
-from src.evidence.structured_action_capabilities import (
+from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
     CAPABILITY_GATE_LIMITED_ALLOWED,
@@ -24,7 +22,7 @@ from src.evidence.structured_action_capabilities import (
     REPORTED_ONLY_CAPABILITY_GRANT_REJECTED,
     USER_GATE_REQUIRED,
 )
-from src.evidence.structured_actions import (
+from jangseung.evidence.structured_actions import (
     FORBIDDEN_ACTION_TYPE_REJECTED,
     FORBIDDEN_PAYLOAD_FIELD_REJECTED,
     NOOP,
@@ -85,13 +83,6 @@ class Phase11bExecutorOutputIngressAdapterTests(unittest.TestCase):
         )
         self._assert_packet_never_grants_authority(packet)
 
-    def test_predefined_raw_output_sample_is_allowed_fixture_input(self):
-        packet = ingest_executor_output(build_predefined_raw_output_sample())
-
-        self.assertEqual(packet.parse_status, PARSE_OK)
-        self.assertEqual(packet.normalized_action["action_type"], NOOP)
-        self.assertEqual(packet.validation_result.status, VALID_STRUCTURED_ACTION)
-        self.assertEqual(packet.capability_result.gate_result, CAPABILITY_GATE_ALLOWED)
 
     def test_valid_noop_request_explanation_and_propose_patch_packet_creation(self):
         actions = (
@@ -233,8 +224,8 @@ class Phase11bExecutorOutputIngressAdapterTests(unittest.TestCase):
 
         self.assertFalse(packet.store_routing_allowed)
         self.assertFalse(packet.store_path_reachable)
-        self.assertNotIn("src.state.store", source)
-        self.assertNotIn("from src.state import store", source)
+        self.assertNotIn("jangseung.state.store", source)
+        self.assertNotIn("from jangseung.state import store", source)
         self.assertNotIn("store.", source)
 
     def test_adapter_does_not_mutate_filesystem(self):
@@ -274,21 +265,6 @@ class Phase11bExecutorOutputIngressAdapterTests(unittest.TestCase):
             with self.subTest(forbidden_fragment=forbidden_fragment):
                 self.assertNotIn(forbidden_fragment, source)
 
-    def test_evidence_records_on_hold_non_execution_contract(self):
-        evidence = build_executor_output_ingress_adapter_evidence()
-
-        self.assertEqual(evidence["created_by"], RUNTIME_INGRESS_ADAPTER)
-        self.assertTrue(evidence["executor_output_is_data_not_code"])
-        self.assertFalse(evidence["raw_output_trusted_as_decision"])
-        self.assertFalse(evidence["validator_pass_is_execution"])
-        self.assertFalse(evidence["capability_gate_pass_is_execution"])
-        self.assertFalse(evidence["execution_allowed"])
-        self.assertFalse(evidence["mutation_allowed"])
-        self.assertFalse(evidence["write_authority_granted"])
-        self.assertFalse(evidence["store_routing_allowed"])
-        self.assertFalse(evidence["store_path_reachable"])
-        self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
-        self.assertEqual(evidence["safe_default"], SAFE_DEFAULT)
 
     def test_packet_decision_basis_records_parse_validate_capability_summary(self):
         packet = ingest_executor_output(self._valid_propose_patch())

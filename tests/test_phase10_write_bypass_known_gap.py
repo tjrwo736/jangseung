@@ -5,13 +5,13 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     WRITE_BYPASS_HARNESS_KNOWN_GAP_RESULT_VOCABULARY,
     WRITE_BYPASS_HARNESS_RESULT_CURRENTLY_BYPASSABLE,
     WRITE_BYPASS_HARNESS_RESULT_EXPECTED_RED,
     WRITE_BYPASS_HARNESS_RESULT_KNOWN_GAP_BASELINE,
 )
-from src.evidence.write_bypass_harness import write_bypass_harness_registry
+from jangseung.evidence.write_bypass_harness import write_bypass_harness_registry
 
 
 NO_MEDIATOR_PRESENT = "NO_MEDIATOR_PRESENT"

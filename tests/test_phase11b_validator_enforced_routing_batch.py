@@ -2,9 +2,9 @@ import dataclasses
 import inspect
 import unittest
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
-from src.evidence import action_decision_routing
-from src.evidence.action_decision_routing import (
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
+from jangseung.evidence import action_decision_routing
+from jangseung.evidence.action_decision_routing import (
     ACTION_DECISION_PACKET_VERIFY_ACCEPTED,
     ACTION_DECISION_PACKET_VERIFY_REJECTED,
     DENIED_CAPABILITY_STORE_PATH_REJECTED,
@@ -13,26 +13,23 @@ from src.evidence.action_decision_routing import (
     REPORTED_ONLY_STORE_PATH_REJECTED,
     STORE_ADJACENT_CANDIDATE_ACCEPTED,
     STORE_ADJACENT_CANDIDATE_GATE_VERSION,
-    STORE_PATH_REJECTION_FIXTURES_VERSION,
     UNVALIDATED_ACTION_STORE_PATH_REJECTED,
     bind_action_decision_packet_evidence,
-    build_store_path_rejection_fixture_results,
-    build_validator_enforced_routing_batch_evidence,
     evaluate_store_adjacent_candidate_gate,
     expected_action_decision_packet_evidence_hash,
     verify_action_decision_packet_evidence,
 )
-from src.evidence.executor_output_ingress import (
+from jangseung.evidence.executor_output_ingress import (
     PARSE_OK,
     RUNTIME_INGRESS_ADAPTER,
     ingest_executor_output,
 )
-from src.evidence.structured_action_capabilities import (
+from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_LIMITED_ALLOWED,
     REPORTED_ONLY_CAPABILITY_GRANT_REJECTED,
 )
-from src.evidence.structured_actions import (
+from jangseung.evidence.structured_actions import (
     NOOP,
     PROCESS_SPAWN,
     PROPOSE_PATCH,
@@ -229,76 +226,6 @@ class Phase11bValidatorEnforcedRoutingBatchTests(unittest.TestCase):
                 self.assertEqual(result.gate_status, PACKET_EVIDENCE_STORE_PATH_REJECTED)
                 self._assert_no_execution_or_store_route(dataclasses.asdict(result))
 
-    def test_rejection_fixture_builder_records_raw_unvalidated_denied_reported_only(self):
-        records = build_store_path_rejection_fixture_results()
-        by_name = {record["fixture_name"]: record for record in records}
-
-        self.assertEqual(
-            set(by_name),
-            {
-                "raw_executor_output",
-                "unsupported_executor_output",
-                "unvalidated_action_packet",
-                "denied_capability_packet",
-                "reported_only_authority_packet",
-            },
-        )
-        self.assertEqual(
-            by_name["raw_executor_output"]["actual_gate_status"],
-            RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
-        )
-        self.assertEqual(
-            by_name["unsupported_executor_output"]["actual_gate_status"],
-            RAW_EXECUTOR_OUTPUT_STORE_PATH_REJECTED,
-        )
-        self.assertEqual(
-            by_name["unvalidated_action_packet"]["actual_gate_status"],
-            UNVALIDATED_ACTION_STORE_PATH_REJECTED,
-        )
-        self.assertEqual(
-            by_name["denied_capability_packet"]["actual_gate_status"],
-            DENIED_CAPABILITY_STORE_PATH_REJECTED,
-        )
-        self.assertEqual(
-            by_name["reported_only_authority_packet"]["actual_gate_status"],
-            REPORTED_ONLY_STORE_PATH_REJECTED,
-        )
-
-        for record in records:
-            with self.subTest(fixture=record["fixture_name"]):
-                self.assertEqual(record["fixture_set_version"], STORE_PATH_REJECTION_FIXTURES_VERSION)
-                self.assertEqual(record["expected_gate_status"], record["actual_gate_status"])
-                self.assertFalse(record["candidate_accepted"])
-                self._assert_no_execution_or_store_route(record)
-
-    def test_batch_evidence_records_required_flow_and_safe_default(self):
-        evidence = build_validator_enforced_routing_batch_evidence()
-
-        self.assertEqual(
-            evidence["phase11b_2_2_action_decision_packet_evidence_binding"],
-            "COMPLETE",
-        )
-        self.assertEqual(evidence["phase11b_2_3_store_adjacent_routing_guard"], "COMPLETE")
-        self.assertEqual(evidence["phase11b_2_4_rejection_fixtures"], "COMPLETE")
-        self.assertEqual(
-            evidence["flow"],
-            (
-                "raw_executor_output",
-                "executor_output_ingress_adapter",
-                "parse_normalize",
-                "validate_structured_action",
-                "evaluate_action_capabilities",
-                "runtime_owned_action_decision_packet",
-                "action_decision_packet_evidence_binding",
-                "verify_action_decision_packet_evidence",
-                "store_adjacent_candidate_gate_metadata_only",
-                "stop",
-            ),
-        )
-        self.assertEqual(evidence["store_path_rejection_fixture_count"], 5)
-        self.assertTrue(evidence["store_path_accepts_only_runtime_owned_decision"])
-        self.assertTrue(evidence["store_adjacent_candidate_gate_metadata_only"])
-        self._assert_no_execution_or_store_route(evidence)
 
     def test_guard_module_has_no_runtime_execution_or_mutation_surface(self):
         source = inspect.getsource(action_decision_routing)

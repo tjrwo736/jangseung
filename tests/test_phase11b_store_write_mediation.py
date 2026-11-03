@@ -8,9 +8,9 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from src.agents.noop import execute_contract as noop_execute_contract
-from src.cli.main import _cmd_init, _cmd_run
-from src.contracts import (
+from jangseung.agents.noop import execute_contract as noop_execute_contract
+from jangseung.cli.main import _cmd_init, _cmd_run
+from jangseung.contracts import (
     B1_AEG_DIRECT_TARGET_DENIED,
     B1_AEG_TRAVERSAL_TARGET_DENIED,
     LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
@@ -40,22 +40,22 @@ from src.contracts import (
     STORE_WRITE_OS_SANDBOX_NOT_IMPLEMENTED,
     STORE_WRITE_TRUSTED_CONTEXT_BASIS_RUNTIME_OWNED_CAPABILITY,
 )
-from src.evidence.binding import (
+from jangseung.evidence.binding import (
     manifest_hash,
     sha256_json,
     store_write_mediation_manifest_fields,
 )
-from src.evidence.store_write_mediation import expected_store_write_mediation_metadata_hash
-from src.evidence.store_adjacent_runtime_seal import (
+from jangseung.evidence.store_write_mediation import expected_store_write_mediation_metadata_hash
+from jangseung.evidence.store_adjacent_runtime_seal import (
     expected_store_adjacent_runtime_seal_metadata_hash,
 )
-from src.state.store import (
+from jangseung.state.store import (
     StoreWriteMediationBlocked,
     _append_ledger_unmediated,
     _executor_attributed_store_write_context,
     _write_json,
 )
-from src.evidence.verify import verify_latest
+from jangseung.evidence.verify import verify_latest
 
 
 class Phase11BStoreWriteMediationTests(unittest.TestCase):
@@ -75,7 +75,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_actual_run_blocks_executor_attributed_aeg_direct_and_traversal_writes(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
 
         evidence, _ = self._latest_evidence_with_path()
@@ -291,7 +291,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_executor_self_report_cannot_claim_trusted_provenance(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
 
         evidence, evidence_path = self._latest_evidence_with_path()
@@ -374,7 +374,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_trusted_runtime_gate_failure_does_not_fallback_to_unwired_write(self):
         self._init()
-        with patch("src.state.store._trusted_runtime_store_write_gate", side_effect=RuntimeError("wired route failed")):
+        with patch("jangseung.state.store._trusted_runtime_store_write_gate", side_effect=RuntimeError("wired route failed")):
             self.assertEqual(self._run("fix typo in README"), 1)
 
         ledger_path = self.repo / ".aeg" / "ledger.jsonl"
@@ -387,7 +387,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_blocked_claim_with_created_file_count_is_rejected_even_when_rebound(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
@@ -404,7 +404,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_verify_rejects_blocked_claim_when_target_file_exists(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
@@ -427,7 +427,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_verify_rejects_blocked_ledger_claim_when_forged_entry_appended(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
         evidence, evidence_path = self._latest_evidence_with_path()
         manifest, manifest_path = self._latest_manifest_with_path()
@@ -565,7 +565,7 @@ class Phase11BStoreWriteMediationTests(unittest.TestCase):
 
     def test_verify_rejects_store_adjacent_runtime_seal_overclaims_after_rehash(self):
         self._init()
-        with patch("src.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
+        with patch("jangseung.cli.main.execute_contract", side_effect=self._executor_with_aeg_write_attempts):
             self.assertEqual(self._run("fix typo in README"), 0)
         pristine_evidence, evidence_path = self._latest_evidence_with_path()
         pristine_manifest, manifest_path = self._latest_manifest_with_path()

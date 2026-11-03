@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import (
+from jangseung.contracts import (
     B1_AEG_DIRECT_TARGET_DENIED,
     B1_AEG_EVIDENCE_TARGET_DENIED,
     B1_AEG_INTEGRITY_DENY_ONLY_GUARD,
@@ -25,8 +25,8 @@ from src.contracts import (
     NOT_WIRED_TO_EXECUTOR_WRITE_PATH,
     PHASE11A_NOT_STARTED,
 )
-from src.evidence import b1_aeg_integrity_guard
-from src.evidence.b1_aeg_integrity_guard import decide_b1_aeg_integrity_guard
+from jangseung.evidence import b1_aeg_integrity_guard
+from jangseung.evidence.b1_aeg_integrity_guard import decide_b1_aeg_integrity_guard
 
 
 class B1AegIntegrityGuardFixture:

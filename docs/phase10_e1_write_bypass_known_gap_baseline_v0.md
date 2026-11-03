@@ -33,7 +33,7 @@ authority evidence.
 - `WBYP-022`: tempdir `.aeg` ledger append.
 
 The existing WBYP registry remains scaffold metadata. This E1 harness connects
-to registry IDs and titles from `src.evidence.write_bypass_harness`, but does
+to registry IDs and titles from `jangseung.evidence.write_bypass_harness`, but does
 not change registry entries into execution proof.
 
 ## Safe Default

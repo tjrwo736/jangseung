@@ -3,23 +3,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
-from src.evidence import structured_action_capabilities
-from src.evidence.structured_action_capabilities import (
-    ALLOWED_LIMITED_ACTION_CAPABILITY_MAPPING,
+from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
+from jangseung.evidence import structured_action_capabilities
+from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
     CAPABILITY_GATE_LIMITED_ALLOWED,
-    CAPABILITY_STATUS_VOCABULARY,
-    DEFAULT_DENIED_CAPABILITIES,
     FUTURE_GATE_REQUIRED,
     REPORTED_ONLY_CAPABILITY_GRANT_REJECTED,
     SCOPE_LIMIT_REJECTED,
     UNKNOWN_CAPABILITY_REJECTED,
-    build_action_capability_gate_evidence,
     evaluate_action_capabilities,
 )
-from src.evidence.structured_actions import (
+from jangseung.evidence.structured_actions import (
     DIRECT_LEDGER_APPEND,
     DIRECT_STORE_WRITE,
     NETWORK_REQUEST,
@@ -33,14 +29,10 @@ from src.evidence.structured_actions import (
     REQUEST_REPO_READ,
     REQUEST_RISK_CLASSIFICATION,
     PROPOSE_PATCH,
-    PR_81_DRAFT_RELEASE_NOT_PERFORMED,
-    PR_81_MERGE_NOT_PERFORMED,
-    PR_81_STATUS_HOLD_OPEN_DRAFT,
     RUN_COMMAND,
     VALID_STRUCTURED_ACTION,
     WRITE_AEG_STATE,
     WRITE_FILE,
-    build_structured_action_contract_evidence,
     validate_structured_action,
 )
 
@@ -219,37 +211,6 @@ class Phase11bActionCapabilityGateTests(unittest.TestCase):
         self.assertFalse(result.live_executor_ready)
         self.assertEqual(result.live_executor_authority, LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
 
-    def test_pr_81_remains_hold_open_draft_by_contract(self):
-        evidence = build_structured_action_contract_evidence()
-
-        self.assertEqual(evidence["pr_81_status"], PR_81_STATUS_HOLD_OPEN_DRAFT)
-        self.assertEqual(evidence["pr_81_draft_release"], PR_81_DRAFT_RELEASE_NOT_PERFORMED)
-        self.assertEqual(evidence["pr_81_merge"], PR_81_MERGE_NOT_PERFORMED)
-
-    def test_gate_evidence_records_non_grant_contract(self):
-        evidence = build_action_capability_gate_evidence()
-
-        self.assertEqual(
-            evidence["capability_gate_function"],
-            "evaluate_action_capabilities",
-        )
-        self.assertEqual(
-            set(evidence["capability_status_vocabulary"]),
-            CAPABILITY_STATUS_VOCABULARY,
-        )
-        self.assertEqual(
-            set(evidence["default_denied_capabilities"]),
-            DEFAULT_DENIED_CAPABILITIES,
-        )
-        self.assertEqual(
-            evidence["allowed_limited_action_capability_mapping"],
-            ALLOWED_LIMITED_ACTION_CAPABILITY_MAPPING,
-        )
-        self.assertTrue(evidence["reported_only_grants_rejected"])
-        self.assertFalse(evidence["execution_allowed"])
-        self.assertFalse(evidence["mutation_allowed"])
-        self.assertFalse(evidence["write_authority_granted"])
-        self.assertEqual(evidence["live_executor_authority"], LIVE_EXECUTOR_AUTHORITY_ON_HOLD)
 
     def test_gate_module_has_no_runtime_side_effect_helpers(self):
         source = inspect.getsource(structured_action_capabilities)

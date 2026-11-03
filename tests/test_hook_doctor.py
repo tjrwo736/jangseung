@@ -9,11 +9,11 @@ from unittest.mock import patch
 
 import pytest
 
-from src.cli.hook_doctor import run_hook_doctor
-from src.cli.install import cmd_install
-from src.cli.main import main
-from src.state.doctor import run_doctor, doctor_status
-from src.state.hook_ledger import append_hook_decision_record
+from jangseung.cli.hook_doctor import run_hook_doctor
+from jangseung.cli.install import cmd_install
+from jangseung.cli.main import main
+from jangseung.state.doctor import run_doctor, doctor_status
+from jangseung.state.hook_ledger import append_hook_decision_record
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def install(repo, target):
     executable.parent.mkdir(exist_ok=True)
     executable.write_text("not an executable program; must never be invoked", encoding="utf-8")
     executable.chmod(0o755)
-    with patch("src.cli.install.shutil.which", return_value=str(executable)):
+    with patch("jangseung.cli.install.shutil.which", return_value=str(executable)):
         assert cmd_install(repo, target=target, assume_yes=True, output_stream=io.StringIO()) == 0
     return executable
 
@@ -110,7 +110,7 @@ def test_missing_executable_fails_without_running_commands(repo):
 
 
 def test_python_module_fallback_is_explicitly_unverified(repo):
-    with patch("src.cli.install.shutil.which", return_value=None):
+    with patch("jangseung.cli.install._installed_console_script", return_value=None):
         assert cmd_install(repo, target="claude-code", assume_yes=True, output_stream=io.StringIO()) == 0
     check = checks_by_name(repo, "claude-code")["claude-code hook 1 executable"]
     assert check.status == "WARN"
@@ -143,8 +143,8 @@ def test_locks_are_observed_never_acquired_or_recovered(repo, payload, dead, exp
     (repo / ".aeg" / "hook_ledger.lock").write_text(payload, encoding="utf-8")
     (repo / ".aeg" / "hook_ledger.guard").touch()
     before = snapshot(repo)
-    with patch("src.cli.hook_doctor._pid_is_dead", return_value=dead), \
-         patch("src.state.hook_ledger._exclusive_lock", side_effect=AssertionError("no lock acquisition")):
+    with patch("jangseung.cli.hook_doctor._pid_is_dead", return_value=dead), \
+         patch("jangseung.state.hook_ledger._exclusive_lock", side_effect=AssertionError("no lock acquisition")):
         checks = checks_by_name(repo)
     assert checks["hook OS guard"].status == "PASS"
     assert checks["hook PID lock"].status == "WARN"
@@ -222,10 +222,10 @@ def test_directory_instead_of_runtime_file_is_a_failure(repo, filename, check_na
 
 def test_large_inputs_are_explicitly_unchecked(repo):
     install(repo, "codex")
-    with patch("src.cli.hook_doctor.MAX_CONFIG_BYTES", 1):
+    with patch("jangseung.cli.hook_doctor.MAX_CONFIG_BYTES", 1):
         assert checks_by_name(repo)["codex hook config"].status == "WARN"
     (repo / ".aeg" / "hook_ledger.jsonl").write_text("large fixture", encoding="utf-8")
-    with patch("src.cli.hook_doctor.MAX_LEDGER_BYTES", 1):
+    with patch("jangseung.cli.hook_doctor.MAX_LEDGER_BYTES", 1):
         check = checks_by_name(repo)["hook ledger chain"]
     assert check.status == "WARN" and "NOT_CHECKED" in check.message
 
@@ -242,7 +242,7 @@ def test_valid_config_secrets_are_not_in_json_output(repo, monkeypatch, capsys):
 
 def test_windows_override_is_used_only_on_windows(repo):
     executable = install(repo, "codex")
-    from src.cli.hook_doctor import _executable_check
+    from jangseung.cli.hook_doctor import _executable_check
     import shlex
     valid = (subprocess.list2cmdline((str(executable), "hook-run", "--substrate", "codex"))
              if os.name == "nt" else shlex.join((str(executable), "hook-run", "--substrate", "codex")))
@@ -276,7 +276,7 @@ def test_ledger_decoder_recursion_error_is_sanitized(repo, monkeypatch, capsys, 
     (repo / ".aeg" / "hook_ledger.jsonl").write_text("{}\n", encoding="utf-8")
     before = snapshot(repo)
     monkeypatch.chdir(repo)
-    with patch("src.cli.hook_doctor.verify_hook_ledger", side_effect=RecursionError("sk-proj-NO-ECHO")):
+    with patch("jangseung.cli.hook_doctor.verify_hook_ledger", side_effect=RecursionError("sk-proj-NO-ECHO")):
         args = ["doctor", "--hooks", "--target", "codex", *(["--json"] if as_json else [])]
         assert main(args) == 1
     output = capsys.readouterr().out

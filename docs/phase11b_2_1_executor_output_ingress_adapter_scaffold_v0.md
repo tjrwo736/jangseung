@@ -20,7 +20,7 @@ raw executor output
 Implementation:
 
 ```text
-src/evidence/executor_output_ingress.py
+jangseung/evidence/executor_output_ingress.py
 tests/test_phase11b_executor_output_ingress_adapter.py
 ```
 
@@ -159,7 +159,7 @@ ActionDecisionPacket != executor self-report
 
 ## 8. Store Non-Reachability
 
-This scaffold does not import or call `src/state/store.py`. It does not add a
+This scaffold does not import or call `jangseung/state/store.py`. It does not add a
 store-adjacent routing guard and does not create a path to store writes.
 
 Every packet records:

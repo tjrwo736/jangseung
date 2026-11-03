@@ -11,7 +11,7 @@ This batch implements the pre-live Phase 11-B-2 routing pieces:
 Implementation:
 
 ```text
-src/evidence/action_decision_routing.py
+jangseung/evidence/action_decision_routing.py
 tests/test_phase11b_validator_enforced_routing_batch.py
 ```
 

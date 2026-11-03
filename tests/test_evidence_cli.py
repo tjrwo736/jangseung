@@ -11,8 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.cli.main import _cmd_evidence_list, _cmd_evidence_show
-from src.state.evidence_query import REDACTED_CREDENTIAL
+from jangseung.cli.main import _cmd_evidence_list, _cmd_evidence_show
+from jangseung.state.evidence_query import REDACTED_CREDENTIAL
 
 
 class EvidenceCliTests(unittest.TestCase):
