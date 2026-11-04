@@ -106,7 +106,7 @@ def _executable_check(prefix: str, hook: dict[str, Any]) -> DoctorCheck:
     if not argv:
         return DoctorCheck(name, WARN, "The current-platform command could not be resolved without executing it.")
     if tuple(argv[1:3]) == LEGACY_MODULE_ARGS:
-        return DoctorCheck(name, FAIL, "This old command form runs only through a compatibility module, cannot start in a project with its own src or src.cli module, and lacks newer protections.",
+        return DoctorCheck(name, FAIL, "This old command form looks in the project first. A project src/cli.py runs instead of the guard and its decision is used, a project src/__init__.py stops the hook from starting, and an agent can create either file. It also lacks newer protections.",
                            fix_hint="Rerun aeg install for this target from a trusted terminal.")
     try:
         executable = argv[0]

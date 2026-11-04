@@ -843,6 +843,7 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
                 self.assertNotEqual(decision.hook_decision, ALLOW)
 
     def test_read_only_commands_are_allowed_by_the_positive_grammar(self):
+        (self.repo_root / ".git").mkdir()
         for command in ("pwd", "ls -la", "git status"):
             with self.subTest(command=command):
                 self.assertEqual(self._judge_bash(command).hook_decision, ALLOW)

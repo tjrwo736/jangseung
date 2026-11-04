@@ -12,18 +12,45 @@ import shlex
 
 
 @dataclass(frozen=True)
+class GitOutput:
+    """A git command that can print file content, in parts so pathspecs can be added.
+
+    ``arguments`` came before any ``--``, so each is a revision or a path. git tells
+    them apart by what exists, and whoever adds a ``--`` has to do the same.
+    """
+
+    head: tuple[str, ...]
+    options: tuple[str, ...]
+    arguments: tuple[str, ...]
+    paths: tuple[str, ...]
+    prints_file_content: bool = True
+
+    @property
+    def can_be_narrowed(self) -> bool:
+        # --follow accepts one pathspec only, and it reaches a file's earlier names.
+        words = (*self.options, *self.arguments, *self.paths)
+        return "--follow" not in self.options and not any("'" in word or '"' in word for word in words)
+
+
+@dataclass(frozen=True)
 class ShellRead:
     """A proven read-only command and what it touches.
 
     ``paths`` have their content printed and must be regular files, ``tree_paths``
     have content printed but may also be directories or revisions, and
     ``metadata_paths`` only have their names or attributes reported.
+    ``compared_paths`` are like ``tree_paths``, but git compares them as paths and
+    walks directories when it finds no usable repository. ``runs_git`` says git
+    reads its config, which can name programs, from whatever repository it finds.
     """
 
     classified: bool = False
     paths: tuple[str, ...] = ()
     tree_paths: tuple[str, ...] = ()
     metadata_paths: tuple[str, ...] = ()
+    compared_paths: tuple[str, ...] = ()
+    runs_git: bool = False
+    git_output: GitOutput | None = None
 
 
 @dataclass
@@ -31,11 +58,16 @@ class _Reads:
     files: list[str] = field(default_factory=list)
     trees: list[str] = field(default_factory=list)
     metadata: list[str] = field(default_factory=list)
+    compared: list[str] = field(default_factory=list)
+    git: bool = False
+    git_output: GitOutput | None = None
 
 
 _POWERSHELL_COMMAND = re.compile(r"(?i)^\s*(?:Get-Content|Get-ChildItem|Test-Path|Select-String)(?:\s|$)")
 _POWERSHELL_CONTENT_COMMANDS = frozenset({"get-content", "gc", "cat", "type"})
 _POWERSHELL_LIST_COMMANDS = frozenset({"get-childitem", "gci", "dir", "ls"})
+_POWERSHELL_SELECT_STRING_COMMANDS = frozenset({"select-string", "sls"})
+_POWERSHELL_TYPOGRAPHIC_CHARACTERS = frozenset("\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u2013\u2014\u2015")
 _POWERSHELL_LOCATION_COMMANDS = frozenset({"get-location", "gl", "pwd"})
 _POWERSHELL_ECHO_COMMANDS = frozenset({"echo", "write-output"})
 _POWERSHELL_LIST_SWITCHES = frozenset({"-recurse", "-force", "-file", "-directory", "-name", "-hidden"})
@@ -64,6 +96,17 @@ _GIT_LOG_VALUE_FLAGS = re.compile(
     r"|--(?:pretty|format)=.*|--(?:since|until|after|before|author|committer|grep)=.*",
     re.DOTALL,
 )
+_GIT_NAMES_ONLY_FLAGS = frozenset(
+    {"--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "--raw", "--no-patch", "--quiet"}
+)
+_GIT_PATCH_FLAGS = frozenset({"-p", "--patch", "--word-diff", "--color-words", "--check"})
+# ``git log`` prints no file content by default; these ask for a diff or shape one.
+_GIT_LOG_DIFF_FLAGS = frozenset({"--minimal", "--patience", "--histogram", "-w", "-b", "--ignore-all-space", "--ignore-space-change"})
+_GIT_RANGE = re.compile(r"(\.\.\.?)")
+# A bare id, or the ``v1-3-g<id>`` that git describe prints and git resolves to that id.
+_GIT_OBJECT_ID = re.compile(r"(\^?)((?:[^~^]*-g)?[0-9a-fA-F]{4,64})((?:[~^].*)?)")
+# git show would print whatever these refs name, and a ref may name a blob.
+_GIT_ALL_REFS_FLAGS = frozenset({"--all", "--branches", "--tags", "--remotes"})
 _GIT_STATUS_FLAGS = frozenset(
     {
         "-s", "--short", "-b", "--branch", "--porcelain", "--porcelain=v1", "--porcelain=v2", "--long", "-v",
@@ -93,8 +136,14 @@ def classify_shell_read(command: str, *, tool_name: str) -> ShellRead:
     # grammar after quote removal. Conservative rejection is intentional.
     if any(char in command for char in "\n\r\x00$`{}()&;<>#"):
         return ShellRead()
+    # PowerShell splits words on any Unicode space; the lexer below does not. Either
+    # shell can be behind the name Bash: Codex on Windows runs it in PowerShell.
+    if any(char.isspace() and char not in " \t" for char in command):
+        return ShellRead()
     powershell = tool_name == "PowerShell" or bool(_POWERSHELL_COMMAND.match(command))
-    if not powershell and "\\" in command:
+    if not _quotes_read_alike(command, powershell=powershell):
+        return ShellRead()
+    if not powershell and ("\\" in command or _has_unquoted_glob(command)):
         return ShellRead()
     if powershell and any(char in command for char in ",@"):
         return ShellRead()
@@ -127,14 +176,75 @@ def classify_shell_read(command: str, *, tool_name: str) -> ShellRead:
         reads.files.extend(parsed.files)
         reads.trees.extend(parsed.trees)
         reads.metadata.extend(parsed.metadata)
-    if any(not _literal_path(path) for path in (*reads.files, *reads.trees, *reads.metadata)):
+        reads.compared.extend(parsed.compared)
+        reads.git = reads.git or parsed.git
+        reads.git_output = reads.git_output or parsed.git_output
+    # Select-String opens the files a listing hands it: this is not a text filter.
+    if powershell and segments[0][0].lower() in _POWERSHELL_LIST_COMMANDS and any(
+        segment[0].lower() in _POWERSHELL_SELECT_STRING_COMMANDS for segment in segments[1:]
+    ):
+        return ShellRead()
+    if any(not _literal_path(path) for path in (*reads.files, *reads.trees, *reads.metadata, *reads.compared)):
         return ShellRead()
     return ShellRead(
         True,
         tuple(dict.fromkeys(reads.files)),
         tuple(dict.fromkeys(reads.trees)),
         tuple(dict.fromkeys(reads.metadata)),
+        tuple(dict.fromkeys(reads.compared)),
+        reads.git,
+        reads.git_output,
     )
+
+
+def _has_unquoted_glob(command: str) -> bool:
+    """A POSIX shell expands these in any word, not only in the paths parsed below.
+
+    ``grep -v .* README.md`` hands grep every dotfile. Backslashes never get here.
+    """
+
+    quote = ""
+    for char in command:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in "*?[":
+            return True
+    return False
+
+
+def _quotes_read_alike(command: str, *, powershell: bool) -> bool:
+    """False when a shell could split the words differently from the lexer.
+
+    PowerShell takes typographic quotes and dashes as ASCII ones, and ends a word at
+    the quote closing it when a quote opened the word: ``'.env'-Raw`` is two arguments
+    there and one in bash. In PowerShell ``''`` inside a quoted word is a literal quote,
+    which the lexer would drop, so a quote in mid-word is refused there as well.
+    """
+
+    if _POWERSHELL_TYPOGRAPHIC_CHARACTERS.intersection(command):
+        return False
+    quote = ""
+    previous = " "
+    opened_word = False
+    must_end_word = False
+    for char in command:
+        if quote:
+            if char == quote:
+                quote = ""
+                must_end_word = opened_word
+        else:
+            if must_end_word and char not in " \t|":
+                return False
+            must_end_word = False
+            if char in "'\"":
+                opened_word = previous in " \t|"
+                if powershell and not opened_word:
+                    return False
+                quote = char
+        previous = char
+    return not quote
 
 
 def _literal_path(path: str) -> bool:
@@ -170,7 +280,7 @@ def _posix_read(tokens: list[str], piped: bool) -> _Reads | None:
             return _Reads(metadata=[args[1]])
         return None
     if name == "git":
-        return _git_read(args)
+        return _git_command_read(args)
     return None
 
 
@@ -277,6 +387,94 @@ def _ls_read(args: list[str]) -> _Reads | None:
     return _Reads(metadata=paths)
 
 
+def _git_command_read(args: list[str]) -> _Reads | None:
+    parsed = _git_read(args)
+    if parsed is not None:
+        parsed.git = True
+        parsed.git_output = _git_output(args)
+    return parsed
+
+
+def _git_output(args: list[str]) -> GitOutput | None:
+    head = ["git"]
+    rest = list(args)
+    if rest[0] == "--no-pager":
+        head.append(rest.pop(0))
+    subcommand = rest.pop(0)
+    if subcommand not in {"diff", "show", "log"}:
+        return None
+    head.append(subcommand)
+    options: list[str] = []
+    arguments: list[str] = []
+    paths: list[str] = []
+    index = 0
+    while index < len(rest):
+        arg = rest[index]
+        index += 1
+        if arg == "--":
+            paths = rest[index:]
+            break
+        if arg == "-n":
+            options += [arg, rest[index]]
+            index += 1
+        elif arg.startswith("-"):
+            options.append(arg)
+        else:
+            arguments.append(arg)
+    prints = _git_prints_file_content(subcommand, options)
+    # git show prints a blob named by its id whatever its options ask of a commit.
+    if not prints and subcommand != "show":
+        return None
+    return GitOutput(tuple(head), tuple(options), tuple(arguments), tuple(paths), prints)
+
+
+def _git_prints_file_content(subcommand: str, options: list[str]) -> bool:
+    if any(option in _GIT_PATCH_FLAGS or option.startswith(("-U", "--unified=")) for option in options):
+        return True
+    if subcommand == "log":
+        return any(option in _GIT_LOG_DIFF_FLAGS for option in options)
+    return not any(option in _GIT_NAMES_ONLY_FLAGS or option.startswith("--stat=") for option in options)
+
+
+def git_output_command(
+    command: str,
+    output: GitOutput,
+    *,
+    revisions: tuple[str, ...],
+    paths: tuple[str, ...],
+    exclusions: tuple[str, ...],
+) -> str | None:
+    """Rebuild ``command`` so its git output leaves out what ``exclusions`` name.
+
+    None when there is nothing to change: no pathspec to add and no object id to peel.
+    """
+
+    peeled = tuple(map(_commit_only, revisions))
+    if not paths and not exclusions and peeled == revisions:
+        return None
+    limits = ("--", *(paths or (":/",)), *exclusions) if paths or exclusions else ()
+    # A pathspec makes log and show skip commits it leaves empty; the caller gave none.
+    every_commit = ("--full-history", "--sparse") if exclusions and not paths and output.head[-1] != "diff" else ()
+    words = (*output.head, *output.options, *every_commit, *peeled, *limits)
+    rebuilt = " ".join(word if re.fullmatch(r"[\w./=%~-]+", word) else f"'{word}'" for word in words)
+    # Git is only ever the first segment, and the grammar leaves no other | in the text.
+    _, pipe, piped_into = command.partition("|")
+    return f"{rebuilt} | {piped_into.strip()}" if pipe else rebuilt
+
+
+def _commit_only(revision: str) -> str:
+    """Make an object id name a commit, on either side of a range.
+
+    A pathspec cannot stop a blob named by its id, as in ``git show e5943a1``, and
+    ``git log --raw`` prints those ids. Peeling to a commit turns a blob into an error.
+    """
+
+    return "".join(
+        _GIT_OBJECT_ID.sub(r"\1\2^{commit}\3", part) if _GIT_OBJECT_ID.fullmatch(part) else part
+        for part in _GIT_RANGE.split(revision)
+    )
+
+
 def _git_read(args: list[str]) -> _Reads | None:
     """Read-only git forms. ``-c``/``-C`` prefixes and writing options never match."""
 
@@ -288,7 +486,12 @@ def _git_read(args: list[str]) -> _Reads | None:
     if subcommand == "status":
         return _git_paths(rest, _GIT_STATUS_FLAGS, None, metadata=True)
     if subcommand == "diff":
-        return _git_paths(rest, _GIT_DIFF_FLAGS | _GIT_DIFF_ONLY_FLAGS, _GIT_DIFF_VALUE_FLAGS)
+        parsed = _git_paths(rest, _GIT_DIFF_FLAGS | _GIT_DIFF_ONLY_FLAGS, _GIT_DIFF_VALUE_FLAGS)
+        if parsed is not None and len(parsed.trees) >= 2:
+            parsed.compared, parsed.trees = parsed.trees, []
+        return parsed
+    if subcommand == "show" and _GIT_ALL_REFS_FLAGS.intersection(rest):
+        return None
     if subcommand in {"log", "show"}:
         return _git_log_read(rest)
     if subcommand == "blame":
@@ -386,7 +589,7 @@ def _powershell_read(tokens: list[str], piped: bool) -> _Reads | None:
         return _Reads()
     if name == "measure-object":
         return _Reads() if piped and all(arg.lower() in {"-line", "-word", "-character"} for arg in args) else None
-    if name in {"select-string", "sls"}:
+    if name in _POWERSHELL_SELECT_STRING_COMMANDS:
         return _powershell_select_string(args, piped)
     if piped:
         return None
@@ -401,7 +604,7 @@ def _powershell_read(tokens: list[str], piped: bool) -> _Reads | None:
     if name in _POWERSHELL_ECHO_COMMANDS:
         return _Reads()
     if name == "git":
-        return _git_read(args)
+        return _git_command_read(args)
     return None
 
 

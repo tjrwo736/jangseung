@@ -8,13 +8,14 @@ stricter built-in rules in force.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
 import shlex
 from typing import Any
 
+from jangseung.classify.git_program_paths import git_program_paths
 from jangseung.classify.rules import PathPolicy
 from jangseung.contracts import STATE_DIR
 
@@ -36,7 +37,17 @@ class HookPolicy:
         return any(argv[: len(prefix)] == prefix for prefix in self.allow_commands)
 
 
-def load_hook_policy(repo_root: str | Path) -> HookPolicy:
+def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = None) -> HookPolicy:
+    """The person's policy plus what git would run, which no policy can open to agents."""
+
+    policy = _read_policy_file(repo_root)
+    git_paths = git_program_paths(repo_root, working_dir)
+    if not git_paths:
+        return policy
+    return replace(policy, paths=replace(policy.paths, protect_paths=(*policy.paths.protect_paths, *git_paths)))
+
+
+def _read_policy_file(repo_root: str | Path) -> HookPolicy:
     path = Path(repo_root) / STATE_DIR / HOOK_POLICY_FILE
     try:
         if path.is_symlink():
