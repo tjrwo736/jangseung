@@ -17,7 +17,8 @@ modified by this module):
   path where a failure resolves to ``allow``. ``jangseung.cli.entry`` extends
   this to failures that happen before this module can run.
 * the reason string and the dedicated hook ledger carry only decision codes
-  and the tool name, never raw ``tool_input`` content.
+  and the tool name, never raw ``tool_input`` content. Only ``updatedInput``,
+  read by the host alone, returns the tool's own input with secrets left out.
 * recording is append-only and tamper-evident.  A recording failure never
   changes the permission decision or process exit code; it adds a safe reason
   code to the response instead.
@@ -66,6 +67,7 @@ CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON = (
     "codex_substrate_ask_not_enforced_upgraded_to_deny"
 )
 HOOK_DECISION_RECORDING_FAILED_REASON = "hook_decision_recording_failed"
+OUTPUT_EXCLUDES_READ_PROTECTED_FILES_REASON = "output_excludes_read_protected_files"
 MAX_STDIN_BYTES = 16 * 1024 * 1024
 
 # Exit codes. Claude Code uses exit 2 as the hard-blocking deny path. Codex
@@ -102,6 +104,7 @@ class HookRunResult:
     reason_codes: tuple[str, ...]
     tool_name: str
     substrate: str
+    updated_input: Mapping[str, Any] | None = None
 
 
 def render_hook_response(
@@ -171,6 +174,7 @@ def render_hook_response(
         hook_decision = decision.hook_decision
         decision_reasons = tuple(decision.decision_reasons)
         tool_name = decision.request.tool_name
+        updated_input = decision.updated_tool_input
     except Exception:  # noqa: BLE001 - any brain/wiring failure must fail closed.
         return _deny_result(
             "internal_judgment_error_fail_closed_deny",
@@ -190,6 +194,8 @@ def render_hook_response(
 
     permission_decision, mapped_exit_code, substrate_reason_codes = mapping
     reason_codes = (*decision_reasons, *substrate_reason_codes)
+    if updated_input is not None:
+        reason_codes = (*reason_codes, OUTPUT_EXCLUDES_READ_PROTECTED_FILES_REASON)
     reason = _reason_string(
         permission_decision=permission_decision,
         hook_decision=hook_decision,
@@ -197,7 +203,7 @@ def render_hook_response(
         decision_reasons=reason_codes,
         substrate=effective_substrate,
     )
-    stdout_json = _permission_decision_json(permission_decision, reason)
+    stdout_json = _permission_decision_json(permission_decision, reason, updated_input)
     stderr_text = reason if mapped_exit_code == EXIT_BLOCK else ""
     exit_code = _process_exit_code_for_substrate(
         substrate=effective_substrate,
@@ -214,6 +220,7 @@ def render_hook_response(
         reason_codes=reason_codes,
         tool_name=tool_name,
         substrate=effective_substrate,
+        updated_input=updated_input,
     )
 
 
@@ -388,7 +395,7 @@ def _with_recording_failure(result: HookRunResult) -> HookRunResult:
         substrate=result.substrate,
     )
     return HookRunResult(
-        stdout_json=_permission_decision_json(result.permission_decision, reason),
+        stdout_json=_permission_decision_json(result.permission_decision, reason, result.updated_input),
         stderr_text=reason if result.stderr_text else "",
         exit_code=result.exit_code,
         permission_decision=result.permission_decision,
@@ -398,6 +405,7 @@ def _with_recording_failure(result: HookRunResult) -> HookRunResult:
         reason_codes=reason_codes,
         tool_name=result.tool_name,
         substrate=result.substrate,
+        updated_input=result.updated_input,
     )
 
 
@@ -423,14 +431,19 @@ def _reason_string(
     )
 
 
-def _permission_decision_json(permission_decision: str, reason: str) -> str:
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
-            "permissionDecision": permission_decision,
-            "permissionDecisionReason": reason,
-        }
+def _permission_decision_json(
+    permission_decision: str,
+    reason: str,
+    updated_input: Mapping[str, Any] | None = None,
+) -> str:
+    output: dict[str, Any] = {
+        "hookEventName": CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
+        "permissionDecision": permission_decision,
+        "permissionDecisionReason": reason,
     }
+    if updated_input is not None:
+        output["updatedInput"] = updated_input
+    payload = {"hookSpecificOutput": output}
     return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
@@ -475,6 +488,7 @@ __all__ = [
     "HOOK_DECISION_RECORDING_FAILED_REASON",
     "PERMISSION_ALLOW",
     "PERMISSION_ASK",
+    "OUTPUT_EXCLUDES_READ_PROTECTED_FILES_REASON",
     "PERMISSION_DENY",
     "SUBSTRATE_CLAUDE_CODE",
     "SUBSTRATE_CODEX",

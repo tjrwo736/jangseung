@@ -11,16 +11,18 @@
 1. **진입점** `jangseung/cli/entry.py`: 패키지를 불러오기 전에 보호를 시작합니다. hook 경로의 어떤 실패도 deny로 응답합니다. `hook-run`은 다른 명령의 모듈을 불러오지 않아 빠르게 시작합니다.
 2. **입출력** `jangseung/cli/hook_run.py`: stdin을 UTF-8로 읽고, 고정된 프로젝트 루트와 실제 작업 폴더를 정합니다.
 3. **입력 계약** `jangseung/evidence/claude_code_pretooluse_input_contract.py`: 지원 도구와 필수 필드를 확인합니다. 그 외에는 deny합니다.
-4. **경로 정규화** `jangseung/evidence/hook_judgment_engine_alignment.py`: 대상 경로를 작업 폴더 기준으로 풀고, 심볼릭 링크와 표기 변형을 없앤 프로젝트 상대 경로로 바꿉니다.
+4. **경로 정규화** `jangseung/evidence/hook_judgment_engine_alignment.py`: 대상 경로를 작업 폴더 기준으로 풀고, 심볼릭 링크와 표기 변형을 없앤 프로젝트 상대 경로로 바꿉니다. `~`와 드라이브 상대 경로(`C:x`)는 호스트가 따로 해석하므로 deny합니다.
 5. **관문 판정**: 다음 관문을 모두 계산하고 하나라도 걸리면 deny합니다.
    - 프로젝트 경계, `.aeg` 보호, 보호 경로
    - 명령의 위험도(`jangseung/evidence/shell_command_risk.py`)
    - 명령의 쓰기·삭제 대상(`jangseung/evidence/claude_code_tool_call_mapping.py`)
    - 비밀 파일 읽기, 명령 인자에 든 비밀 경로
 6. **허용 판정**: 다음 경우에만 allow합니다.
-   - 명령이 좁은 읽기 문법을 통과하고 대상이 안전합니다(`jangseung/evidence/shell_read_only.py`).
+   - 명령이 좁은 읽기 문법을 통과하고 대상이 안전합니다(`jangseung/evidence/shell_read_only.py`). `git`은 작업 폴더에서 위로 올라가며 `.git`을 찾을 때만 해당합니다. 그 밖의 폴더는 에이전트가 쓸 수 있으므로 git이 읽을 설정을 믿을 수 없습니다.
    - 사람이 승인한 명령입니다(`.aeg/policy.json`).
    - 프로젝트 안 일반 파일을 다루는 `Read`, `Write`, `Edit` 계열입니다.
+   - `Grep`은 입력에 비밀 파일 제외 조건을 붙여(`updatedInput`) allow합니다. 호출 쪽 `glob`이 `.gitignore`를 넘어서므로 요청만으로는 읽을 파일을 판정할 수 없습니다. 명시한 파일에는 ripgrep이 이 조건을 적용하지 않으며, 그 파일은 경로 관문이 판정합니다.
+   - `git diff`, `git show`, `git log -p`도 같은 이유로 제외 경로를 붙여 allow합니다. 객체 ID는 커밋으로만 해석되게 바꿉니다.
 7. **나머지**: 위에 해당하지 않으면 `defer`이며, Claude Code에서는 `ask`, Codex에서는 `deny`로 응답합니다.
 
 핵심 원칙은 **명령을 자동 허용하는 경로가 읽기 문법과 사람의 승인 둘뿐**이라는 점입니다. 위험 명령 파서는 deny만 만들 수 있으므로, 파서가 놓친 명령은 `ask`로 갑니다.
@@ -32,6 +34,7 @@
 | 분류 | 예 | 쓰기 | 읽기 | 승인 정책으로 해제 |
 | --- | --- | --- | --- | --- |
 | 장승 자체 설정 | `.aeg`, `.git`, `.claude/settings*.json`, `.codex`, `.mcp.json` | deny | `.aeg`만 deny | 불가 |
+| git 실행 경로 | `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` 등이 가리키는 프로젝트 안 경로 | deny | allow | 불가 |
 | 비밀 | `.env`, `*.pem`, `id_rsa`, `.aws/`, `.ssh/` | deny | deny | 가능 |
 | 보호 | `.github/workflows`, `Dockerfile`, `pyproject.toml` | deny | allow | 가능 |
 
@@ -42,7 +45,7 @@
 | 경로 | 역할 |
 | --- | --- |
 | `jangseung/cli/` | CLI 명령. `hook_run`, `install`, `hook_doctor`, `explain` |
-| `jangseung/classify/` | 경로 정책(`rules`), 승인 정책 파일(`hook_policy`) |
+| `jangseung/classify/` | 경로 정책(`rules`), 승인 정책 파일(`hook_policy`), git 설정이 가리키는 실행 경로(`git_program_paths`) |
 | `jangseung/law/` | 위험도별 판정 규칙 |
 | `jangseung/evidence/` | hook 판정 엔진과 초기 run evidence 계약 |
 | `jangseung/state/` | `.aeg/` 저장소, hook ledger(`hook_ledger`), Git 도우미 |

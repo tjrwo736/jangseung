@@ -2,7 +2,7 @@
 
 보안 수정 릴리스입니다. 0.1.4 이하를 쓰고 있다면 올리는 것을 권장합니다.
 
-**0.1.5에는 구형 hook의 보호가 꺼지는 업그레이드 결함이 있습니다. 0.1.6으로 올리세요.**
+**0.1.5에는 구형 hook의 보호가 꺼지는 업그레이드 결함과, 검색과 셸 읽기 명령으로 비밀 값이 출력되는 결함이 있습니다. 최신 버전으로 올리세요.** [0.1.6](release_0.1.6.md)과 [0.1.7](release_0.1.7.md) 릴리스 노트를 참고하세요.
 
 ## 업그레이드 절차
 
@@ -15,7 +15,7 @@ aeg doctor --hooks
 
 `aeg install`을 다시 실행해야 하는 이유는 다음과 같습니다.
 
-- Python 패키지 이름이 `src`에서 `jangseung`으로 바뀌었습니다. 0.1.4 이하가 `python -m src.cli hook-run` 형태로 등록한 hook은 0.1.5에서 시작되지 않습니다. **Claude Code는 이 실패를 막지 않고 도구 호출을 통과시키므로, `aeg install`을 다시 실행할 때까지 보호가 경고 없이 꺼집니다.** 0.1.6에서 고쳤습니다. `aeg` 실행 파일로 등록된 hook은 계속 동작합니다.
+- Python 패키지 이름이 `src`에서 `jangseung`으로 바뀌었습니다. 0.1.4 이하가 `python -m src.cli hook-run` 형태로 등록한 hook은 0.1.5에서 시작되지 않습니다. **Claude Code는 이 실패를 막지 않고 도구 호출을 통과시키므로, `aeg install`을 다시 실행할 때까지 보호가 꺼집니다.** Claude Code 문서에 따르면 `hook error` 알림만 표시됩니다. 0.1.6에서 고쳤습니다. `aeg` 실행 파일로 등록된 hook은 계속 동작합니다.
 - 검사 도구 목록에 `MultiEdit`, `NotebookEdit`, `Grep`, `Glob`이 추가되었습니다.
 - Claude Code hook에 `"onFailure": "block"`이 추가되었습니다. Claude Code v2.1.295 이상에서 동작합니다.
 
@@ -27,12 +27,12 @@ aeg doctor --hooks
 
 ## 수정한 우회
 
-- **PowerShell 자동 허용 (0.1.4의 치명 결함)**: `Get-ChildItem`처럼 읽기 명령으로 시작하면 줄바꿈, 괄호, `&` 뒤에 붙은 삭제 명령까지 allow했습니다. allow는 Claude Code의 승인 창도 생략합니다. 자동 허용은 이제 좁은 읽기 문법을 통과한 명령에만 적용합니다.
+- **PowerShell 자동 허용 (0.1.0부터 있던 치명 결함)**: `Get-ChildItem`처럼 읽기 명령으로 시작하면 줄바꿈, 괄호, `&` 뒤에 붙은 삭제 명령까지 allow했습니다. allow는 Manual 모드에서 Claude Code의 승인 창을 생략합니다. 자동 허용은 이제 좁은 읽기 문법을 통과한 명령에만 적용합니다.
 - **PowerShell 비밀 읽기**: `Get-Content .env`, 프로젝트 밖 경로 읽기가 allow였습니다. 이제 deny합니다.
 - **장승 자체 해제**: `.claude/settings.json`, `.codex/config.toml`, `.mcp.json`, `.git/hooks` 수정이 allow였습니다. 이제 deny하며 승인 정책으로도 풀 수 없습니다.
 - **하위 폴더 실행**: 프로세스의 현재 폴더를 프로젝트 루트로 보아, 세션이 `.github/workflows`로 이동하면 `ci.yml` 쓰기가 allow였습니다. 이제 `CLAUDE_PROJECT_DIR`, 없으면 `.aeg`나 `.git`이 있는 상위 폴더를 루트로 고정하고 상대 경로는 실제 작업 폴더 기준으로 해석합니다.
 - **hook 비정상 종료**: 아주 깊게 중첩된 입력에 비정상 종료했고, 이때 Claude Code는 도구 호출을 그대로 실행합니다. 이제 프로세스 진입점에서 모든 실패를 deny로 응답합니다.
-- **경로 표기 변형**: `.github//workflows/ci.yml`, `.ENV`, `.env::$DATA`, `.env.` 같은 표기가 상대 경로에서 allow였습니다. 이제 판정 전에 정규화합니다.
+- **경로 표기 변형**: `.github//workflows/ci.yml`, `.ENV`, `.env::$DATA` 같은 표기가 hook 입력이 상대 경로일 때 allow였습니다. Claude Code 2.1.316의 `Write`는 절대 경로를 넘겨 실제 세션에서는 나타나지 않았습니다. 이제 판정 전에 정규화합니다.
 - **비밀 파일 범위**: 하위 폴더 `.env`, `id_rsa`, `*.pem`, `.aws/credentials`, `.npmrc`, `credentials.json`이 빠져 있었습니다. 이제 깊이와 무관하게 읽기와 쓰기를 deny합니다.
 - **deny가 ask로 내려가던 명령**: `echo x>.env`, `rm .env;ls`, `sed -i`, `mv .env y`, `/bin/rm -rf`, `git -C . reset --hard`, `bash -c 'rm -rf x'`, PowerShell 별칭(`ri`, `sc`, `ac` 등)을 deny합니다. `git checkout -- .`, `npm publish`, `gh release create`, `kubectl apply`, `terraform apply`도 추가했습니다.
 

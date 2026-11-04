@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from jangseung.classify import PathPolicy, is_protected_path, is_read_protected_path, is_secret_path
+from jangseung.classify import PathPolicy, is_host_resolved_path, is_protected_path, is_read_protected_path, is_secret_path
 from jangseung.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT, STATE_DIR
 from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 from jangseung.evidence.claude_code_pretooluse_input_contract import (
@@ -212,7 +212,12 @@ def _search_pattern_denial_reason(
 ) -> str | None:
     if tool_name == "Glob":
         pattern = str(tool_input.get("pattern")).strip()
-        if pattern.startswith("/") or _looks_like_windows_drive_path(pattern) or ".." in _path_parts(pattern):
+        if (
+            pattern.startswith("/")
+            or is_host_resolved_path(pattern)
+            or _looks_like_windows_drive_path(pattern)
+            or ".." in _path_parts(pattern)
+        ):
             return "glob_pattern_leaves_repository_maps_to_deny_candidate"
         return None
     glob = tool_input.get("glob")
@@ -554,6 +559,8 @@ def _path_denial_reason(
     stripped = path_value.strip()
     if not stripped:
         return "empty_path_maps_to_deny_candidate"
+    if is_host_resolved_path(stripped):
+        return f"host_resolved_path_maps_to_deny_candidate:{path_value}"
     if stripped.startswith("/") or _looks_like_windows_drive_path(stripped):
         return f"absolute_path_maps_to_deny_candidate:{path_value}"
     parts = _path_parts(stripped)
@@ -1088,12 +1095,16 @@ def _powershell_tokenize(command: str) -> tuple[_PowerShellToken, ...]:
             current.append(command[index + 1])
             index += 2
             continue
-        if char == "'":
-            index = _consume_powershell_single_quoted(command, index + 1, current)
-            continue
-        if char == '"':
-            index, had_variable = _consume_powershell_double_quoted(command, index + 1, current)
-            current_variable = current_variable or had_variable
+        if char in "'\"":
+            # A quote that opens a word also ends it: '.env'-Force is two arguments.
+            opens_word = not current
+            if char == "'":
+                index = _consume_powershell_single_quoted(command, index + 1, current)
+            else:
+                index, had_variable = _consume_powershell_double_quoted(command, index + 1, current)
+                current_variable = current_variable or had_variable
+            if opens_word:
+                emit()
             continue
 
         current.append(char)

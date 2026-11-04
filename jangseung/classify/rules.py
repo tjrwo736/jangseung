@@ -419,19 +419,42 @@ class PathPolicy:
         return _matches_any(parts, self.protect_paths)
 
 
+# str.strip() and JavaScript's trim() disagree on a few characters. A host that
+# trims a path before opening it must not open a different path from the one judged.
+_PATH_PADDING = (
+    " \t\n\v\f\r\x1c\x1d\x1e\x1f\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+    "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
 def strip_path_decorations(path: str) -> str:
     """Remove spelling that Windows ignores when it opens a path.
 
     Trailing dots and spaces and ``:stream`` suffixes name the same file on
     NTFS. They are removed on every platform so the judgment stays conservative.
+    A drive-relative ``C:x`` loses its prefix so the rules still see the name ``x``;
+    ``is_host_resolved_path`` is what keeps such a path out of the project.
     """
 
-    text = str(path).strip().replace("\\", "/")
+    text = str(path).strip(_PATH_PADDING).replace("\\", "/")
     drive, rest = (text[:2], text[2:]) if re.match(r"^[A-Za-z]:(?=/)", text) else ("", text)
+    if not drive and re.match(r"^[A-Za-z]:", rest):
+        rest = rest[2:]
     cleaned = []
     for part in rest.split("/"):
         cleaned.append(part if part in {".", ".."} else part.split(":", 1)[0].rstrip(". "))
     return drive + "/".join(cleaned)
+
+
+def is_host_resolved_path(path: str) -> bool:
+    """True for a spelling the host resolves itself, outside any project judgment.
+
+    ``~`` is the user's home and ``C:x`` is relative to that drive's own current
+    directory, so what they name cannot be told from the path alone.
+    """
+
+    text = str(path).strip(_PATH_PADDING).replace("\\", "/")
+    return text == "~" or text.startswith("~/") or bool(re.match(r"^[A-Za-z]:(?!/)", text))
 
 
 def _policy_parts(path: str) -> tuple[str, ...]:
@@ -545,6 +568,54 @@ def is_read_protected_path(path: str, policy: PathPolicy | None = None) -> bool:
     if not parts:
         return False
     return STATE_DIR in parts or is_secret_path(path, policy)
+
+
+def _any_case(glob: str) -> str:
+    return "".join(f"[{char}{char.upper()}]" if char.isalpha() else char for char in glob)
+
+
+def _exclusion_rules(policy: PathPolicy | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Name patterns of read-protected folders and files, for tools that can only exclude.
+
+    Re-including one file would turn the rest of the project off. So ``.env.*`` also
+    skips templates, and an approval in the policy reopens a file rule only when it
+    covers the whole rule. It never reopens a folder rule: approving ``secrets`` opens
+    that one folder, while ``deep/secrets`` stays protected. All of these stay readable
+    by name when the gates allow it.
+    """
+
+    folders = (STATE_DIR, *sorted(SECRET_DIRECTORY_NAMES), *("/".join(parts) for parts in SECRET_SUBPATHS))
+    files = (*sorted(SECRET_FILE_NAMES), ".env.*", *SECRET_FILE_GLOBS)
+    return folders, tuple(rule for rule in files if policy is None or not policy.allows(_policy_parts(rule)))
+
+
+def search_exclusion_globs(policy: PathPolicy | None = None) -> tuple[str, ...]:
+    """Ripgrep globs that keep a directory search out of read-protected files."""
+
+    folders, files = _exclusion_rules(policy)
+    # A name without a slash matches at any depth; a nested rule has to ask for that.
+    return tuple(f"!{'**/' if '/' in rule else ''}{_any_case(rule)}" for rule in (*folders, *files))
+
+
+def git_exclusion_pathspecs(
+    policy: PathPolicy | None = None,
+    *,
+    named_files: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Pathspecs that keep git output out of read-protected files, tracked or in history.
+
+    ``named_files`` passed the read gates, so a rule that would hide them is left out.
+    """
+
+    names = [parts[-1] for parts in map(_policy_parts, named_files) if parts]
+    folders, files = _exclusion_rules(policy)
+    specs: list[str] = []
+    for rule in folders:
+        specs += [f":(top,exclude,glob,icase)**/{rule}", f":(top,exclude,glob,icase)**/{rule}/**"]
+    for rule in files:
+        if not any(fnmatchcase(name, rule) for name in names):
+            specs.append(f":(top,exclude,glob,icase)**/{rule}")
+    return tuple(specs)
 
 
 def _is_docs_or_formatting_path(path: str) -> bool:

@@ -21,9 +21,12 @@ from jangseung.classify import (
     Classification,
     classify_task,
     contains_protected_path,
+    git_exclusion_pathspecs,
+    is_host_resolved_path,
     is_protected_path,
     is_read_protected_path,
     is_secret_path,
+    search_exclusion_globs,
     strip_path_decorations,
 )
 from jangseung.classify.hook_policy import HookPolicy, load_hook_policy
@@ -69,7 +72,7 @@ from jangseung.evidence.shell_command_risk import (
     scan_bash_command,
     secret_references,
 )
-from jangseung.evidence.shell_read_only import classify_shell_read
+from jangseung.evidence.shell_read_only import classify_shell_read, git_output_command
 from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
@@ -217,6 +220,9 @@ class HookJudgmentEngineDecision:
     unclassified_bash_is_allow: bool = False
     safe_default: str = SAFE_DEFAULT
     live_executor_authority: str = LIVE_EXECUTOR_AUTHORITY_ON_HOLD
+    # What the host must run instead of the submitted input. Not evidence: it holds
+    # raw tool input, so it stays out of the decision hash and record.
+    updated_tool_input: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "decision_reasons", tuple(self.decision_reasons))
@@ -276,8 +282,8 @@ def judge_pretooluse_with_aeg_engine(
     # Rewrite repo-internal ones to their canonical repo-relative form so the
     # engine judges the file that would really be touched; a repo-external or
     # traversal-escaping path keeps its form so the scope defense rejects it.
-    policy = load_hook_policy(repo_root)
     base_dir = _effective_working_dir(hook_input, repo_root, working_dir)
+    policy = load_hook_policy(repo_root, base_dir)
     hook_input, path_normalization = _normalize_hook_input_repo_paths(
         hook_input, repo_root, base_dir
     )
@@ -367,13 +373,72 @@ def judge_pretooluse_with_aeg_engine(
         command_approved=command_approved,
     )
     hook_decision = engine_decision
+    updated_tool_input = None
+    if hook_input.tool_name == "Grep" and hook_decision != DENY:
+        updated_tool_input = _grep_input_without_read_protected_files(raw_hook_input["tool_input"], policy)
+    elif hook_decision == ALLOW and shell_read_gate.get("allow"):
+        updated_tool_input = _git_input_without_read_protected_files(
+            raw_hook_input["tool_input"], hook_input.tool_name, repo_root, base_dir, policy
+        )
     return _build_decision(
         request=request,
         engine_decision=engine_decision,
         hook_decision=hook_decision,
         reasons=reasons,
         basis=basis,
+        updated_tool_input=updated_tool_input,
     )
+
+
+def _grep_input_without_read_protected_files(
+    tool_input: Mapping[str, Any],
+    policy: HookPolicy,
+) -> dict[str, Any]:
+    """Return a Grep input that leaves read-protected files out of any walk.
+
+    A walk's files cannot be judged from the request: a glob of the call's own,
+    such as ``.en*``, overrides ``.gitignore`` as well. The exclusions go last
+    because ripgrep lets the last matching glob win. They are added even when
+    ``path`` looks like a file: ripgrep ignores globs for a file it is handed, so
+    nothing is lost, and the walk stays covered if that reading of ``path`` is wrong.
+    """
+
+    own_glob = tool_input.get("glob")
+    own_globs = (own_glob,) if _is_non_empty_string(own_glob) else ()
+    return {**tool_input, "glob": " ".join((*own_globs, *search_exclusion_globs(policy.paths)))}
+
+
+def _git_input_without_read_protected_files(
+    tool_input: Mapping[str, Any],
+    tool_name: str,
+    repo_root: str | Path,
+    base_dir: str | Path,
+    policy: HookPolicy,
+) -> dict[str, Any] | None:
+    """Return a command input whose git output leaves read-protected files out.
+
+    Which files such a command prints cannot be judged from the request: ``git log -p``
+    reaches whatever history holds, and a file named today may be a folder in the past.
+    """
+
+    command = tool_input["command"]
+    output = classify_shell_read(command, tool_name=tool_name).git_output
+    if output is None:
+        return None
+    named = tuple(argument for argument in output.arguments if _names_an_existing_path(argument, repo_root, base_dir))
+    paths = (*named, *output.paths)
+    revisions = tuple(argument for argument in output.arguments if argument not in named)
+    files = tuple(path for path in paths if _readable_file_verdict(path, repo_root, base_dir) == "readable")
+    exclusions = git_exclusion_pathspecs(policy.paths, named_files=files) if output.prints_file_content else ()
+    rebuilt = git_output_command(command, output, revisions=revisions, paths=paths, exclusions=exclusions)
+    return None if rebuilt is None else {**tool_input, "command": rebuilt}
+
+
+def _names_an_existing_path(argument: str, repo_root: str | Path, base_dir: str | Path) -> bool:
+    try:
+        return _canonical_command_target(argument, repo_root, base_dir).exists()
+    except (OSError, ValueError):
+        return False
 
 
 # tool_input fields that carry a repo file path.
@@ -437,6 +502,15 @@ def _normalize_repo_internal_path(
     repo_root: str | Path,
     base_dir: str | Path,
 ) -> tuple[str, dict[str, Any]]:
+    if is_host_resolved_path(path_value):
+        return path_value, {
+            "original": path_value,
+            "normalized": path_value,
+            "was_absolute": False,
+            "in_repo": None,
+            "action": "host_resolved_path_unchanged_for_rejection",
+        }
+
     cleaned = strip_path_decorations(path_value)
     was_absolute = cleaned.startswith("/") or _looks_like_windows_absolute_path(cleaned)
 
@@ -789,7 +863,7 @@ def _classify_command_target(
     path_policy = policy.paths if policy is not None else None
     if is_secret_path(target, path_policy):
         return "secret_path"
-    if target.strip().startswith("~"):
+    if target.strip().startswith("~") or is_host_resolved_path(target):
         return "out_of_scope"
 
     normalized, record = _normalize_command_target(target, repo_root, base_dir)
@@ -920,9 +994,15 @@ def _shell_read_only_gate(
         if verdict in {"safe_in_repo", "protected_path"}:
             verdict = _readable_file_verdict(path, repo_root, base_dir)
         verdicts.append(verdict)
-    for path in extraction.tree_paths:
+    for path in (*extraction.tree_paths, *extraction.compared_paths):
         verdict = kind(path)
         verdicts.append("readable" if verdict in {"safe_in_repo", "protected_path"} else verdict)
+    if extraction.compared_paths and _compares_a_directory(extraction.compared_paths, repo_root, base_dir):
+        verdicts.append("directory_comparison")
+    if extraction.runs_git and not _git_uses_a_guarded_repository(base_dir):
+        verdicts.append("unguarded_git_directory")
+    if extraction.git_output is not None and not extraction.git_output.can_be_narrowed:
+        verdicts.append("git_output_cannot_be_narrowed")
     for path in extraction.metadata_paths:
         # Names and attributes do not expose a secret's content. State stays
         # with a person because listing it serves no ordinary work.
@@ -939,13 +1019,50 @@ def _shell_read_only_gate(
     }
 
 
+def _canonical_command_target(path: str, repo_root: str | Path, base_dir: str | Path) -> Path:
+    normalized, _ = _normalize_command_target(path, repo_root, base_dir)
+    return Path(resolve_repo_boundary_path(repo_root=repo_root, submitted_target=normalized).canonical_target)
+
+
 def _readable_file_verdict(path: str, repo_root: str | Path, base_dir: str | Path) -> str:
     try:
-        normalized, _ = _normalize_command_target(path, repo_root, base_dir)
-        resolution = resolve_repo_boundary_path(repo_root=repo_root, submitted_target=normalized)
-        return "readable" if Path(resolution.canonical_target).is_file() else "not_a_regular_file"
+        return "readable" if _canonical_command_target(path, repo_root, base_dir).is_file() else "not_a_regular_file"
     except (OSError, ValueError):
         return "unresolvable_ambiguous"
+
+
+def _compares_a_directory(paths: tuple[str, ...], repo_root: str | Path, base_dir: str | Path) -> bool:
+    """``git diff a b [pathspec]`` walks directories, secrets included, without a usable repository.
+
+    That also covers a ``.git`` it refuses over ownership, so its presence proves
+    nothing here. An argument naming no path is a revision, as in ``HEAD -- docs``.
+    """
+
+    try:
+        targets = [_canonical_command_target(path, repo_root, base_dir) for path in paths[:2]]
+        return all(target.exists() for target in targets) and any(target.is_dir() for target in targets)
+    except (OSError, ValueError):
+        return True
+
+
+def _git_uses_a_guarded_repository(start: str | Path) -> bool:
+    """False unless git takes its config from a ``.git``, which agents cannot write.
+
+    Agents can write ``HEAD`` and ``config`` anywhere else. git walks up the same way
+    and accepts such a directory as a repository; its config can name programs that
+    ``git status`` runs, so a read-only form proves nothing without this.
+    """
+
+    try:
+        current = Path(start).resolve()
+        for directory in (current, *current.parents):
+            if (directory / ".git").exists():
+                return True
+            if (directory / "HEAD").exists():
+                return False
+    except OSError:
+        pass
+    return False
 
 
 def _secret_reference_gate(
@@ -1137,6 +1254,7 @@ def _build_decision(
     hook_decision: str,
     reasons: Sequence[str],
     basis: Mapping[str, Any],
+    updated_tool_input: Mapping[str, Any] | None = None,
 ) -> HookJudgmentEngineDecision:
     payload = {
         "contract_version": PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION,
@@ -1164,6 +1282,7 @@ def _build_decision(
             HOOK_DECISION_STRENGTH[hook_decision]
             >= HOOK_DECISION_STRENGTH[engine_decision]
         ),
+        updated_tool_input=updated_tool_input,
     )
 
 
