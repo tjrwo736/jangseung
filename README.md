@@ -63,7 +63,15 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 
 또한 변수 치환이나 중첩 셸처럼 복잡하게 감춰진 명령은 대상을 정밀하게 판별하지 못해, 이 경우 자동 통과가 아니라 확인을 요청합니다.
 
-hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`, MCP 도구는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다. 코드를 실행하는 MCP 도구는 장승의 판정을 거치지 않고 파일을 읽고 쓸 수 있습니다. 실제 Codex 세션에서 `mcp__node_repl__js`가 hook 기록 없이 `.env`를 읽었습니다. 이런 도구가 등록되어 있으면 등록을 해제하거나 호스트의 승인 설정을 확인하세요.
+hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`, MCP 도구, MCP 리소스 읽기는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다. 코드를 실행하거나 파일을 읽는 MCP 도구, 파일을 리소스로 제공하는 MCP 서버는 장승의 판정을 거치지 않고 파일 내용을 에이전트에게 넘길 수 있습니다.
+
+실제 세션(Claude Code 2.1.316 `claude -p`, Codex CLI 0.166.0 `codex exec`, Windows)에서 더미 `.env`로 경우마다 한 번씩 확인했습니다. 값이 출력된 경우에는 모두 장승 기록이 남지 않았습니다.
+
+- **Claude Code의 MCP 도구:** auto 모드와, Manual 모드(도구마다 승인을 묻는 모드)에서 미리 허용한 도구는 값이 출력되었습니다. Manual 모드에서 미리 허용하지 않은 도구는 승인을 요구해 실행되지 않았습니다.
+- **Claude Code의 MCP 리소스 읽기(`ReadMcpResourceTool`):** Manual 모드에서도 승인 요구 없이 값이 출력되었습니다. auto 모드도 같습니다.
+- **Codex의 MCP 도구와 `read_mcp_resource`:** `approval_policy=never` 설정에서 값이 출력되었습니다. `mcp__node_repl__js`도 포함됩니다.
+
+이런 MCP 서버가 등록되어 있으면 등록을 해제하거나 호스트의 승인 설정을 확인하세요.
 
 다음도 알아 두세요.
 
@@ -170,7 +178,7 @@ Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.P
 
 주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
 
-Codex CLI 0.166.0(Windows) 실제 세션에서 `apply_patch` 판정, `git diff`와 `git log -p`의 `.env` 제외, 프로젝트 밖 `workdir` 차단을 확인했습니다. hook이 받는 `Bash` 입력은 명령과 작업 폴더입니다. `exec_command`의 `tty`, `shell` 옵션과 `write_stdin`은 보지 못합니다. Codex에 등록된 MCP 도구도 검사하지 않습니다.
+Codex CLI 0.166.0(Windows) 실제 세션에서 `apply_patch` 판정, `git diff`와 `git log -p`의 `.env` 제외, 프로젝트 밖 `workdir` 차단을 확인했습니다. hook이 받는 `Bash` 입력은 명령과 작업 폴더입니다. `exec_command`의 `tty`, `shell` 옵션과 `write_stdin`은 보지 못합니다. Codex에 등록된 MCP 도구와 `read_mcp_resource`도 검사하지 않습니다.
 
 Claude Code 제거는 반대로:
 
