@@ -11,7 +11,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
+import re
 import shlex
 import sys
 from types import MappingProxyType
@@ -61,6 +63,7 @@ from jangseung.evidence.claude_code_tool_call_mapping import (
     extract_powershell_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
     powershell_words,
+    rewrite_apply_patch_targets,
 )
 from jangseung.evidence.claude_code_tool_call_mapping import RUN_COMMAND as MAPPING_RUN_COMMAND
 from jangseung.evidence.claude_code_tool_call_mapping import WRITE_FILE as MAPPING_WRITE_FILE
@@ -142,6 +145,7 @@ _READ_LIKE_TOOL_NAMES = frozenset({"Read", "Grep", "Glob"})
 _COMMAND_TOOL_NAMES = frozenset({"Bash", "PowerShell"})
 _COMMAND_TARGET_DENY_KINDS = frozenset({"out_of_scope", "secret_path", "protected_path", "protected_state_dir"})
 _SHELL_READ_DENY_KINDS = frozenset({"out_of_scope", "secret_path", "protected_state_dir"})
+_PROJECT_WORKING_FOLDER_KINDS = frozenset({"safe_in_repo", "protected_path", "secret_path"})
 _APPROVED_COMMAND_REJECTED_CHARACTERS = "\n\r\x00$`{}()&;<>|#"
 
 # Read/Write/Edit of a repo-internal, non-protected file that the existing
@@ -309,7 +313,7 @@ def judge_pretooluse_with_aeg_engine(
     powershell_target_gate = _powershell_write_delete_target_gate(hook_input, repo_root, base_dir, policy)
     shell_read_gate = _shell_read_only_gate(hook_input, repo_root, base_dir, policy)
     secret_reference_gate = _secret_reference_gate(hook_input, shell_read_gate, policy)
-    command_approved = _command_approved_by_policy(hook_input, action_candidate.reasons, policy)
+    command_approved = _command_approved_by_policy(hook_input, action_candidate.reasons, policy, repo_root, base_dir)
     dangerous_bash_gate = {
         "risk_status": action_candidate.risk_status,
         "dangerous_bash": action_candidate.risk_status in {BASH_DANGEROUS, POWERSHELL_DANGEROUS},
@@ -443,6 +447,7 @@ def _names_an_existing_path(argument: str, repo_root: str | Path, base_dir: str 
 
 # tool_input fields that carry a repo file path.
 _PATH_TOOL_INPUT_FIELDS = ("file_path", "notebook_path", "path")
+_WINDOWS_DRIVE_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
 
 
 def _effective_working_dir(
@@ -452,15 +457,16 @@ def _effective_working_dir(
 ) -> Path:
     """Directory relative targets resolve against; the host reports it per call."""
 
+    default = Path(repo_root if working_dir is None else working_dir)
     reported = hook_input.cwd
     if isinstance(reported, str):
         try:
-            candidate = Path(reported)
-            if candidate.is_absolute() and candidate.is_dir():
+            candidate = default / reported
+            if candidate.is_dir():
                 return candidate
         except (OSError, ValueError):
             pass
-    return Path(repo_root if working_dir is None else working_dir)
+    return default
 
 
 def _normalize_hook_input_repo_paths(
@@ -491,10 +497,42 @@ def _normalize_hook_input_repo_paths(
         if normalized != value:
             tool_input[field_name] = normalized
             changed = True
+    if hook_input.tool_name == "apply_patch" and _is_non_empty_string(tool_input.get("command")):
+        judged = _patch_with_repo_relative_targets(tool_input["command"], repo_root, base_dir)
+        if judged != tool_input["command"]:
+            records.append({"field": "command", "action": "apply_patch_absolute_targets_judged_repo_relative"})
+            tool_input["command"] = judged
+            changed = True
 
     if not changed:
         return hook_input, tuple(records)
     return replace(hook_input, tool_input=tool_input), tuple(records)
+
+
+def _patch_with_repo_relative_targets(
+    command: str,
+    repo_root: str | Path,
+    base_dir: str | Path,
+) -> str:
+    """Return the patch text to judge, with absolute targets in the project made relative.
+
+    Only this machine's own absolute form counts. Codex would not read ``/c/x`` as
+    ``C:\\x`` the way the resolver here does, so any other form stays as written and
+    is refused. The hook returns no new input for a patch, so Codex still applies
+    the text it wrote; this changes what is judged, the same file under its project name.
+    """
+
+    def judged_path(path: str) -> str:
+        if os.name == "nt":
+            native_absolute = _WINDOWS_DRIVE_ABSOLUTE.match(path) is not None
+        else:
+            native_absolute = path.startswith("/") and not path.startswith("//")
+        if not native_absolute:
+            return path
+        normalized, record = _normalize_repo_internal_path(path, repo_root, base_dir)
+        return normalized if record["in_repo"] is True and normalized != "." else path
+
+    return rewrite_apply_patch_targets(command, judged_path)
 
 
 def _normalize_repo_internal_path(
@@ -1003,7 +1041,9 @@ def _shell_read_only_gate(
         verdicts.append("unguarded_git_directory")
     if extraction.git_output is not None and not extraction.git_output.can_be_narrowed:
         verdicts.append("git_output_cannot_be_narrowed")
-    for path in extraction.metadata_paths:
+    # The host runs the command in the folder it reports, which can be another
+    # repository (Codex's workdir), and a form naming no path says nothing about it.
+    for path in (".", *extraction.metadata_paths):
         # Names and attributes do not expose a secret's content. State stays
         # with a person because listing it serves no ordinary work.
         verdict = kind(path)
@@ -1097,8 +1137,14 @@ def _command_approved_by_policy(
     hook_input: ClaudeCodePreToolUseInput,
     mapping_reasons: Sequence[str],
     policy: HookPolicy,
+    repo_root: str | Path,
+    base_dir: str | Path,
 ) -> bool:
-    """True for a single plain command matching a prefix a person approved."""
+    """True for a single plain command matching a prefix a person approved.
+
+    The approval belongs to this project, so it does not follow the command into
+    another folder, where the same ``pytest`` would run that folder's code.
+    """
 
     command = hook_input.tool_input.get("command")
     if (
@@ -1113,7 +1159,11 @@ def _command_approved_by_policy(
         argv = tuple(shlex.split(command))
     except ValueError:
         return False
-    return bool(argv) and policy.approves_command(argv)
+    return (
+        bool(argv)
+        and policy.approves_command(argv)
+        and _classify_command_target(".", repo_root, base_dir, policy) in _PROJECT_WORKING_FOLDER_KINDS
+    )
 
 
 def _collapse_engine_decision(
