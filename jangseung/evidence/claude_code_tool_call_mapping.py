@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -1570,6 +1570,12 @@ _APPLY_PATCH_ADD_FILE = "*** Add File: "
 _APPLY_PATCH_UPDATE_FILE = "*** Update File: "
 _APPLY_PATCH_DELETE_FILE = "*** Delete File: "
 _APPLY_PATCH_MOVE_TO = "*** Move to: "
+_APPLY_PATCH_PATH_DIRECTIVES = (
+    _APPLY_PATCH_ADD_FILE,
+    _APPLY_PATCH_UPDATE_FILE,
+    _APPLY_PATCH_DELETE_FILE,
+    _APPLY_PATCH_MOVE_TO,
+)
 
 
 def extract_apply_patch_targets(command: str) -> ApplyPatchTargetExtraction:
@@ -1718,6 +1724,28 @@ def extract_apply_patch_targets(command: str) -> ApplyPatchTargetExtraction:
         False,
         "apply_patch_targets_extracted",
     )
+
+
+def rewrite_apply_patch_targets(command: str, rewrite: Callable[[str], str]) -> str:
+    """Return the patch with each directive's path replaced by ``rewrite(path)``.
+
+    Lines split the way ``extract_apply_patch_targets`` splits them, so the result
+    declares the same operations. Text with nothing to replace comes back unchanged.
+    """
+
+    lines = command.splitlines()
+    changed = False
+    for index, line in enumerate(lines):
+        for prefix in _APPLY_PATCH_PATH_DIRECTIVES:
+            path = _apply_patch_directive_path(line, prefix)
+            if path is None:
+                continue
+            rewritten = rewrite(path)
+            if rewritten != path:
+                lines[index] = prefix + rewritten
+                changed = True
+            break
+    return "\n".join(lines) if changed else command
 
 
 def _apply_patch_directive_path(line: str, prefix: str) -> str | None:

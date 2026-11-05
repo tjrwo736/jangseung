@@ -39,7 +39,7 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 - 장승 무력화: `.claude/settings*.json`, `.codex/`, `.mcp.json`, `.git/` 수정과 `aeg uninstall` 실행
 - git이 실행하는 파일: `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` 등 git 설정이 가리키는 프로젝트 안 경로의 수정 (0.1.7부터)
 - 감시 기록 조작: executor가 `.aeg` 디렉토리에 직접 쓰는 행위 (장승의 신뢰된 내부 recorder만 전용 ledger에 기록)
-- 범위 밖 접근: 프로젝트 폴더 바깥 경로 (`/etc`, `~/.ssh` 등)
+- 범위 밖 접근: 프로젝트 폴더 바깥 경로 (`/etc`, `~/.ssh` 등). 작업 폴더가 프로젝트 밖인 읽기 명령도 포함합니다 (0.1.8부터)
 
 이 판정은 파일을 직접 쓰는 경우(Write/Edit)뿐 아니라, Bash 명령이나 Windows Claude Code의 PowerShell 명령으로 우회하려는 경우(`echo > .env`, `Remove-Item .env` 같은)도 동일하게 적용됩니다. 줄바꿈, 괄호, `&`, `;`로 명령을 이어 붙여도 안에 든 명령을 따로 판정하고, 세션이 하위 폴더로 이동해도 보호 경로는 프로젝트 루트 기준으로 유지합니다.
 
@@ -63,7 +63,7 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 
 또한 변수 치환이나 중첩 셸처럼 복잡하게 감춰진 명령은 대상을 정밀하게 판별하지 못해, 이 경우 자동 통과가 아니라 확인을 요청합니다.
 
-hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`, MCP 도구는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다.
+hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`, MCP 도구는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다. 코드를 실행하는 MCP 도구는 장승의 판정을 거치지 않고 파일을 읽고 쓸 수 있습니다. 실제 Codex 세션에서 `mcp__node_repl__js`가 hook 기록 없이 `.env`를 읽었습니다. 이런 도구가 등록되어 있으면 등록을 해제하거나 호스트의 승인 설정을 확인하세요.
 
 다음도 알아 두세요.
 
@@ -94,13 +94,13 @@ hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Re
 | 지원됨 (0.1.5부터) | PowerShell 자동 허용은 `Get-Content`, `Get-ChildItem`, `Test-Path` 등의 좁은 읽기 문법을 통과한 명령에만 적용. 비밀 파일과 프로젝트 밖 읽기는 deny. `Get-ChildItem`을 `Select-String`으로 넘기는 파일 검색, 유니코드 공백이나 기울어진 따옴표가 있는 명령은 0.1.7부터 자동 허용하지 않음 |
 | 지원됨 | 위험 명령 deny: `rm -rf`, `git reset --hard`, `git clean -f`, `git checkout -- .`, `git push`, 공개·배포 명령(`npm publish`, `gh release create`, `kubectl apply`, `terraform apply` 등). 경로로 지정하거나 `git -C`, `bash -c`로 감싸도 적용 |
 | 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
-| 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow (Windows 네이티브 hook exit code 처리 포함 실측) |
+| 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow (Windows 네이티브 hook exit code 처리 포함 실측). 프로젝트 안 파일은 0.1.8부터 절대 경로로 적어도 같은 판정 (Codex CLI 0.166.0, Windows 실제 세션에서 확인) |
 | 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
 | 지원됨 (0.1.2부터) | Codex 제거: `aeg uninstall --target codex`; 다른 hook과 TOML 설정/주석 보존, diff 확인과 백업 |
 | 지원됨 (0.1.2부터) | 프로젝트 내부 일반 파일의 제한된 셸 읽기: `cat`, `head`/`tail`, 출력 전용 `sed -n`, `rg --no-config`, `Get-Content` 및 단순 출력 pipeline |
-| 지원됨 (0.1.7부터) | `git diff`, `git show`, `git log -p`의 비밀 파일 제외: 추적 파일과 이력 모두. 객체 ID는 커밋으로만 해석 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex는 문서 기준이며 실제 세션 미확인) |
-| 지원됨 (0.1.5부터) | 파일을 바꾸지 않는 명령 자동 허용: `ls`, `pwd`, `echo`, `grep`, `wc`, `test`, 읽기 전용 `git`(`status`, `diff`, `log`, `show`, `blame`, `branch` 조회 등). `git`은 0.1.7부터 작업 폴더나 상위 폴더에 `.git`이 있을 때만 |
-| 지원됨 (0.1.5부터) | 프로젝트 승인 정책: `.aeg/policy.json`으로 경로와 명령을 승인. 에이전트는 이 파일을 수정할 수 없음 |
+| 지원됨 (0.1.7부터) | `git diff`, `git show`, `git log -p`의 비밀 파일 제외: 추적 파일과 이력 모두. 객체 ID는 커밋으로만 해석 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex CLI 0.166.0은 `git diff`, `git log -p`를 Windows 실제 세션에서 확인) |
+| 지원됨 (0.1.5부터) | 파일을 바꾸지 않는 명령 자동 허용: `ls`, `pwd`, `echo`, `grep`, `wc`, `test`, 읽기 전용 `git`(`status`, `diff`, `log`, `show`, `blame`, `branch` 조회 등). `git`은 0.1.7부터 작업 폴더나 상위 폴더에 `.git`이 있을 때만. 0.1.8부터 작업 폴더가 프로젝트 밖이면 이 명령들 모두 deny |
+| 지원됨 (0.1.5부터) | 프로젝트 승인 정책: `.aeg/policy.json`으로 경로와 명령을 승인. 에이전트는 이 파일을 수정할 수 없음. 승인한 명령은 0.1.8부터 프로젝트 안에서만 자동 허용 |
 | 지원됨 | Codex substrate에서 `ask`/`defer`를 `deny`로 격상: Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 실측 결과 반영 |
 | 부분 지원 / 확인 중 | Bash 동적/난독화 명령: 변수 치환, 명령 치환, 중첩 셸, `find -delete`/`xargs` 등은 정밀 판별하지 못하면 자동 허용하지 않고 `ask`/`defer`로 보냄 (Codex substrate에서는 `deny`로 격상) |
 | 부분 지원 / 확인 중 | PowerShell 동적/복잡 명령: target 변수, 동적 command invocation, 미지원 cmdlet, 복잡한 pipeline은 정밀 판별을 주장하지 않고 `ask`/`defer`로 보냄 |
@@ -128,7 +128,7 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이 포함됩니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이 포함됩니다.
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -169,6 +169,8 @@ Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.P
 0.1.3부터 Codex 설치도 TOML 파서로 기존 설정·주석을 보존하며 병합하고, 잘못된 설정은 수정하지 않습니다. 기존에 `PreToolUse = []` 또는 inline 배열이 있어도 처리합니다. hook이 이미 최신 형태로 설치되어 있지만 `.aeg/`가 없는 경우에는 다시 `aeg install --target codex`(Claude Code는 `aeg install`)을 실행하면, 확인 후 설정을 바꾸지 않고 기록 폴더만 준비합니다. 일반 `aeg run`에 필요한 전체 상태 초기화는 별도로 `aeg init`을 사용합니다.
 
 주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
+
+Codex CLI 0.166.0(Windows) 실제 세션에서 `apply_patch` 판정, `git diff`와 `git log -p`의 `.env` 제외, 프로젝트 밖 `workdir` 차단을 확인했습니다. hook이 받는 `Bash` 입력은 명령과 작업 폴더입니다. `exec_command`의 `tty`, `shell` 옵션과 `write_stdin`은 보지 못합니다. Codex에 등록된 MCP 도구도 검사하지 않습니다.
 
 Claude Code 제거는 반대로:
 
@@ -219,7 +221,7 @@ git show HEAD
 
 PowerShell에서는 `Get-Content`(`gc`, `cat`, `type`), `Get-ChildItem`(`gci`, `dir`, `ls`), `Test-Path`, `Get-Location`, `Select-String`과 `Select-Object` 출력 pipeline, 위의 읽기 전용 `git`을 지원합니다. 이 제한된 읽기는 Codex가 tool name을 `Bash`로 전달하는 경우에도 판정합니다.
 
-비밀 파일, `.aeg`, 프로젝트 밖 경로의 내용을 읽으면 deny합니다. wildcard·디렉터리 내용 검색, 검색어 자리까지 포함한 따옴표 없는 `*`, `?`, `[`, `Get-ChildItem`에서 `Select-String`으로 넘기는 파일 검색, 유니코드 공백이나 기울어진 따옴표, 파일이 없는 경로, 변수/명령 치환, 중첩 셸, 리다이렉트, 미지원 옵션은 자동 허용 대상에서 제외합니다. `git`은 `-c`, `-C`, `--output`, `--ext-diff`를 쓰면 자동 허용하지 않습니다. `sed`는 숫자 행 범위의 `p` 출력만 지원하고, `rg`는 환경 설정이 외부 프로그램 실행 옵션을 끼워 넣지 않도록 `--no-config`를 요구합니다. 미분류 작업은 기존처럼 Claude Code에서 확인 요청, Codex에서 차단됩니다. 명령 이름에 해당하는 표준 도구를 전제로 하며, 임의로 바꾼 실행 파일이나 셸 함수의 내부 동작까지 검증하지는 않습니다.
+비밀 파일, `.aeg`, 프로젝트 밖 경로의 내용을 읽으면 deny합니다. 작업 폴더가 프로젝트 밖이면 경로를 적지 않은 `git status`, `ls` 같은 명령도 deny합니다 (0.1.8부터). wildcard·디렉터리 내용 검색, 검색어 자리까지 포함한 따옴표 없는 `*`, `?`, `[`, `Get-ChildItem`에서 `Select-String`으로 넘기는 파일 검색, 유니코드 공백이나 기울어진 따옴표, 파일이 없는 경로, 변수/명령 치환, 중첩 셸, 리다이렉트, 미지원 옵션은 자동 허용 대상에서 제외합니다. `git`은 `-c`, `-C`, `--output`, `--ext-diff`를 쓰면 자동 허용하지 않습니다. `sed`는 숫자 행 범위의 `p` 출력만 지원하고, `rg`는 환경 설정이 외부 프로그램 실행 옵션을 끼워 넣지 않도록 `--no-config`를 요구합니다. 미분류 작업은 기존처럼 Claude Code에서 확인 요청, Codex에서 차단됩니다. 명령 이름에 해당하는 표준 도구를 전제로 하며, 임의로 바꾼 실행 파일이나 셸 함수의 내부 동작까지 검증하지는 않습니다.
 
 ### 프로젝트 승인 정책 (0.1.5부터)
 
