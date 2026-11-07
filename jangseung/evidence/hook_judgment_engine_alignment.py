@@ -46,8 +46,11 @@ from jangseung.contracts import (
 from jangseung.evidence.b1_aeg_integrity_guard import decide_b1_aeg_integrity_guard
 from jangseung.evidence.claude_code_pretooluse_input_contract import (
     ClaudeCodePreToolUseInput,
+    PreToolUseInputValidationResult,
+    is_mcp_tool_name,
     validate_claude_code_pretooluse_input,
 )
+from jangseung.evidence.mcp_tool_gate import judge_mcp_tool_call
 from jangseung.evidence.claude_code_tool_call_mapping import (
     BASH_DANGEROUS,
     BASH_NOT_CHECKED,
@@ -282,6 +285,11 @@ def judge_pretooluse_with_aeg_engine(
             basis=basis,
         )
 
+    if is_mcp_tool_name(hook_input.tool_name):
+        return _judge_mcp_tool_call(
+            raw_hook_input, hook_input, validation, ignored_reported_only_fields, repo_root, working_dir
+        )
+
     # Tools may send absolute paths or paths relative to the session's directory.
     # Rewrite repo-internal ones to their canonical repo-relative form so the
     # engine judges the file that would really be touched; a repo-external or
@@ -391,6 +399,38 @@ def judge_pretooluse_with_aeg_engine(
         reasons=reasons,
         basis=basis,
         updated_tool_input=updated_tool_input,
+    )
+
+
+def _judge_mcp_tool_call(
+    raw_hook_input: Mapping[str, Any],
+    hook_input: ClaudeCodePreToolUseInput,
+    validation: PreToolUseInputValidationResult,
+    ignored_reported_only_fields: Any,
+    repo_root: str | Path,
+    working_dir: str | Path | None,
+) -> HookJudgmentEngineDecision:
+    """MCP calls are judged by name and the project policy; arguments are never read."""
+
+    base_dir = _effective_working_dir(hook_input, repo_root, working_dir)
+    policy = load_hook_policy(repo_root, base_dir)
+    gate = judge_mcp_tool_call(hook_input.tool_name, policy)
+    basis = {
+        "input_validation": _validation_record(validation),
+        "mcp_tool_gate": gate.to_record(),
+        "hook_policy": {"present": policy.present, "error": policy.error},
+        "ignored_reported_only_fields": ignored_reported_only_fields,
+        "reported_only_trusted_as_judgment_basis": False,
+        "not_checked_is_allow": False,
+        "safe_default": SAFE_DEFAULT,
+        "live_executor_authority": LIVE_EXECUTOR_AUTHORITY_ON_HOLD,
+    }
+    return _build_decision(
+        request=_build_request(raw_hook_input, hook_input, repo_root, base_dir),
+        engine_decision=gate.hook_decision,
+        hook_decision=gate.hook_decision,
+        reasons=gate.reasons,
+        basis=basis,
     )
 
 

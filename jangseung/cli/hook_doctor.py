@@ -10,8 +10,9 @@ from typing import Any
 
 from jangseung.classify.hook_policy import HOOK_POLICY_FILE, load_hook_policy
 from jangseung.cli.install import (
-    CLAUDE_HOOK_ON_FAILURE, CODEX_AEGIS_HOOK_MATCHER, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
-    _is_managed_hook, _parse_managed_command, claude_code_hook_matcher,
+    CLAUDE_CODE_MCP_HOOK_MATCHER, CLAUDE_HOOK_ON_FAILURE, CODEX_AEGIS_HOOK_MATCHER, CODEX_MCP_HOOK_MATCHER,
+    HOOK_KIND_MAIN, HOOK_KIND_MCP, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
+    _is_managed_hook, _managed_hook_kind, _parse_managed_command, claude_code_hook_matcher,
 )
 from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, FAIL, PASS, WARN
@@ -65,34 +66,58 @@ def _config_checks(repo: Path, target: str) -> list[DoctorCheck]:
                             fix_hint="Review the configuration locally. Raw config and parser errors are omitted.")]
 
     checks = [DoctorCheck(name, PASS, "Project-local config has a readable hook structure.")]
-    managed = [(entry, hook) for entry in entries for hook in entry["hooks"] if _is_managed_hook(hook)]
-    count = len(managed)
+    managed = [(entry, hook, _managed_hook_kind(hook)) for entry in entries for hook in entry["hooks"] if _is_managed_hook(hook)]
+    main_hooks = [(entry, hook) for entry, hook, kind in managed if kind == HOOK_KIND_MAIN]
+    mcp_hooks = [(entry, hook) for entry, hook, kind in managed if kind == HOOK_KIND_MCP]
+    count = len(main_hooks)
     checks.append(DoctorCheck(f"{target} hook registration", PASS if count == 1 else WARN,
                               f"Recognized managed PreToolUse hooks: {count}. Custom wrappers are not assessed.",
                               fix_hint=install_hint if count == 0 else "Review duplicate registrations." if count > 1 else "",
                               next_step="Codex runs a project hook only after you trust it; until then nothing is blocked. Trust state is NOT_CHECKED." if target == "codex" and count else ""))
-    for index, (entry, hook) in enumerate(managed, 1):
-        prefix = f"{target} hook {index}"
-        expected_substrates = ("codex",) if target == "codex" else (None, "claude-code")
-        correct = _is_managed_hook(hook, substrates=expected_substrates)
-        checks.append(DoctorCheck(f"{prefix} substrate", PASS if correct else FAIL,
-                                  "Substrate matches this target." if correct else "Substrate is missing or does not match this target.",
-                                  fix_hint="Review uninstall/reinstall for the correct target; no config was changed." if not correct else ""))
-        matcher = entry.get("matcher")
-        expected = CODEX_AEGIS_HOOK_MATCHER if target == "codex" else claude_code_hook_matcher()
-        # Only the generated literal matcher is claimed, not arbitrary regex equivalence.
+    mcp_count = len(mcp_hooks)
+    opt_in = "aeg install --mcp" + (" --target codex" if target == "codex" else "")
+    checks.append(DoctorCheck(f"{target} MCP hook registration", PASS if mcp_count <= 1 else WARN,
+                              f"MCP protection is off: MCP tool calls and resource reads are not checked. Opt in with {opt_in}."
+                              if mcp_count == 0 else
+                              "MCP protection hook is registered. Arguments are not inspected; tools are judged by name."
+                              if mcp_count == 1 else f"Recognized MCP hooks: {mcp_count}.",
+                              fix_hint="Review duplicate registrations." if mcp_count > 1 else "",
+                              next_step="Codex trusts the MCP hook separately; approve it in /hooks. Trust state is NOT_CHECKED."
+                              if target == "codex" and mcp_count else ""))
+    expected_main = CODEX_AEGIS_HOOK_MATCHER if target == "codex" else claude_code_hook_matcher()
+    expected_mcp = CODEX_MCP_HOOK_MATCHER if target == "codex" else CLAUDE_CODE_MCP_HOOK_MATCHER
+    for kind, hooks, label in ((HOOK_KIND_MAIN, main_hooks, "hook"), (HOOK_KIND_MCP, mcp_hooks, "MCP hook")):
+        for index, (entry, hook) in enumerate(hooks, 1):
+            checks.extend(_hook_checks(f"{target} {label} {index}", target, kind, entry, hook,
+                                       expected_main if kind == HOOK_KIND_MAIN else expected_mcp, install_hint))
+    return checks
+
+
+def _hook_checks(prefix: str, target: str, kind: str, entry: dict[str, Any], hook: dict[str, Any],
+                 expected: str, install_hint: str) -> list[DoctorCheck]:
+    checks = []
+    expected_substrates = ("codex",) if target == "codex" else (None, "claude-code")
+    correct = _is_managed_hook(hook, substrates=expected_substrates)
+    checks.append(DoctorCheck(f"{prefix} substrate", PASS if correct else FAIL,
+                              "Substrate matches this target." if correct else "Substrate is missing or does not match this target.",
+                              fix_hint="Review uninstall/reinstall for the correct target; no config was changed." if not correct else ""))
+    matcher = entry.get("matcher")
+    # Only the generated literal matcher is claimed, not arbitrary regex equivalence.
+    if kind == HOOK_KIND_MCP:
+        known_matcher = matcher == expected
+    else:
         known_matcher = isinstance(matcher, str) and set(matcher.split("|")) == set(expected.split("|"))
-        checks.append(DoctorCheck(f"{prefix} matcher", PASS if known_matcher else WARN,
-                                  "Matcher covers the installer-generated tool set." if known_matcher else
-                                  "Matcher differs from the current installer; tool coverage is NOT_CHECKED.",
-                                  next_step="Host trust, global overrides and live dispatch are NOT_CHECKED."))
-        if target != "codex":
-            blocks = hook.get("onFailure") == CLAUDE_HOOK_ON_FAILURE
-            checks.append(DoctorCheck(f"{prefix} failure mode", PASS if blocks else WARN,
-                                      "A hook that cannot start or crashes blocks the tool call." if blocks else
-                                      "If this hook cannot start or crashes, Claude Code lets the tool call proceed.",
-                                      fix_hint="" if blocks else install_hint))
-        checks.append(_executable_check(prefix, hook))
+    checks.append(DoctorCheck(f"{prefix} matcher", PASS if known_matcher else WARN,
+                              "Matcher covers the installer-generated tool set." if known_matcher else
+                              "Matcher differs from the current installer; tool coverage is NOT_CHECKED.",
+                              next_step="Host trust, global overrides and live dispatch are NOT_CHECKED."))
+    if target != "codex":
+        blocks = hook.get("onFailure") == CLAUDE_HOOK_ON_FAILURE
+        checks.append(DoctorCheck(f"{prefix} failure mode", PASS if blocks else WARN,
+                                  "A hook that cannot start or crashes blocks the tool call." if blocks else
+                                  "If this hook cannot start or crashes, Claude Code lets the tool call proceed.",
+                                  fix_hint="" if blocks else install_hint))
+    checks.append(_executable_check(prefix, hook))
     return checks
 
 
@@ -179,7 +204,8 @@ def _policy_check(repo: Path) -> DoctorCheck:
     return DoctorCheck(name, PASS, "Project policy is readable and in effect.",
                        details=(("allow_paths", str(len(policy.paths.allow_paths))),
                                 ("protect_paths", str(len(policy.paths.protect_paths))),
-                                ("allow_commands", str(len(policy.allow_commands)))))
+                                ("allow_commands", str(len(policy.allow_commands))),
+                                ("allow_mcp_tools", str(len(policy.allow_mcp_tools)))))
 
 
 def _lock_check(path: Path) -> DoctorCheck:
