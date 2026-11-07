@@ -22,19 +22,26 @@ from jangseung.contracts import STATE_DIR
 HOOK_POLICY_FILE = "policy.json"
 MAX_POLICY_BYTES = 64 * 1024
 
-_KNOWN_KEYS = frozenset({"allow_paths", "protect_paths", "allow_commands"})
+_KNOWN_KEYS = frozenset({"allow_paths", "protect_paths", "allow_commands", "allow_mcp_tools"})
 _APPROVED_COMMAND = re.compile(r"[\w ./:=@+-]+")
+# One exact MCP tool name, ``mcp__<server>__<tool>``. No patterns: a server name
+# may itself contain ``__``, so a prefix could approve another server's tools.
+_APPROVED_MCP_TOOL = re.compile(r"mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
 class HookPolicy:
     paths: PathPolicy = PathPolicy()
     allow_commands: tuple[tuple[str, ...], ...] = ()
+    allow_mcp_tools: frozenset[str] = frozenset()
     present: bool = False
     error: str | None = None
 
     def approves_command(self, argv: tuple[str, ...]) -> bool:
         return any(argv[: len(prefix)] == prefix for prefix in self.allow_commands)
+
+    def approves_mcp_tool(self, tool_name: str) -> bool:
+        return tool_name in self.allow_mcp_tools
 
 
 def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = None) -> HookPolicy:
@@ -76,9 +83,12 @@ def _parse_policy(data: Any) -> HookPolicy:
         if not _APPROVED_COMMAND.fullmatch(text):
             return HookPolicy(present=True, error="policy_allow_commands_must_be_plain_words")
         commands.append(tuple(shlex.split(text)))
+    if not all(_APPROVED_MCP_TOOL.fullmatch(text) for text in lists["allow_mcp_tools"]):
+        return HookPolicy(present=True, error="policy_allow_mcp_tools_must_be_exact_mcp_tool_names")
     return HookPolicy(
         paths=PathPolicy(allow_paths=lists["allow_paths"], protect_paths=lists["protect_paths"]),
         allow_commands=tuple(commands),
+        allow_mcp_tools=frozenset(lists["allow_mcp_tools"]),
         present=True,
     )
 

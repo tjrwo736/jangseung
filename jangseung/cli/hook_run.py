@@ -324,6 +324,9 @@ def run_hook_cli(arguments: Sequence[str]) -> int:
 
     parser = argparse.ArgumentParser(prog="aeg hook-run", add_help=False)
     parser.add_argument("--substrate", choices=(SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX), default=None)
+    # Marks the entry ``aeg install --mcp`` adds. Every call is judged the same
+    # way, so an MCP call arriving through either entry gets the MCP rules.
+    parser.add_argument("--mcp", action="store_true")
     return run_aeg_hook_run_from_process(substrate=parser.parse_args(list(arguments)).substrate)
 
 

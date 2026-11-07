@@ -122,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
             "Use codex only for hooks installed into Codex."
         ),
     )
+    hook_run_parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="marks the hook entry added by install --mcp; the judgment is the same",
+    )
     install_parser = subparsers.add_parser(
         "install",
         help="register the Aegis PreToolUse hook in a project-local substrate config",
@@ -147,6 +152,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="(unsupported) global ~/.claude install; project-local only in this version",
     )
+    install_parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help=(
+            "also add a separate hook for MCP tool calls and MCP resource reads: they need "
+            "approval (denied on Codex) unless .aeg/policy.json lists the tool in allow_mcp_tools"
+        ),
+    )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
         help="remove the Aegis PreToolUse hook from a project-local substrate config",
@@ -160,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     uninstall_parser.add_argument(
         "--target", choices=INSTALL_TARGETS, default=TARGET_CLAUDE_CODE,
         help="hook substrate to remove: claude-code (default) or codex",
+    )
+    uninstall_parser.add_argument(
+        "--mcp", action="store_true", help="remove only the MCP hook added by install --mcp",
     )
 
     args = parser.parse_args(argv)
@@ -201,12 +217,14 @@ def main(argv: list[str] | None = None) -> int:
             assume_yes=args.yes,
             global_requested=args.global_install,
             target=args.target,
+            mcp=args.mcp,
         )
     if args.command == "uninstall":
         return cmd_uninstall(
             Path(args.path) if args.path else Path.cwd(),
             assume_yes=args.yes,
             target=args.target,
+            mcp_only=args.mcp,
         )
     parser.error(f"unknown command: {args.command}")
     return 2
