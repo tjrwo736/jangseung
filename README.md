@@ -351,6 +351,10 @@ hook 기록에 실패해도 이미 계산된 `permissionDecision`과 exit code�
 
 이 프로젝트는 Claude Code와 Codex를 사용해 개발했습니다. 모든 판정 로직은 실제 Claude Code / Codex 환경에서 반복 검증했으며, README에 적은 지원 범위와 한계는 그 실측 결과를 그대로 반영합니다.
 
+## 보안 문제 신고
+
+취약점은 공개 이슈에 적지 말고 [보안 정책](https://github.com/tjrwo736/jangseung/blob/main/SECURITY.md)에 적힌 방법으로 알려 주세요.
+
 ## 라이선스
 
 이 프로젝트는 MIT 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
