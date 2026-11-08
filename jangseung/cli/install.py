@@ -35,6 +35,16 @@ from typing import Any, Sequence, TextIO
 AEGIS_HOOK_MATCHER = "Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob"
 WINDOWS_AEGIS_HOOK_MATCHER = f"{AEGIS_HOOK_MATCHER}|PowerShell"
 CODEX_AEGIS_HOOK_MATCHER = "Write|Edit|Bash|Read|apply_patch"
+# The opt-in MCP entry. It is separate because Codex trusts each entry by a hash
+# that includes its matcher: widening the existing matcher would switch off the
+# whole guard until the user approved it again. Resource reads carry no prefix.
+CLAUDE_CODE_MCP_HOOK_MATCHER = "^(mcp__.*|ReadMcpResourceTool)$"
+CODEX_MCP_HOOK_MATCHER = "^(mcp__.*|read_mcp_resource)$"
+# Marks the MCP entry's command so install, uninstall and doctor tell it apart.
+MCP_HOOK_FLAG = "--mcp"
+HOOK_KIND_MAIN = "main"
+HOOK_KIND_MCP = "mcp"
+HOOK_KINDS = (HOOK_KIND_MAIN, HOOK_KIND_MCP)
 # -I keeps the project's own files off sys.path: with plain ``python -m`` a
 # planted json.py in the working directory would run inside the guard.
 ISOLATED_MODULE_ARGS = ("-I", "-m", "jangseung.cli")
@@ -79,18 +89,19 @@ def _installed_console_script() -> str | None:
     return None
 
 
-def resolve_hook_command(*, substrate: str | None = None) -> str:
+def resolve_hook_command(*, substrate: str | None = None, mcp: bool = False) -> str:
     """Return the command string the substrate should run for the hook, using
     the installed ``aeg`` console script if available (absolute path, no
     PYTHONPATH needed), else the current interpreter's isolated module form."""
 
-    command, args = resolve_hook_command_parts(substrate=substrate)
+    command, args = resolve_hook_command_parts(substrate=substrate, mcp=mcp)
     return shlex.join((command, *args))
 
 
 def resolve_hook_command_parts(
     *,
     substrate: str | None = None,
+    mcp: bool = False,
 ) -> tuple[str, tuple[str, ...]]:
     """Return the hook executable and argv tail without shell tokenization."""
 
@@ -103,12 +114,15 @@ def resolve_hook_command_parts(
         args = [*ISOLATED_MODULE_ARGS, "hook-run"]
     if substrate:
         args.extend(("--substrate", substrate))
+    if mcp:
+        args.append(MCP_HOOK_FLAG)
     return (command, tuple(args))
 
 
 def resolve_claude_code_hook_command(
     *,
     platform: str | None = None,
+    mcp: bool = False,
 ) -> tuple[str, tuple[str, ...] | None]:
     """Return the Claude Code command config.
 
@@ -119,8 +133,8 @@ def resolve_claude_code_hook_command(
 
     effective_platform = sys.platform if platform is None else platform
     if effective_platform == "win32":
-        return resolve_windows_hook_command_parts()
-    return (resolve_hook_command(), None)
+        return resolve_windows_hook_command_parts(mcp=mcp)
+    return (resolve_hook_command(mcp=mcp), None)
 
 
 def claude_code_hook_matcher(*, platform: str | None = None) -> str:
@@ -136,23 +150,25 @@ def claude_code_hook_matcher(*, platform: str | None = None) -> str:
     return AEGIS_HOOK_MATCHER
 
 
-def resolve_windows_hook_command_parts() -> tuple[str, tuple[str, ...]]:
+def resolve_windows_hook_command_parts(*, mcp: bool = False) -> tuple[str, tuple[str, ...]]:
     """Return a Windows exec-form hook target that Claude Code can spawn."""
 
+    tail = (MCP_HOOK_FLAG,) if mcp else ()
     aeg_path = _installed_console_script()
     if isinstance(aeg_path, str) and _is_windows_exe_path(aeg_path):
-        return (aeg_path, ("hook-run",))
-    return (sys.executable, (*ISOLATED_MODULE_ARGS, "hook-run"))
+        return (aeg_path, ("hook-run", *tail))
+    return (sys.executable, (*ISOLATED_MODULE_ARGS, "hook-run", *tail))
 
 
-def resolve_codex_windows_hook_command(*, platform: str | None = None) -> str | None:
+def resolve_codex_windows_hook_command(*, platform: str | None = None, mcp: bool = False) -> str | None:
     """Return a Windows command string for Codex, when installing on Windows."""
 
     effective_platform = sys.platform if platform is None else platform
     if effective_platform != "win32":
         return None
     command, args = resolve_windows_hook_command_parts()
-    return subprocess.list2cmdline((command, *args, "--substrate", TARGET_CODEX))
+    tail = (MCP_HOOK_FLAG,) if mcp else ()
+    return subprocess.list2cmdline((command, *args, "--substrate", TARGET_CODEX, *tail))
 
 
 def is_aegis_hook_command(command: Any) -> bool:
@@ -203,11 +219,13 @@ def build_installed_settings(
     *,
     args: Sequence[str] | None = None,
     matcher: str = AEGIS_HOOK_MATCHER,
+    kind: str = HOOK_KIND_MAIN,
 ) -> tuple[dict[str, Any], bool]:
     """Return (new_settings, already_installed). Preserves all existing content.
 
-    Appends one Aegis PreToolUse entry, or brings an existing one up to date so
-    re-running install repairs a stale command, matcher or failure mode.
+    Appends one Aegis PreToolUse entry of ``kind``, or brings an existing one up
+    to date so re-running install repairs a stale command, matcher or failure
+    mode. The command must already carry the MCP flag for the MCP kind.
     """
 
     new_data = deepcopy(data)
@@ -218,7 +236,7 @@ def build_installed_settings(
     if not isinstance(pretooluse, list):
         raise InstallStructureError(f"'hooks.{HOOK_EVENT_NAME}' is not a JSON array")
 
-    existing = _find_aegis_hook(pretooluse)
+    existing = _find_aegis_hook(pretooluse, kind=kind)
     if existing is not None:
         entry, hook = existing
         desired = _command_hook(command, args=args)
@@ -244,9 +262,12 @@ def build_installed_settings(
 
 def build_uninstalled_settings(
     data: dict[str, Any],
+    *,
+    kinds: Sequence[str] = HOOK_KINDS,
 ) -> tuple[dict[str, Any], int]:
-    """Return (new_settings, removed_count). Removes only Aegis hooks; preserves
-    every other hook and field; cleans up now-empty structures."""
+    """Return (new_settings, removed_count). Removes only Aegis hooks of
+    ``kinds``; preserves every other hook and field; cleans up now-empty
+    structures."""
 
     new_data = deepcopy(data)
     hooks = new_data.get("hooks")
@@ -266,7 +287,7 @@ def build_uninstalled_settings(
         kept_hooks = [
             hook
             for hook in nested
-            if not is_aegis_hook(hook)
+            if not (isinstance(hook, dict) and _managed_hook_kind(hook) in kinds)
         ]
         removed += len(nested) - len(kept_hooks)
         if len(kept_hooks) == len(nested):
@@ -297,55 +318,86 @@ def build_installed_codex_config_text(
     command: str,
     *,
     command_windows: str | None = None,
+    mcp_command: str | None = None,
+    mcp_command_windows: str | None = None,
+    add_mcp: bool = False,
 ) -> tuple[str, bool]:
     """Return (new_config_text, already_installed) for project-local Codex TOML.
 
     Parse and preserve the syntax tree, including comments, inline arrays and
     quoted keys. Never append an array-of-tables onto a statically defined array.
+    An existing MCP entry is repaired when ``mcp_command`` is given; it is added
+    only with ``add_mcp``.
     """
 
     import tomlkit
     from tomlkit.items import AoT
 
+    if add_mcp and mcp_command is None:
+        raise ValueError("add_mcp requires mcp_command")
     data = _parse_codex_config(current_text)
     entries = _codex_entries(data)
-    installed = False
+    desired = {
+        HOOK_KIND_MAIN: (command, command_windows),
+        HOOK_KIND_MCP: (mcp_command, mcp_command_windows),
+    }
+    installed = {kind: False for kind in HOOK_KINDS}
     stale = False
     for entry in entries or []:
         for hook in entry["hooks"]:
             plain = hook.unwrap()
-            if not _is_managed_codex_hook(plain):
+            kind = _managed_hook_kind(plain, substrates=(None, TARGET_CODEX))
+            if kind is None:
                 continue
             if not _is_managed_hook(plain, substrates=(TARGET_CODEX,)):
                 raise InstallStructureError(
                     "existing Aegis hook command in .codex/config.toml does not include --substrate codex"
                 )
-            installed = True
+            installed[kind] = True
+            wanted, wanted_windows = desired[kind]
+            if wanted is None:
+                continue
             # Re-running install repairs a command an upgrade made stale.
-            if plain.get("command") != command:
-                hook["command"] = command
+            if plain.get("command") != wanted:
+                hook["command"] = wanted
                 stale = True
-            if command_windows is not None and plain.get("command_windows") != command_windows:
-                hook["command_windows"] = command_windows
+            if wanted_windows is not None and plain.get("command_windows") != wanted_windows:
+                hook["command_windows"] = wanted_windows
                 stale = True
-    if installed and not stale:
-        return current_text, True
-    if installed:
-        return tomlkit.dumps(data), False
+    comments = []
+    if not installed[HOOK_KIND_MAIN]:
+        comments.append(_CODEX_HOOK_COMMENT)
+    if add_mcp and not installed[HOOK_KIND_MCP]:
+        comments.append(_CODEX_MCP_HOOK_COMMENT)
+    if not comments:
+        return (tomlkit.dumps(data), False) if stale else (current_text, True)
+    blocks = [
+        _codex_hook_block(command, command_windows=command_windows)
+        if comment == _CODEX_HOOK_COMMENT else
+        _codex_hook_block(mcp_command, command_windows=mcp_command_windows,
+                          matcher=CODEX_MCP_HOOK_MATCHER, comment=comment)
+        for comment in comments
+    ]
 
-    new = tomlkit.parse(_codex_hook_block(command, command_windows=command_windows))
+    new = tomlkit.parse("\n".join(blocks))
     if "hooks" not in data:
         # Keep existing text byte-for-byte when a new root table can be appended.
         result = _ensure_trailing_newline(current_text)
         result += ("\n" if result else "") + tomlkit.dumps(new)
     else:
         hooks = data["hooks"]
+        new_entries = new["hooks"][HOOK_EVENT_NAME]
         if entries is None:
-            hooks[HOOK_EVENT_NAME] = new["hooks"][HOOK_EVENT_NAME].unwrap()
+            hooks[HOOK_EVENT_NAME] = new_entries.unwrap()
         elif isinstance(entries, AoT):
-            entries.append(new["hooks"][HOOK_EVENT_NAME][0])
+            for comment, new_entry in zip(comments, new_entries):
+                # An appended table drops the comment line above it; put it back
+                # after a blank line so the managed entries stay readable.
+                new_entry.trivia.indent = f"\n{comment}\n"
+                entries.append(new_entry)
         else:
-            entries.append(new["hooks"][HOOK_EVENT_NAME][0].unwrap())
+            for new_entry in new_entries:
+                entries.append(new_entry.unwrap())
         result = tomlkit.dumps(data)
     # Validate the serialized result too, before it is ever offered for writing.
     _codex_entries(_parse_codex_config(result))
@@ -358,6 +410,7 @@ def cmd_install(
     assume_yes: bool = False,
     global_requested: bool = False,
     target: str = TARGET_CLAUDE_CODE,
+    mcp: bool = False,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
@@ -381,6 +434,7 @@ def cmd_install(
         return _cmd_install_codex(
             base_dir,
             assume_yes=assume_yes,
+            mcp=mcp,
             input_stream=input_stream,
             output_stream=out,
         )
@@ -388,6 +442,7 @@ def cmd_install(
     return _cmd_install_claude_code(
         base_dir,
         assume_yes=assume_yes,
+        mcp=mcp,
         input_stream=input_stream,
         output_stream=out,
     )
@@ -397,6 +452,7 @@ def _cmd_install_claude_code(
     base_dir: str | Path,
     *,
     assume_yes: bool,
+    mcp: bool = False,
     input_stream: TextIO | None,
     output_stream: TextIO,
 ) -> int:
@@ -411,6 +467,7 @@ def _cmd_install_claude_code(
 
     command, args = resolve_claude_code_hook_command()
     matcher = claude_code_hook_matcher()
+    mcp_command, mcp_args = resolve_claude_code_hook_command(mcp=True)
     try:
         new_data, already = build_installed_settings(
             data or {},
@@ -418,6 +475,17 @@ def _cmd_install_claude_code(
             args=args,
             matcher=matcher,
         )
+        # Plain install keeps an MCP entry a person added earlier up to date.
+        mcp_entry = mcp or _find_aegis_hook(new_data["hooks"][HOOK_EVENT_NAME], kind=HOOK_KIND_MCP) is not None
+        if mcp_entry:
+            new_data, mcp_already = build_installed_settings(
+                new_data,
+                mcp_command,
+                args=mcp_args,
+                matcher=CLAUDE_CODE_MCP_HOOK_MATCHER,
+                kind=HOOK_KIND_MCP,
+            )
+            already = already and mcp_already
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected settings structure: {exc}")
         _write(out, "Please adjust .claude/settings.json manually, then retry.")
@@ -432,6 +500,9 @@ def _cmd_install_claude_code(
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
     _write(out, f"  hook command: {_format_hook_command(command, args=args)}")
     _write(out, f"  matcher:      {matcher}")
+    if mcp_entry:
+        _write(out, f"  MCP command:  {_format_hook_command(mcp_command, args=mcp_args)}")
+        _write(out, f"  MCP matcher:  {CLAUDE_CODE_MCP_HOOK_MATCHER}")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
     _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")
@@ -443,6 +514,8 @@ def _cmd_install_claude_code(
     if not _write_install(base_dir, path, after_text, existed, out):
         return 1
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
+    if mcp_entry:
+        _write(out, _MCP_INSTALLED_NOTE)
     return 0
 
 
@@ -450,6 +523,7 @@ def _cmd_install_codex(
     base_dir: str | Path,
     *,
     assume_yes: bool,
+    mcp: bool = False,
     input_stream: TextIO | None,
     output_stream: TextIO,
 ) -> int:
@@ -463,11 +537,16 @@ def _cmd_install_codex(
 
     command = resolve_hook_command(substrate=TARGET_CODEX)
     command_windows = resolve_codex_windows_hook_command()
+    mcp_command = resolve_hook_command(substrate=TARGET_CODEX, mcp=True)
+    mcp_command_windows = resolve_codex_windows_hook_command(mcp=True)
     try:
         after_text, already = build_installed_codex_config_text(
             before_text,
             command,
             command_windows=command_windows,
+            mcp_command=mcp_command,
+            mcp_command_windows=mcp_command_windows,
+            add_mcp=mcp,
         )
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected Codex config structure: {exc}")
@@ -484,6 +563,11 @@ def _cmd_install_codex(
     if command_windows is not None:
         _write(out, f"  windows cmd:  {command_windows}")
     _write(out, f"  matcher:      {CODEX_AEGIS_HOOK_MATCHER}")
+    if mcp:
+        _write(out, f"  MCP command:  {mcp_command}")
+        if mcp_command_windows is not None:
+            _write(out, f"  MCP windows:  {mcp_command_windows}")
+        _write(out, f"  MCP matcher:  {CODEX_MCP_HOOK_MATCHER}")
     _write(out, "")
     _write_diff(out, preview_before, after_text, path)
     _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")
@@ -497,6 +581,9 @@ def _cmd_install_codex(
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
     _write(out, "aeg install: IMPORTANT: Codex runs a project hook only after you trust it.")
     _write(out, "Until you review and approve this hook in Codex, the hook does not run and nothing is blocked.")
+    if mcp:
+        _write(out, "The MCP hook is a separate hook: approve it in Codex /hooks as well. Until then MCP calls are not checked.")
+        _write(out, _MCP_INSTALLED_NOTE)
     return 0
 
 
@@ -505,6 +592,7 @@ def cmd_uninstall(
     *,
     assume_yes: bool = False,
     target: str = TARGET_CLAUDE_CODE,
+    mcp_only: bool = False,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
@@ -514,9 +602,10 @@ def cmd_uninstall(
     except ValueError as exc:
         _write(out, f"aeg uninstall: aborted — {exc}")
         return 2
+    kinds = (HOOK_KIND_MCP,) if mcp_only else HOOK_KINDS
     if normalized_target == TARGET_CODEX:
         return _cmd_uninstall_codex(
-            base_dir, assume_yes=assume_yes,
+            base_dir, assume_yes=assume_yes, kinds=kinds,
             input_stream=input_stream, output_stream=out,
         )
     path = settings_path(base_dir)
@@ -529,14 +618,17 @@ def cmd_uninstall(
         _write(out, f"aeg uninstall: no {path}; nothing to uninstall.")
         return 0
 
-    new_data, removed = build_uninstalled_settings(data or {})
+    new_data, removed = build_uninstalled_settings(data or {}, kinds=kinds)
     if removed == 0:
-        _write(out, "aeg uninstall: no Aegis PreToolUse hook found; nothing to remove.")
+        if mcp_only:
+            _write(out, "aeg uninstall: no Aegis MCP hook found; nothing to remove.")
+        else:
+            _write(out, "aeg uninstall: no Aegis PreToolUse hook found; nothing to remove.")
         return 0
 
     before_text = _json_text(data)
     after_text = _json_text(new_data)
-    _write(out, f"aeg uninstall: will remove {removed} Aegis hook entry(ies) from {path}")
+    _write(out, f"aeg uninstall: will remove {removed} Aegis {'MCP ' if mcp_only else ''}hook entry(ies) from {path}")
     _write(out, "  (other hooks and settings are preserved)")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
@@ -552,7 +644,10 @@ def cmd_uninstall(
     except OSError as exc:
         _write(out, f"aeg uninstall: failed to back up or write settings: {exc}")
         return 1
-    _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
+    if mcp_only:
+        _write(out, f"aeg uninstall: done. Removed the Aegis MCP hook from {path}; the main hook is unchanged.")
+    else:
+        _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
     return 0
 
 
@@ -561,15 +656,16 @@ def _is_managed_codex_hook(hook: dict[str, Any]) -> bool:
     return _is_managed_hook(hook, substrates=(None, TARGET_CODEX))
 
 
-def _managed_argv(argv: Sequence[str], substrates: tuple[str | None, ...]) -> bool:
+def _managed_argv_kind(argv: Sequence[str], substrates: tuple[str | None, ...]) -> str | None:
+    """Return the hook kind of installer-generated argv, or None."""
     if not argv:
-        return False
+        return None
     executable = argv[0].replace("\\", "/")
     name = executable.rsplit("/", 1)[-1]
     if executable != name and not (
         executable.startswith("/") or re.match(r"^[A-Za-z]:/", executable)
     ):
-        return False
+        return None
     if name.lower().endswith(".exe"):
         name = name.lower()
     if name in {"aeg", "aeg.exe"}:
@@ -577,9 +673,20 @@ def _managed_argv(argv: Sequence[str], substrates: tuple[str | None, ...]) -> bo
     elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
         prefixes = MANAGED_MODULE_ARGS
     else:
-        return False
-    return any(tuple(argv[1:]) == (*prefix, "hook-run", *(() if substrate is None else ("--substrate", substrate)))
-               for prefix in prefixes for substrate in substrates)
+        return None
+    tail = tuple(argv[1:])
+    for prefix in prefixes:
+        for substrate in substrates:
+            expected = (*prefix, "hook-run", *(() if substrate is None else ("--substrate", substrate)))
+            if tail == expected:
+                return HOOK_KIND_MAIN
+            if tail == (*expected, MCP_HOOK_FLAG):
+                return HOOK_KIND_MCP
+    return None
+
+
+def _managed_argv(argv: Sequence[str], substrates: tuple[str | None, ...]) -> bool:
+    return _managed_argv_kind(argv, substrates) is not None
 
 
 def _managed_command(command: Any, substrates: tuple[str | None, ...]) -> bool:
@@ -610,19 +717,36 @@ def _parse_managed_command(command: Any, substrates: tuple[str | None, ...]) -> 
     return None
 
 
-def _is_managed_hook(
+def _managed_hook_kind(
     hook: dict[str, Any], *, substrates: tuple[str | None, ...] = (None, TARGET_CODEX, TARGET_CLAUDE_CODE),
-) -> bool:
+) -> str | None:
+    """Return ``main`` or ``mcp`` for an installer-generated hook, else None.
+
+    A hook whose POSIX and Windows commands disagree on the kind is not ours.
+    """
     if hook.get("type") != "command":
-        return False
+        return None
     command = hook.get("command")
     args = hook.get("args")
     if args is not None:
-        return (isinstance(command, str) and _is_string_sequence(args)
-                and hook.get("command_windows") is None
-                and _managed_argv((command, *args), substrates))
-    commands = [hook[field] for field in ("command", "command_windows") if field in hook]
-    return bool(commands) and all(_managed_command(value, substrates) for value in commands)
+        if isinstance(command, str) and _is_string_sequence(args) and hook.get("command_windows") is None:
+            return _managed_argv_kind((command, *args), substrates)
+        return None
+    kinds = set()
+    for field in ("command", "command_windows"):
+        if field not in hook:
+            continue
+        argv = _parse_managed_command(hook[field], substrates)
+        if argv is None:
+            return None
+        kinds.add(_managed_argv_kind(argv, substrates))
+    return kinds.pop() if len(kinds) == 1 else None
+
+
+def _is_managed_hook(
+    hook: dict[str, Any], *, substrates: tuple[str | None, ...] = (None, TARGET_CODEX, TARGET_CLAUDE_CODE),
+) -> bool:
+    return _managed_hook_kind(hook, substrates=substrates) is not None
 
 
 def _parse_codex_config(current_text: str) -> Any:
@@ -654,8 +778,10 @@ def _codex_entries(data: Any) -> Any:
     return entries
 
 
-def build_uninstalled_codex_config_text(current_text: str) -> tuple[str, int]:
-    """Remove only managed hooks using a comment-preserving TOML syntax tree."""
+def build_uninstalled_codex_config_text(
+    current_text: str, *, kinds: Sequence[str] = HOOK_KINDS,
+) -> tuple[str, int]:
+    """Remove only managed hooks of ``kinds`` using a comment-preserving TOML syntax tree."""
     import tomlkit
     data = _parse_codex_config(current_text)
     entries = _codex_entries(data)
@@ -673,7 +799,7 @@ def build_uninstalled_codex_config_text(current_text: str) -> tuple[str, int]:
             hook = nested[hook_index]
             if not isinstance(hook, dict):
                 raise InstallStructureError("unexpected Codex command hook structure")
-            if _is_managed_codex_hook(hook.unwrap()):
+            if _managed_hook_kind(hook.unwrap(), substrates=(None, TARGET_CODEX)) in kinds:
                 del nested[hook_index]
                 removed += 1
         if previous_count and not nested:
@@ -688,12 +814,13 @@ def build_uninstalled_codex_config_text(current_text: str) -> tuple[str, int]:
 
 
 def _cmd_uninstall_codex(
-    base_dir: str | Path, *, assume_yes: bool,
+    base_dir: str | Path, *, assume_yes: bool, kinds: Sequence[str] = HOOK_KINDS,
     input_stream: TextIO | None, output_stream: TextIO,
 ) -> int:
     path = codex_config_path(base_dir)
     before, existed, error = _load_text_file(path)
     out = output_stream
+    mcp_only = tuple(kinds) == (HOOK_KIND_MCP,)
     if error:
         _write(out, f"aeg uninstall: aborted — {error}")
         return 1
@@ -701,14 +828,17 @@ def _cmd_uninstall_codex(
         _write(out, f"aeg uninstall: no {path}; nothing to uninstall.")
         return 0
     try:
-        after, removed = build_uninstalled_codex_config_text(before)
+        after, removed = build_uninstalled_codex_config_text(before, kinds=kinds)
     except InstallStructureError as exc:
         _write(out, f"aeg uninstall: aborted — {exc}")
         return 1
     if not removed:
-        _write(out, "aeg uninstall: no Aegis Codex hook found; nothing to remove.")
+        if mcp_only:
+            _write(out, "aeg uninstall: no Aegis MCP hook found; nothing to remove.")
+        else:
+            _write(out, "aeg uninstall: no Aegis Codex hook found; nothing to remove.")
         return 0
-    _write(out, f"aeg uninstall: will remove {removed} Aegis hook entry(ies) from {path}")
+    _write(out, f"aeg uninstall: will remove {removed} Aegis {'MCP ' if mcp_only else ''}hook entry(ies) from {path}")
     _write_diff(out, before, after, path)
     if not assume_yes and not _confirm(input_stream, out):
         _write(out, "aeg uninstall: cancelled; no changes written.")
@@ -720,11 +850,16 @@ def _cmd_uninstall_codex(
     except OSError as exc:
         _write(out, f"aeg uninstall: failed to back up or write Codex config: {exc}")
         return 1
-    _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
+    if mcp_only:
+        _write(out, f"aeg uninstall: done. Removed the Aegis MCP hook from {path}; the main hook is unchanged.")
+    else:
+        _write(out, f"aeg uninstall: done. Removed the Aegis PreToolUse hook from {path}")
     return 0
 
 
-def _find_aegis_hook(pretooluse: list[Any]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _find_aegis_hook(
+    pretooluse: list[Any], *, kind: str = HOOK_KIND_MAIN,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     for entry in pretooluse:
         if not isinstance(entry, dict):
             continue
@@ -732,7 +867,7 @@ def _find_aegis_hook(pretooluse: list[Any]) -> tuple[dict[str, Any], dict[str, A
         if not isinstance(nested, list):
             continue
         for hook in nested:
-            if is_aegis_hook(hook):
+            if isinstance(hook, dict) and _managed_hook_kind(hook) == kind:
                 return (entry, hook)
     return None
 
@@ -848,16 +983,33 @@ def _atomic_write_text(path: Path, text: str) -> None:
                 temporary.unlink(missing_ok=True)
 
 
-def _codex_hook_block(command: str, *, command_windows: str | None = None) -> str:
+_CODEX_HOOK_COMMENT = "# Aegis PreToolUse hook for Codex. Managed by `aeg install --target codex`."
+_CODEX_MCP_HOOK_COMMENT = (
+    "# Aegis MCP PreToolUse hook for Codex. Managed by `aeg install --target codex --mcp`."
+)
+_MCP_INSTALLED_NOTE = (
+    "MCP tool calls and MCP resource reads now need approval (denied on Codex) unless "
+    ".aeg/policy.json lists the tool under allow_mcp_tools. Remove only this hook with "
+    "aeg uninstall --mcp."
+)
+
+
+def _codex_hook_block(
+    command: str,
+    *,
+    command_windows: str | None = None,
+    matcher: str = CODEX_AEGIS_HOOK_MATCHER,
+    comment: str = _CODEX_HOOK_COMMENT,
+) -> str:
     windows_line = (
         f"command_windows = {_toml_string(command_windows)}\n"
         if command_windows is not None
         else ""
     )
     return (
-        "# Aegis PreToolUse hook for Codex. Managed by `aeg install --target codex`.\n"
+        f"{comment}\n"
         "[[hooks.PreToolUse]]\n"
-        f"matcher = {_toml_string(CODEX_AEGIS_HOOK_MATCHER)}\n"
+        f"matcher = {_toml_string(matcher)}\n"
         "\n"
         "[[hooks.PreToolUse.hooks]]\n"
         "type = \"command\"\n"
@@ -924,8 +1076,14 @@ def _write(out: TextIO, line: str) -> None:
 
 __all__ = [
     "AEGIS_HOOK_MATCHER",
+    "CLAUDE_CODE_MCP_HOOK_MATCHER",
     "CLAUDE_HOOK_ON_FAILURE",
+    "CODEX_MCP_HOOK_MATCHER",
+    "HOOK_KIND_MAIN",
+    "HOOK_KIND_MCP",
+    "HOOK_KINDS",
     "LEGACY_MODULE_ARGS",
+    "MCP_HOOK_FLAG",
     "WINDOWS_AEGIS_HOOK_MATCHER",
     "CODEX_AEGIS_HOOK_MATCHER",
     "claude_code_hook_matcher",

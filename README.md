@@ -63,15 +63,22 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 
 또한 변수 치환이나 중첩 셸처럼 복잡하게 감춰진 명령은 대상을 정밀하게 판별하지 못해, 이 경우 자동 통과가 아니라 확인을 요청합니다.
 
-hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`, MCP 도구, MCP 리소스 읽기는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다. 코드를 실행하거나 파일을 읽는 MCP 도구, 파일을 리소스로 제공하는 MCP 서버는 장승의 판정을 거치지 않고 파일 내용을 에이전트에게 넘길 수 있습니다.
+hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`, `Bash`, Windows의 `PowerShell`, Codex의 `apply_patch`입니다. `WebFetch`, `WebSearch`는 검사 대상이 아니며, 이 도구들로 나가는 내용은 장승이 보지 못합니다. MCP 도구와 MCP 리소스 읽기는 [MCP 보호](#mcp-보호-019부터-선택)를 켠 프로젝트에서만 검사합니다. 켜지 않으면 코드를 실행하거나 파일을 읽는 MCP 도구, 파일을 리소스로 제공하는 MCP 서버는 장승의 판정을 거치지 않고 파일 내용을 에이전트에게 넘길 수 있습니다.
 
-실제 세션(Claude Code 2.1.316 `claude -p`, Codex CLI 0.166.0 `codex exec`, Windows)에서 더미 `.env`로 경우마다 한 번씩 확인했습니다. 값이 출력된 경우에는 모두 장승 기록이 남지 않았습니다.
+MCP 보호를 켜지 않은 설치로, 실제 세션(Claude Code 2.1.316 `claude -p`, Codex CLI 0.166.0 `codex exec`, Windows)에서 더미 `.env`로 경우마다 한 번씩 확인했습니다. 값이 출력된 경우에는 모두 장승 기록이 남지 않았습니다.
 
 - **Claude Code의 MCP 도구:** auto 모드와, Manual 모드(도구마다 승인을 묻는 모드)에서 미리 허용한 도구는 값이 출력되었습니다. Manual 모드에서 미리 허용하지 않은 도구는 승인을 요구해 실행되지 않았습니다.
 - **Claude Code의 MCP 리소스 읽기(`ReadMcpResourceTool`):** Manual 모드에서도 승인 요구 없이 값이 출력되었습니다. auto 모드도 같습니다.
 - **Codex의 MCP 도구와 `read_mcp_resource`:** `approval_policy=never` 설정에서 값이 출력되었습니다. `mcp__node_repl__js`도 포함됩니다.
 
-이런 MCP 서버가 등록되어 있으면 등록을 해제하거나 호스트의 승인 설정을 확인하세요.
+MCP 보호를 켠 0.1.9로는 Claude Code 2.1.316 `claude -p`(Windows)에서 같은 방법으로 확인했습니다.
+
+- **MCP 도구:** auto 모드와, Manual 모드에서 미리 허용한 도구 모두 승인을 요구해 실행되지 않았습니다. MCP 서버에 호출이 가지 않았고 장승 기록에 `ask`가 남았습니다.
+- **MCP 리소스 읽기:** Manual 모드와 auto 모드 모두 같은 결과였습니다.
+- **허용 목록:** `allow_mcp_tools`에 넣은 도구는 승인 없이 실행되었고, 넣지 않은 도구는 계속 멈췄습니다. `Read` 도구는 전과 같이 한 번만 판정했습니다.
+- **확인하지 못한 것:** `claude -p`에는 승인할 사람이 없어 `ask`가 실행 거부로 끝납니다. 대화형 세션에서 승인 창이 뜨는지는 확인하지 않았습니다. Codex에서 막히는지는 자동 테스트와 hook CLI로만 확인했습니다.
+
+이런 MCP 서버가 등록되어 있으면 MCP 보호를 켜거나, 등록을 해제하거나, 호스트의 승인 설정을 확인하세요.
 
 다음도 알아 두세요.
 
@@ -104,6 +111,7 @@ hook이 검사하는 도구는 `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Re
 | 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
 | 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow (Windows 네이티브 hook exit code 처리 포함 실측). 프로젝트 안 파일은 0.1.8부터 절대 경로로 적어도 같은 판정 (Codex CLI 0.166.0, Windows 실제 세션에서 확인) |
 | 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
+| 지원됨 (0.1.9부터, 선택) | MCP 보호: `aeg install --mcp`가 별도 hook 항목을 추가. MCP 도구 호출과 MCP 리소스 읽기를 Claude Code에서는 승인 요구, Codex에서는 deny. `.aeg/policy.json`의 `allow_mcp_tools`에 적은 도구만 통과. 인자는 검사하지 않음 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex는 자동 테스트와 hook CLI로만 확인) |
 | 지원됨 (0.1.2부터) | Codex 제거: `aeg uninstall --target codex`; 다른 hook과 TOML 설정/주석 보존, diff 확인과 백업 |
 | 지원됨 (0.1.2부터) | 프로젝트 내부 일반 파일의 제한된 셸 읽기: `cat`, `head`/`tail`, 출력 전용 `sed -n`, `rg --no-config`, `Get-Content` 및 단순 출력 pipeline |
 | 지원됨 (0.1.7부터) | `git diff`, `git show`, `git log -p`의 비밀 파일 제외: 추적 파일과 이력 모두. 객체 ID는 커밋으로만 해석 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex CLI 0.166.0은 `git diff`, `git log -p`를 Windows 실제 세션에서 확인) |
@@ -136,7 +144,7 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이 포함됩니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이, 0.1.9에는 선택해서 켜는 [MCP 보호](#mcp-보호-019부터-선택)가 포함됩니다.
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -178,7 +186,7 @@ Codex 대상 설치는 프로젝트 폴더의 `.codex/config.toml`에 `[[hooks.P
 
 주의: 이 변경은 Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 문제를 보완하기 위한 좁은 조치입니다. Codex hook trust/review 동작은 Codex가 처리하며, quoted path 우회 등 전체 Codex 지원은 아직 별도 실물 재검증이 필요합니다.
 
-Codex CLI 0.166.0(Windows) 실제 세션에서 `apply_patch` 판정, `git diff`와 `git log -p`의 `.env` 제외, 프로젝트 밖 `workdir` 차단을 확인했습니다. hook이 받는 `Bash` 입력은 명령과 작업 폴더입니다. `exec_command`의 `tty`, `shell` 옵션과 `write_stdin`은 보지 못합니다. Codex에 등록된 MCP 도구와 `read_mcp_resource`도 검사하지 않습니다.
+Codex CLI 0.166.0(Windows) 실제 세션에서 `apply_patch` 판정, `git diff`와 `git log -p`의 `.env` 제외, 프로젝트 밖 `workdir` 차단을 확인했습니다. hook이 받는 `Bash` 입력은 명령과 작업 폴더입니다. `exec_command`의 `tty`, `shell` 옵션과 `write_stdin`은 보지 못합니다. Codex에 등록된 MCP 도구와 `read_mcp_resource`는 [MCP 보호](#mcp-보호-019부터-선택)를 켠 프로젝트에서만 검사합니다.
 
 Claude Code 제거는 반대로:
 
@@ -199,6 +207,24 @@ aeg uninstall --target codex --path /path/to/your-project
 `.codex/config.toml`에서 장승 command hook만 제거하고 다른 hook, 설정과 주석은 보존합니다. 유효하지 않거나 예상 밖 구조의 TOML은 수정하지 않고 오류를 표시합니다. TOML 구조와 주석 보존을 위해 `tomlkit`을 런타임 의존성으로 사용합니다. 기본 `aeg uninstall`은 계속 Claude Code 대상입니다.
 
 제거 명령 자체가 AI의 tool call로 실행되면 장승에 의해 차단될 수 있으므로, 제거는 사용자가 일반 터미널에서 실행하세요. `aeg uninstall`은 hook 등록을 해제하는 명령이며 Python 패키지를 삭제하지 않습니다.
+
+### MCP 보호 (0.1.9부터, 선택)
+
+기본 설치는 MCP 도구와 MCP 리소스 읽기를 검사하지 않습니다. 필요한 프로젝트에서만 켭니다.
+
+```bash
+aeg install --mcp
+aeg install --target codex --mcp
+```
+
+- 기존 hook과 별도로 MCP용 hook 항목을 하나 더 등록합니다. 기존 항목은 바꾸지 않습니다.
+- 켜면 MCP 도구 호출과 MCP 리소스 읽기(Claude Code `ReadMcpResourceTool`, Codex `read_mcp_resource`)는 Claude Code에서 매번 승인을 묻고, Codex에서는 막힙니다. Codex는 `ask`를 강제하지 않기 때문입니다.
+- 믿는 도구는 `.aeg/policy.json`의 `allow_mcp_tools`에 정확한 이름(`mcp__서버__도구`)으로 적으면 승인 없이 통과합니다. `*` 같은 패턴은 쓸 수 없고, 리소스 읽기는 목록에 넣을 수 없습니다.
+- 장승은 MCP 도구에 넘기는 인자를 검사하지 않습니다. 목록에 넣은 도구가 파일을 읽거나 코드를 실행하면 `.env`도 읽을 수 있습니다. 이런 도구는 목록에 넣지 마세요.
+- **Codex는 MCP hook을 새 hook으로 봅니다. `/hooks`에서 따로 승인해야 하며, 승인 전에는 MCP 호출을 검사하지 않습니다.** 기존 장승 hook의 승인은 그대로 유지됩니다. 설치 미리보기에서 기존 항목도 바뀌면(예: 다른 가상환경에서 실행) 그 항목도 다시 승인해야 합니다. Codex CLI 0.166.0(Windows)에서 MCP 항목을 추가한 뒤에도 기존 항목이 계속 판정하고, 새 항목은 승인 전까지 실행되지 않는 것을 확인했습니다.
+- 끄려면 `aeg uninstall --mcp`(Codex는 `aeg uninstall --target codex --mcp`)를 실행합니다. 기존 hook은 남습니다. `aeg uninstall`은 두 항목을 모두 제거합니다.
+- 켠 뒤 `aeg install`을 다시 실행해도 MCP hook은 유지되고, 함께 최신 형태로 고쳐집니다.
+- MCP 리소스 목록 조회(Claude Code `ListMcpResourcesTool` 등)는 검사하지 않습니다. 파일 내용이 아니라 리소스 이름 목록을 돌려주는 도구입니다.
 
 ### 읽기 전용 명령 (0.1.2부터, 0.1.5에서 확장)
 
@@ -239,15 +265,17 @@ PowerShell에서는 `Get-Content`(`gc`, `cat`, `type`), `Get-ChildItem`(`gci`, `
 {
   "allow_paths": ["pyproject.toml", "requirements*.txt", "tests/fixtures/*.pem"],
   "protect_paths": ["infra/", "*.tfstate"],
-  "allow_commands": ["pytest", "python -m pytest", "npm test"]
+  "allow_commands": ["pytest", "python -m pytest", "npm test"],
+  "allow_mcp_tools": ["mcp__github__get_issue"]
 }
 ```
 
 - `allow_paths`: 보호 경로나 비밀 경로를 허용합니다. 단, `.aeg`, `.git`, `.claude/settings*.json`, `.codex`, `.mcp.json` 같은 장승 자체 설정은 풀리지 않습니다. 폴더 전체 `Grep`과 git 출력에는 파일 규칙 하나를 통째로 허용할 때만 반영됩니다. `.env`나 `*.pem`을 허용하면 포함됩니다. `.env.local`이나 `tests/fixtures/*.pem`처럼 일부만 허용하거나 `secrets` 같은 폴더를 허용하면 제외되며, 허용한 파일은 직접 지정하면 나옵니다.
 - `protect_paths`: 보호 경로를 추가합니다. `allow_paths`보다 우선합니다.
 - `allow_commands`: 앞부분이 일치하는 단일 명령을 허용합니다. `git push`처럼 내장 규칙이 막는 명령도 풀 수 있지만 `aeg uninstall` 같은 장승 해제 명령은 풀리지 않습니다. `;`, `&&`, `|`, `>`, `$()`가 들어간 명령에는 적용되지 않고, 비밀 파일이나 보호 경로를 대상으로 하면 그대로 deny합니다.
+- `allow_mcp_tools` (0.1.9부터): [MCP 보호](#mcp-보호-019부터-선택)를 켠 프로젝트에서 승인 없이 통과시킬 MCP 도구의 정확한 이름입니다. 형식이 맞지 않는 이름이 하나라도 있으면 파일 전체를 무시합니다.
 
-파일이 손상되었거나 모르는 항목이 있으면 전체를 무시하고 내장 규칙만 적용합니다. `aeg doctor --hooks`가 이 상태를 알려 줍니다.
+파일이 손상되었거나 모르는 항목이 있으면 전체를 무시하고 내장 규칙만 적용합니다. `aeg doctor --hooks`가 이 상태를 알려 줍니다. 0.1.8 이하는 `allow_mcp_tools`를 모르는 항목으로 보므로, 이 항목을 넣은 파일은 전체가 무시됩니다.
 
 ### 소스에서 설치 (개발/기여용)
 

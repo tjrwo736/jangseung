@@ -15,9 +15,12 @@ from jangseung.cli.hook_run import (
     HookRunResult, read_stdin_text, render_hook_response, resolve_hook_project_root,
 )
 from jangseung.evidence.claude_code_pretooluse_input_contract import (
-    OPTIONAL_HOOK_METADATA_FIELDS, REQUIRED_HOOK_INPUT_FIELDS, SUPPORTED_INITIAL_TARGET_TOOLS,
+    OPTIONAL_HOOK_METADATA_FIELDS, REQUIRED_HOOK_INPUT_FIELDS, SUPPORTED_INITIAL_TARGET_TOOLS, is_mcp_tool_name,
 )
 from jangseung.evidence.hook_judgment_engine_alignment import ENGINE_DENY_CAPABILITY_RESULTS
+from jangseung.evidence.mcp_tool_gate import (
+    MCP_GATE_REASON_CODES, MCP_RESOURCE_READ_REQUIRES_APPROVAL, MCP_TOOL_REQUIRES_APPROVAL,
+)
 
 MAX_INPUT_CHARACTERS = 1_048_576
 
@@ -55,6 +58,7 @@ _FIXED_CODES = frozenset({
     "invalid_or_unsupported_pretooluse_input_fail_closed_deny",
     "input_validation_error_fail_closed_deny",
     "internal_judgment_error_fail_closed_deny",
+    *MCP_GATE_REASON_CODES,
 })
 _DETAIL_CODES = frozenset({
     "missing_required_field", "invalid_required_field", "invalid_optional_metadata_field",
@@ -108,6 +112,11 @@ def _explanation(result: HookRunResult) -> tuple[str, str, str]:
     if any(code.startswith("capability_gate_denies:") for code in codes):
         return ("capability_denied", "The existing capability gate does not permit this request.",
                 "Review the requested action and scope; no additional authority is granted here.")
+    if codes & {MCP_TOOL_REQUIRES_APPROVAL, MCP_RESOURCE_READ_REQUIRES_APPROVAL}:
+        return ("mcp_approval_required",
+                "The opt-in MCP hook requires a person's approval for this MCP call; its arguments are not inspected.",
+                "Approve it in the host if you trust the tool, or list the tool under allow_mcp_tools in .aeg/policy.json. "
+                "Resource reads cannot be listed.")
     if result.hook_decision == "defer":
         return ("unclassified", "Safety was not established by the current rules; this is not a finding that the command is dangerous.",
                 "Check supported command syntax and whether file targets exist inside the repository. Unsupported flags, expansions or missing files can prevent classification.")
@@ -138,7 +147,11 @@ def build_explanation(
     return {
         "status": "FAIL_CLOSED" if result.fail_closed else "EXPLAINED",
         "mode": "dry-run", "substrate": result.substrate,
-        "tool_name": result.tool_name if result.tool_name in SUPPORTED_INITIAL_TARGET_TOOLS else "unknown",
+        "tool_name": (
+            result.tool_name
+            if result.tool_name in SUPPORTED_INITIAL_TARGET_TOOLS or is_mcp_tool_name(result.tool_name)
+            else "unknown"
+        ),
         "hook_decision": result.hook_decision, "permission_decision": result.permission_decision,
         "hook_exit_code": result.exit_code, "fail_closed": result.fail_closed,
         "category": category, "summary": summary, "substrate_mapping": mapping,

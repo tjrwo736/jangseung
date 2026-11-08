@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import re
 from types import MappingProxyType
 from typing import Any
 
@@ -43,6 +44,12 @@ SUPPORTED_INITIAL_TARGET_TOOLS = (
     "PowerShell",
     "apply_patch",
 )
+# MCP calls reach the hook only through the opt-in MCP hook entry. Hosts name a
+# server's tools ``mcp__<server>__<tool>``; resource reads use one fixed name.
+MCP_TOOL_NAME_PREFIX = "mcp__"
+MCP_RESOURCE_READ_TOOL_NAMES = ("ReadMcpResourceTool", "read_mcp_resource")
+# Hosts keep MCP tool names to API-safe characters. Anything else is unknown.
+_MCP_TOOL_NAME_PATTERN = re.compile(r"mcp__[A-Za-z0-9_-]{1,250}")
 
 VALID_PRETOOLUSE_INPUT_CONTRACT = "VALID_PRETOOLUSE_INPUT_CONTRACT"
 INVALID_PRETOOLUSE_INPUT_CONTRACT = "INVALID_PRETOOLUSE_INPUT_CONTRACT"
@@ -215,8 +222,16 @@ def _invalid_result(
     )
 
 
+def is_mcp_tool_name(tool_name: Any) -> bool:
+    """Whether a host tool name is an MCP tool call or an MCP resource read."""
+
+    if not isinstance(tool_name, str):
+        return False
+    return tool_name in MCP_RESOURCE_READ_TOOL_NAMES or _MCP_TOOL_NAME_PATTERN.fullmatch(tool_name) is not None
+
+
 def _tool_support_status(tool_name: Any) -> str:
-    if tool_name in SUPPORTED_INITIAL_TARGET_TOOLS:
+    if tool_name in SUPPORTED_INITIAL_TARGET_TOOLS or is_mcp_tool_name(tool_name):
         return SUPPORTED_INITIAL_TARGET
     return UNSUPPORTED_UNKNOWN_OR_NOT_CHECKED
 
