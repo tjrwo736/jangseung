@@ -703,11 +703,12 @@ def _parse_managed_command(command: Any, substrates: tuple[str | None, ...]) -> 
             return argv
     except ValueError:
         return None
-    # Compatibility with the unquoted native Windows paths emitted by 0.1.2.
+    # Unquoted native Windows paths, which shlex cannot split: 0.1.2 wrote them,
+    # and Codex's command_windows has them whenever the path has no spaces.
     # Restrict this fallback to a single drive-absolute executable, never a
     # shell wrapper or POSIX command prefix which only mentions aeg.
     match = re.fullmatch(
-        r"([A-Za-z]:[\\/][^:;&|<>`$\r\n\"']+?)\s+((?:(?:-I\s+)?-m\s+(?:jangseung|src)\.cli\s+)?hook-run(?:\s+--substrate\s+(?:codex|claude-code))?)\s*",
+        r"([A-Za-z]:[\\/][^:;&|<>`$\r\n\"']+?)\s+((?:(?:-I\s+)?-m\s+(?:jangseung|src)\.cli\s+)?hook-run(?:\s+--substrate\s+(?:codex|claude-code))?(?:\s+--mcp)?)\s*",
         command.strip(),
     )
     if match:

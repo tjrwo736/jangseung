@@ -67,16 +67,16 @@ def write_policy(repo, **lists):
     (repo / ".aeg" / "policy.json").write_text(json.dumps(lists), encoding="utf-8")
 
 
-def fake_aeg(repo):
-    executable = repo / "virtual env" / ("aeg.exe" if os.name == "nt" else "aeg")
+def fake_aeg(repo, folder="virtual env"):
+    executable = repo / folder / ("aeg.exe" if os.name == "nt" else "aeg")
     executable.parent.mkdir(exist_ok=True)
     executable.write_text("not an executable program; must never be invoked", encoding="utf-8")
     executable.chmod(0o755)
     return patch("jangseung.cli.install.shutil.which", return_value=str(executable))
 
 
-def install(repo, **kwargs):
-    with fake_aeg(repo):
+def install(repo, folder="virtual env", **kwargs):
+    with fake_aeg(repo, folder):
         output = io.StringIO()
         assert cmd_install(repo, assume_yes=True, output_stream=output, **kwargs) == 0
     return output.getvalue()
@@ -463,13 +463,52 @@ def test_codex_mcp_entry_without_substrate_is_refused():
                                           mcp_command="aeg hook-run --substrate codex --mcp")
 
 
-def test_codex_doctor_reports_the_separate_trust(repo):
-    with fake_aeg(repo):
+@pytest.mark.parametrize("folder", ["virtual env", "venv"])
+def test_codex_doctor_reports_the_separate_trust(repo, folder):
+    with fake_aeg(repo, folder):
         assert cmd_install(repo, target="codex", assume_yes=True, mcp=True, output_stream=io.StringIO()) == 0
         checks = {check.name: check for check in run_hook_doctor(repo, target="codex")}
     assert all(check.status == "PASS" for check in checks.values()), checks
     assert "approve it in /hooks" in checks["codex MCP hook registration"].next_step
     assert checks["codex MCP hook 1 matcher"].status == "PASS"
+
+
+@pytest.mark.parametrize("command,kind", [
+    (r"C:\venv\Scripts\aeg.EXE hook-run --substrate codex", HOOK_KIND_MAIN),
+    (r"C:\venv\Scripts\aeg.EXE hook-run --substrate codex --mcp", HOOK_KIND_MCP),
+    (r"C:\venv\Scripts\python.exe -I -m jangseung.cli hook-run --substrate codex --mcp", HOOK_KIND_MCP),
+    (r"C:\venv\Scripts\aeg.exe hook-run --mcp", HOOK_KIND_MCP),
+    (r"C:\venv\Scripts\aeg.EXE hook-run --mcp --substrate codex", None),
+    (r"C:\venv\Scripts\aeg.EXE hook-run --substrate codex --mcp --mcp", None),
+    (r"C:\venv\Scripts\aeg.EXE hook-run --substrate codex --mcp extra", None),
+    (r"cmd /c C:\venv\Scripts\aeg.EXE hook-run --substrate codex --mcp", None),
+])
+def test_unquoted_windows_commands(command, kind):
+    # Codex's command_windows holds the path unquoted when it has no spaces.
+    assert _managed_hook_kind({"type": "command", "command": command}) == kind
+
+
+def test_both_codex_command_fields_are_read_as_one_mcp_hook():
+    hook = {"type": "command",
+            "command": "'C:\\venv\\Scripts\\aeg.EXE' hook-run --substrate codex --mcp",
+            "command_windows": "C:\\venv\\Scripts\\aeg.EXE hook-run --substrate codex --mcp"}
+    assert _managed_hook_kind(hook) == HOOK_KIND_MCP
+
+
+def test_codex_mcp_round_trip_with_a_path_without_spaces(repo):
+    install(repo, "venv", target="codex", mcp=True)
+    first = codex_text(repo)
+    if os.name == "nt":
+        assert '"--mcp' not in first and "venv\\\\aeg.exe hook-run --substrate codex --mcp" in first
+    install(repo, "venv", target="codex", mcp=True)
+    install(repo, "venv", target="codex")
+    assert codex_text(repo) == first  # recognized, so never added twice
+    assert [kind for _, kind in kinds(codex_entries(repo))] == [HOOK_KIND_MAIN, HOOK_KIND_MCP]
+    uninstall(repo, target="codex", mcp_only=True)
+    assert [kind for _, kind in kinds(codex_entries(repo))] == [HOOK_KIND_MAIN]
+    install(repo, "venv", target="codex", mcp=True)
+    uninstall(repo, target="codex")
+    assert "aeg" not in json.dumps(tomlkit.parse(codex_text(repo)).unwrap().get("hooks", {}))
 
 
 def test_main_matchers_are_unchanged():
