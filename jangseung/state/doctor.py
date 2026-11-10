@@ -1,4 +1,4 @@
-"""Doctor checks for the local Aegis runtime."""
+"""Doctor checks for the local guard hook setup: Git, ``.aeg/`` and ignore rules."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jangseung.contracts import SAFE_DEFAULT, STATE_DIR
 from jangseung.state import git
-from jangseung.state.store import state_root
+from jangseung.state.hook_ledger import state_root
 
 
 PASS = "PASS"
@@ -264,7 +264,7 @@ def _state_checks(repo: Path) -> list[DoctorCheck]:
                 f"{STATE_DIR}/ exists",
                 FAIL,
                 f"{STATE_DIR} exists but is not a directory.",
-                fix_hint=f"Move or remove {STATE_DIR}, then run aeg init to create folder-local state.",
+                fix_hint=f"Move or remove {STATE_DIR}, then run aeg install to create folder-local state.",
                 details=(("state_path", state_path),),
             )
         )
@@ -274,7 +274,7 @@ def _state_checks(repo: Path) -> list[DoctorCheck]:
                 f"{STATE_DIR}/ exists",
                 WARN,
                 f"{STATE_DIR}/ does not exist yet.",
-                fix_hint="Run aeg init to create folder-local Aegis state.",
+                fix_hint="Run aeg install to create folder-local Aegis state.",
                 details=(("state_path", state_path),),
             )
         )
@@ -305,7 +305,7 @@ def _state_checks(repo: Path) -> list[DoctorCheck]:
                 f"{STATE_DIR}/ writable",
                 WARN,
                 f"{STATE_DIR}/ writability was not checked because the state directory is missing or invalid.",
-                fix_hint="Run aeg init, then rerun aeg doctor.",
+                fix_hint="Run aeg install, then rerun aeg doctor.",
                 details=(("state_path", state_path),),
             )
         )
@@ -375,8 +375,7 @@ def _state_dir_writable(path: Path) -> bool:
 
 def _state_contents_ignored(repo: Path) -> bool:
     """Accept install's internal .aeg/.gitignore as well as a root ignore rule."""
-    candidates = (".gitignore", "config.json", "ledger.jsonl", "hook_ledger.jsonl",
-                  "hook_ledger.guard", "hook_ledger.lock", "runs/__doctor_probe__/evidence.json")
+    candidates = (".gitignore", "hook_ledger.jsonl", "hook_ledger.guard", "hook_ledger.lock")
     paths = {f"{STATE_DIR}/{name}" for name in candidates}
     ignored = git.run_git(["check-ignore", "--", *sorted(paths)], repo, check=False)
     if ignored.returncode != 0 or set(ignored.stdout.splitlines()) != paths:
@@ -390,19 +389,7 @@ def _non_requirement_checks() -> list[DoctorCheck]:
         DoctorCheck(
             "network not required",
             PASS,
-            "Network access is not required for the core terminal + repo + folder-local state loop.",
-            next_step="No network setup is needed for aeg init, aeg doctor, aeg run, or aeg verify.",
-        ),
-        DoctorCheck(
-            "provider not required",
-            PASS,
-            "External provider credentials are not required for the core runtime.",
-            next_step="Provider configuration can remain absent for this no-op contract-first runtime.",
-        ),
-        DoctorCheck(
-            "OpenAI / Claude / Gemini not required",
-            PASS,
-            "OpenAI, Claude, and Gemini are optional future providers, not core dependencies.",
-            next_step="Do not add provider tokens for doctor; this command does not need them.",
+            "Network access is not required for the guard hook or its folder-local records.",
+            next_step="No network setup is needed for aeg install, aeg doctor, or aeg hook-run.",
         ),
     ]

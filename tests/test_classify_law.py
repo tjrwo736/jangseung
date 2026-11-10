@@ -95,7 +95,7 @@ class ClassifyLawTests(unittest.TestCase):
             ".github/workflows/ci.yml",
             ".env",
             "scripts/deploy_prod.sh",
-            "jangseung/classify/rules.py",
+            "packages/api/package.json",
         ]
         for path in protected_paths:
             with self.subTest(path=path):
@@ -122,11 +122,11 @@ class ClassifyLawTests(unittest.TestCase):
             "requirements-dev.txt",
             "setup.py",
             "setup.cfg",
-            "jangseung/cli/main.py",
-            "jangseung/classify/rules.py",
-            "jangseung/law/gates.py",
-            "jangseung/evidence/packet.py",
-            "jangseung/state/git.py",
+            "package.json",
+            "packages/api/pyproject.toml",
+            "Makefile",
+            "tests/conftest.py",
+            ".pre-commit-config.yaml",
             ".env",
             ".env.local",
             "secrets/prod.key",

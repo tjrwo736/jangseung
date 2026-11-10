@@ -112,7 +112,7 @@ class BuildMergeLogicTests(unittest.TestCase):
     def test_windows_hook_ignores_non_exe_aeg_shim(self):
         python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
         with mock.patch(
-            "jangseung.cli.install.shutil.which",
+            "jangseung.cli.install._installed_console_script",
             return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
         ), mock.patch("jangseung.cli.install.sys.executable", python_path):
             command, args = resolve_windows_hook_command_parts()
@@ -123,7 +123,7 @@ class BuildMergeLogicTests(unittest.TestCase):
     def test_codex_windows_command_uses_quoted_windows_command_string(self):
         python_path = r"C:\Users\Name With Space\venv\Scripts\python.exe"
         with mock.patch(
-            "jangseung.cli.install.shutil.which",
+            "jangseung.cli.install._installed_console_script",
             return_value=r"C:\Users\Name With Space\venv\Scripts\aeg.cmd",
         ), mock.patch("jangseung.cli.install.sys.executable", python_path):
             command = resolve_codex_windows_hook_command(platform="win32")

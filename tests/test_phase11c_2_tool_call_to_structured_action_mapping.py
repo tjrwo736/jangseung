@@ -36,9 +36,6 @@ from jangseung.evidence.claude_code_tool_call_mapping import (
 )
 
 
-DOC_PATH = Path("docs/phase11c_2_tool_call_to_structured_action_mapping_v0.md")
-
-
 class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
     def test_read_normal_repo_path_maps_to_read_repo_candidate_only(self):
         candidate = self._candidate(
@@ -105,7 +102,7 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
             (
                 "Edit",
                 {
-                    "file_path": "jangseung/law/policy.py",
+                    "file_path": "scripts/release_notes.sh",
                     "old_string": "old",
                     "new_string": "new",
                 },
@@ -439,88 +436,6 @@ class Phase11C2ToolCallToStructuredActionMappingTests(unittest.TestCase):
         for forbidden_fragment in forbidden_fragments:
             with self.subTest(forbidden_fragment=forbidden_fragment):
                 self.assertNotIn(forbidden_fragment, source)
-
-    def test_doc_records_required_mapping_and_boundaries(self):
-        doc = DOC_PATH.read_text(encoding="utf-8")
-
-        for marker in (
-            "Read(file_path)",
-            "-> READ_REPO candidate",
-            "Write(file_path, content)",
-            "-> WRITE_FILE candidate",
-            "Edit(file_path, old_string, new_string)",
-            "-> EDIT_FILE candidate",
-            "Bash(command)",
-            "-> RUN_COMMAND candidate",
-            "PowerShell(command)",
-            "mapping output is structured action candidate only",
-            "mapping output != execution",
-            "mapping output != permission decision",
-            "mapping output != hook response",
-            "mapping output != write authority",
-            "mapping output != patch application",
-            "mapping output preserves tool_use_id provenance",
-            "hook input remains untrusted raw executor output",
-            "jangseung.classify.is_protected_path",
-            "unsupported/unknown/NOT_CHECKED != PASS",
-            "safe default = hold_current_state",
-            "live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD",
-            "main merge = NOT_PERFORMED",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, doc)
-
-    def test_doc_records_policy_handling_and_non_goals(self):
-        doc = DOC_PATH.read_text(encoding="utf-8")
-
-        for marker in (
-            ".env target -> DENY_CANDIDATE",
-            ".env.* target -> DENY_CANDIDATE",
-            ".aeg state dir target -> DENY_CANDIDATE",
-            ".github/workflows/ci.yml -> DENY_CANDIDATE",
-            "Dockerfile -> DENY_CANDIDATE",
-            "pyproject.toml -> DENY_CANDIDATE",
-            "deploy/prod.yml -> DENY_CANDIDATE",
-            "jangseung/law/policy.py -> DENY_CANDIDATE",
-            "rm -rf",
-            "git reset --hard",
-            "git clean -fd",
-            "git push",
-            "deploy",
-            "curl",
-            "wget",
-            "env",
-            "printenv",
-            "chmod",
-            "chown",
-            "sudo",
-            "unknown Bash = hold_current_state",
-            "NOT_CHECKED Bash = hold_current_state",
-            "Unknown, unsupported, or NOT_CHECKED tool names",
-            "hook command implementation",
-            ".claude/settings.json mutation",
-            "actual hook installation",
-            "actual Claude Code execution",
-            "Codex implementation",
-            "provider/model/network implementation",
-            "OpenAI/Ollama/LLM call",
-            "API key/env/secret loading",
-            "network client",
-            "subprocess execution",
-            "shell execution",
-            "action execution engine",
-            "write authority",
-            "tool runtime",
-            "store.py change",
-            "filesystem mutation by hook runtime or action execution",
-            "patch application",
-            "public release",
-            "universal prompt-injection prevention claim",
-            "sandbox/process isolation claim",
-            "Bash-safe claim",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, doc)
 
     def _candidate(self, tool_name, tool_input, tool_use_id):
         result = validate_claude_code_pretooluse_input(

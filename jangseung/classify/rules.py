@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 import re
 
@@ -120,6 +120,10 @@ MEDIUM_RULES: tuple[Rule, ...] = (
 
 
 # Paths below are compared after _policy_parts(), so they are lower case here.
+#
+# Review tier: build, CI and dependency files. Changing one runs code on the next
+# install, build, test or commit, so a person looks at the change. The hook asks where
+# the host shows a person the question and denies everywhere else.
 PROTECTED_EXACT_PATHS = {
     ".env",
     ".gitlab-ci.yml",
@@ -127,18 +131,24 @@ PROTECTED_EXACT_PATHS = {
     "azure-pipelines.yml",
     "bitbucket-pipelines.yml",
     "jenkinsfile",
-    "pyproject.toml",
-    "setup.cfg",
-    "setup.py",
 }
 
-# Container builds run from any directory of a project, so depth does not matter.
+# These run from any directory of a project, so depth does not matter.
 PROTECTED_FILE_NAME_GLOBS = (
     "dockerfile",
     "dockerfile.*",
     "*.dockerfile",
     "docker-compose.yml",
     "docker-compose.*.yml",
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+    "requirements*.txt",
+    "conftest.py",
+    "package.json",
+    "makefile",
+    "gnumakefile",
+    ".pre-commit-config.yaml",
 )
 
 PROTECTED_PREFIXES = (
@@ -148,14 +158,10 @@ PROTECTED_PREFIXES = (
     "deploy/",
     "release/",
     "secrets/",
-    "jangseung/classify/",
-    "jangseung/cli/",
-    "jangseung/evidence/",
-    "jangseung/law/",
-    "jangseung/state/",
 )
 
 PROTECTED_GLOBS = (
+    # Also covers a folder of requirement files, such as requirements/dev.txt.
     "requirements*.txt",
     "scripts/deploy*",
     "scripts/release*",
@@ -411,6 +417,9 @@ class PathPolicy:
 
     allow_paths: tuple[str, ...] = ()
     protect_paths: tuple[str, ...] = ()
+    # Set by the hook for its second look at a denied call: with the review tier
+    # left out, whatever still denies is not something a person may wave through.
+    review_lifted: bool = False
 
     def allows(self, parts: tuple[str, ...]) -> bool:
         return _matches_any(parts, self.allow_paths)
@@ -537,6 +546,15 @@ def is_protected_path(path: str, policy: PathPolicy | None = None) -> bool:
     if _is_builtin_secret(parts):
         return True
 
+    item = "/".join(_without_claude_worktree(parts))
+    if item.startswith("config/") and any(part.startswith("secrets") for part in item.split("/")[1:]):
+        return True
+    if policy is not None and policy.review_lifted:
+        return False
+    return _is_review_tier(parts)
+
+
+def _is_review_tier(parts: tuple[str, ...]) -> bool:
     if any(fnmatchcase(parts[-1], pattern) for pattern in PROTECTED_FILE_NAME_GLOBS):
         return True
     item = "/".join(_without_claude_worktree(parts))
@@ -544,11 +562,43 @@ def is_protected_path(path: str, policy: PathPolicy | None = None) -> bool:
         return True
     if any(item.startswith(prefix) for prefix in PROTECTED_PREFIXES):
         return True
-    if any(fnmatchcase(item, pattern) for pattern in PROTECTED_GLOBS):
-        return True
-    if item.startswith("config/") and any(part.startswith("secrets") for part in item.split("/")[1:]):
-        return True
-    return False
+    return any(fnmatchcase(item, pattern) for pattern in PROTECTED_GLOBS)
+
+
+def is_review_path(path: str, policy: PathPolicy | None = None) -> bool:
+    """True for a build, CI or dependency file a person may approve changing.
+
+    Guard paths, secrets and a project's own ``protect_paths`` are never in this
+    tier: they stay denied whatever the host can ask.
+    """
+
+    strict = replace(policy, review_lifted=False) if policy is not None else PathPolicy()
+    return is_protected_path(path, strict) and not is_protected_path(path, replace(strict, review_lifted=True))
+
+
+# Names of secret files that are safe to look for inside written text. The name
+# globs are left out except where a match is rarely anything else: ``event.key``
+# is ordinary code, ``server.pem`` is not.
+_CONTENT_SECRET_GLOBS = ("*.pem", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.ppk", "*.tfvars")
+_CONTENT_SECRET_DIRECTORIES = frozenset({".ssh", ".gnupg", ".aws", ".azure", ".gcloud", ".kube"})
+_CONTENT_SECRET_NAMES = SECRET_FILE_NAMES - {"credentials"}
+
+
+def names_secret_file(token: str, policy: PathPolicy | None = None) -> bool:
+    """True when a word of written text names a secret file, such as ``.env``."""
+
+    parts = _policy_parts(token)
+    if not parts:
+        return False
+    name = parts[-1]
+    named = (
+        any(part in _CONTENT_SECRET_DIRECTORIES for part in parts[:-1])
+        or name in _CONTENT_SECRET_NAMES
+        or (name.startswith(".env.") and name.rsplit(".", 1)[-1] not in ENV_TEMPLATE_SUFFIXES)
+        or any(fnmatchcase(name, pattern) for pattern in _CONTENT_SECRET_GLOBS)
+    )
+    # The policy is consulted last: it is the slow part and rarely needed.
+    return named and not (policy is not None and policy.allows(parts))
 
 
 def contains_protected_path(path: str) -> bool:
@@ -626,6 +676,12 @@ def _is_docs_or_formatting_path(path: str) -> bool:
     if name in DOCS_OR_FORMATTING_NAMES:
         return True
     return any(name.endswith(extension) for extension in DOCS_OR_FORMATTING_EXTENSIONS)
+
+
+def is_documentation_path(path: str) -> bool:
+    """True for prose and listing files, which no tool runs."""
+
+    return bool(_normalize_changed_files([path])) and _is_docs_or_formatting_path(path)
 
 
 def _is_tests_path(path: str) -> bool:

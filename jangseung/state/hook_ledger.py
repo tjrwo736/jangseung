@@ -1,7 +1,9 @@
 """Append-only, tamper-evident records for live hook decisions.
 
-The hook ledger is intentionally separate from the run evidence ledger.  It
-stores decision metadata only and never accepts raw hook input.
+A record holds the decision and, so a person can later see what was touched, three
+redacted facts about the call: project-relative target paths, program names of a
+command (never its arguments) and a hash of the input. Raw hook input, file
+content and command text are never stored.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from jangseung.state.file_lock import exclusive_hook_lock as _exclusive_lock
 HOOK_LEDGER_FILE = "hook_ledger.jsonl"
 HOOK_LEDGER_LOCK_FILE = "hook_ledger.lock"
 HOOK_RECORD_VERSION = "hook_decision_record_v1"
+HOOK_HOST_RECORD_VERSION = "hook_decision_record_v2"
 HOOK_RECORD_HASH_GENESIS = "0" * 64
 HOOK_LEDGER_REPAIRED_REASON = "hook_ledger_repaired"
 HOOK_LEDGER_REPAIR_TOOL_NAME = "aeg-evidence-repair-hooks"
@@ -42,6 +45,9 @@ _REQUIRED_FIELDS = (
     "record_hash",
 )
 _FORBIDDEN_RAW_KEYS = {"tool_input", "raw_tool_input", "stdin", "raw_stdin_text"}
+_OPTIONAL_TEXT_LIST_FIELDS = ("targets", "commands")
+_MAX_AUDIT_ITEMS = 16
+_MAX_AUDIT_TEXT = 240
 
 
 @dataclass(frozen=True)
@@ -72,11 +78,25 @@ class HookLedgerItem:
             "risk_level": "",
             "hook_decision": str(record.get("hook_decision", "")),
             "tool_name": str(record.get("tool_name", "unknown")),
+            "what": _what(record),
+            "session_id": str(record.get("session_id", "")),
             "substrate": str(record.get("substrate", "")),
             "readability": "READABLE" if self.readable else "UNREADABLE",
             "artifacts": {"hook_record": True},
             "error": self.error,
         }
+
+
+def _what(record: Mapping[str, Any]) -> str:
+    """One short phrase for a listing: the programs or files a call named."""
+
+    names: list[str] = []
+    for field in ("commands", "targets"):
+        values = record.get(field, [])
+        if isinstance(values, list):
+            names.extend(str(item) for item in values)
+    shown = ", ".join(names[:3])
+    return f"{shown}, +{len(names) - 3} more" if len(names) > 3 else shown
 
 
 @dataclass(frozen=True)
@@ -109,6 +129,10 @@ def append_hook_decision_record(
     reason_codes: Sequence[str],
     exit_code: int,
     timestamp: str | None = None,
+    session_id: str = "",
+    targets: Sequence[str] = (),
+    commands: Sequence[str] = (),
+    input_hash: str = "",
 ) -> dict[str, Any]:
     """Append one hook record after verifying the record it chains onto.
 
@@ -139,6 +163,10 @@ def append_hook_decision_record(
             fail_closed=fail_closed,
             reason_codes=reason_codes,
             exit_code=exit_code,
+            session_id=session_id,
+            targets=targets,
+            commands=commands,
+            input_hash=input_hash,
         )
 
 
@@ -229,9 +257,13 @@ def _append_record(
     fail_closed: bool,
     reason_codes: Sequence[str],
     exit_code: int,
+    session_id: str = "",
+    targets: Sequence[str] = (),
+    commands: Sequence[str] = (),
+    input_hash: str = "",
 ) -> dict[str, Any]:
     record_without_hash: dict[str, Any] = {
-        "record_version": HOOK_RECORD_VERSION,
+        "record_version": HOOK_HOST_RECORD_VERSION if permission_decision == "host" else HOOK_RECORD_VERSION,
         "sequence_number": sequence_number,
         "timestamp": timestamp or _utc_timestamp(),
         "substrate": substrate,
@@ -242,6 +274,12 @@ def _append_record(
         "reason_codes": [str(code) for code in reason_codes],
         "exit_code": int(exit_code),
         "previous_record_hash": previous_hash,
+        # Optional since 0.2.0. Readers accept records without them. Host-delegated
+        # records use v2 because older readers must not mistake them for an allow.
+        "session_id": str(session_id)[:_MAX_AUDIT_TEXT],
+        "targets": [str(item)[:_MAX_AUDIT_TEXT] for item in targets][:_MAX_AUDIT_ITEMS],
+        "commands": [str(item)[:_MAX_AUDIT_TEXT] for item in commands][:_MAX_AUDIT_ITEMS],
+        "input_hash": input_hash if is_sha256_hex(input_hash) else "",
     }
     record = {
         **record_without_hash,
@@ -439,7 +477,7 @@ def _validate_record(
     missing = [field for field in _REQUIRED_FIELDS if field not in record]
     if missing:
         errors.append(f"missing required fields: {','.join(missing)}")
-    if record.get("record_version") != HOOK_RECORD_VERSION:
+    if record.get("record_version") not in {HOOK_RECORD_VERSION, HOOK_HOST_RECORD_VERSION}:
         errors.append("unsupported record_version")
     if record.get("sequence_number") != expected_sequence:
         errors.append(f"sequence_number mismatch: expected {expected_sequence}")
@@ -458,7 +496,19 @@ def _validate_record(
         errors.append("tool_name must be a string")
     if not isinstance(record.get("hook_decision"), str):
         errors.append("hook_decision must be a string")
-    if record.get("permission_decision") not in {"allow", "ask", "deny"}:
+    if record.get("record_version") == HOOK_HOST_RECORD_VERSION:
+        if not (
+            record.get("permission_decision") == "host"
+            and record.get("substrate") == "claude-code"
+            and record.get("tool_name") in {"Bash", "PowerShell"}
+            and record.get("hook_decision") == "defer"
+            and record.get("fail_closed") is False
+            and record.get("exit_code") == 0
+            and isinstance(record.get("reason_codes"), list)
+            and "claude_default_host_permission_flow" in record["reason_codes"]
+        ):
+            errors.append("invalid host permission delegation")
+    elif record.get("permission_decision") not in {"allow", "ask", "deny"}:
         errors.append("invalid permission_decision")
     if not isinstance(record.get("fail_closed"), bool):
         errors.append("fail_closed must be boolean")
@@ -467,6 +517,15 @@ def _validate_record(
         errors.append("reason_codes must be a string list")
     if not isinstance(record.get("exit_code"), int):
         errors.append("exit_code must be an integer")
+    if not isinstance(record.get("session_id", ""), str):
+        errors.append("session_id must be a string")
+    for field in _OPTIONAL_TEXT_LIST_FIELDS:
+        values = record.get(field, [])
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            errors.append(f"{field} must be a string list")
+    input_hash = record.get("input_hash", "")
+    if input_hash != "" and not (isinstance(input_hash, str) and is_sha256_hex(input_hash)):
+        errors.append("input_hash is not sha256 hex")
     if _contains_forbidden_key(record):
         errors.append("raw hook input key is forbidden")
     return errors

@@ -213,7 +213,7 @@ class WorkingDirectoryTests(_Fixture):
         workflows = self.root / ".github" / "workflows"
         self.assertEqual(self.judge("Write", file_path="ci.yml", content="x", working_dir=workflows).permission_decision, "deny")
         self.assertEqual(self.judge("Write", file_path="workflows/ci.yml", content="x", working_dir=self.root / ".github").permission_decision, "deny")
-        self.assertEqual(self.judge("Write", file_path="cli/y.py", content="x", working_dir=self.root / "jangseung").permission_decision, "deny")
+        self.assertEqual(self.judge("Write", file_path="package.json", content="x", working_dir=self.root / "api").permission_decision, "deny")
         self.assertEqual(self.judge("Bash", command="echo x > ci.yml", working_dir=workflows).permission_decision, "deny")
         self.assertEqual(self.judge("PowerShell", command="Set-Content ci.yml x", working_dir=workflows).permission_decision, "deny")
         self.assertEqual(self.judge("apply_patch", substrate="codex", working_dir=workflows, **self.patch("ci.yml")).permission_decision, "deny")
@@ -473,10 +473,12 @@ class FalseDenyTests(_Fixture):
         ))
         self.assertDecisions("ask", "Bash", (
             "python -m venv env",
-            "mkdir deploy",
             "git add deploy",
             "pip install curl",
         ))
+        # 0.2.0 positively classifies a literal directory creation; "deploy"
+        # remains a filename here, not a deployment command.
+        self.assertDecisions("allow", "Bash", ("mkdir deploy",))
 
 
 class NormalCommandTests(_Fixture):
@@ -838,7 +840,9 @@ class PolicyFileTests(_Fixture):
         self.assertEqual(self.judge("Read", file_path="real.pem").permission_decision, "deny")
         self.assertEqual(self.judge("Write", file_path="requirements-dev.txt", content="x").permission_decision, "allow")
         self.assertEqual(self.judge("Write", file_path="deploy/a.yml", content="x").permission_decision, "allow")
-        self.assertEqual(self.judge("Bash", command="echo x > deploy/a.yml").permission_decision, "ask")
+        # The person lifted this target's soft protection; a plain literal
+        # redirect now follows the same positive file gate as Write.
+        self.assertEqual(self.judge("Bash", command="echo x > deploy/a.yml").permission_decision, "allow")
         for path in (".env", ".claude/settings.json", ".aeg/policy.json", "Dockerfile"):
             self.assertEqual(self.judge("Write", file_path=path, content="x").permission_decision, "deny", path)
 

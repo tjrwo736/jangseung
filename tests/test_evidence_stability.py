@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from jangseung.cli.main import _cmd_evidence_list, _cmd_evidence_show, _cmd_evidence_verify_hooks
+from jangseung.cli.main import _cmd_evidence_list, _cmd_evidence_verify_hooks
 from jangseung.state.file_lock import exclusive_hook_lock
 from jangseung.state.hook_ledger import append_hook_decision_record, read_hook_ledger, verify_hook_ledger
 
@@ -30,29 +30,6 @@ def snapshot(repo):
             for p in (repo / ".aeg").rglob("*") if p.is_file()}
 
 
-def run_entry(repo, name):
-    directory = repo / ".aeg" / "runs" / name
-    directory.mkdir(parents=True)
-    for filename in ("run.json", "evidence.json", "manifest.json"):
-        (directory / filename).write_text("{}", encoding="utf-8")
-    return json.dumps({"run_id": name, "status": "CLEAN_CORE", "recorded_at": "2026-10-03T00:00:00Z"}).encode()
-
-
-def test_non_utf8_run_line_does_not_hide_good_entries(repo, capsys):
-    before = run_entry(repo, "before")
-    after = run_entry(repo, "after")
-    (repo / ".aeg" / "ledger.jsonl").write_bytes(before + b"\n\xff\n" + after + b"\n")
-    state = snapshot(repo)
-    assert _cmd_evidence_list(repo, as_json=True) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["status"] == "DEGRADED"
-    assert {item["id"] for item in data["items"]} == {"before", "after", "ledger-line-2"}
-    assert sum(item["readability"] == "UNREADABLE" for item in data["items"]) == 1
-    assert _cmd_evidence_show(repo, "after", as_json=True) == 0
-    assert json.loads(capsys.readouterr().out)["readability"] == "READABLE"
-    assert snapshot(repo) == state
-
-
 def test_non_utf8_hook_line_is_unreadable_and_chain_still_fails(repo, capsys):
     append(repo)
     append(repo)
@@ -71,20 +48,6 @@ def test_non_utf8_hook_line_is_unreadable_and_chain_still_fails(repo, capsys):
     # Recording stops only for a damaged tail, and new records do not hide the damage.
     append(repo)
     assert not verify_hook_ledger(repo).ok
-
-
-@pytest.mark.parametrize("missing", ["run.json", "evidence.json", "manifest.json"])
-def test_missing_artifact_is_unreadable_in_list(repo, capsys, missing):
-    entry = run_entry(repo, "missing")
-    (repo / ".aeg" / "ledger.jsonl").write_bytes(entry + b"\n")
-    (repo / ".aeg" / "runs" / "missing" / missing).unlink()
-    state = snapshot(repo)
-    assert _cmd_evidence_list(repo, as_json=True) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["status"] == "DEGRADED"
-    assert data["items"][0]["readability"] == "UNREADABLE"
-    assert data["items"][0]["decision"] == "UNREADABLE"
-    assert snapshot(repo) == state
 
 
 @pytest.mark.parametrize("value", ["null", "[]", "true", '"text"', "42"])

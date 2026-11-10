@@ -34,7 +34,7 @@ def install(repo, target):
     executable.parent.mkdir(exist_ok=True)
     executable.write_text("not an executable program; must never be invoked", encoding="utf-8")
     executable.chmod(0o755)
-    with patch("jangseung.cli.install.shutil.which", return_value=str(executable)):
+    with patch("jangseung.cli.install._installed_console_script", return_value=str(executable)):
         assert cmd_install(repo, target=target, assume_yes=True, output_stream=io.StringIO()) == 0
     return executable
 

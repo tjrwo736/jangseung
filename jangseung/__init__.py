@@ -1,1 +1,1 @@
-"""Aegis contract-first runtime package."""
+"""Jangseung PreToolUse guard hook package."""

@@ -72,7 +72,7 @@ def fake_aeg(repo, folder="virtual env"):
     executable.parent.mkdir(exist_ok=True)
     executable.write_text("not an executable program; must never be invoked", encoding="utf-8")
     executable.chmod(0o755)
-    return patch("jangseung.cli.install.shutil.which", return_value=str(executable))
+    return patch("jangseung.cli.install._installed_console_script", return_value=str(executable))
 
 
 def install(repo, folder="virtual env", **kwargs):

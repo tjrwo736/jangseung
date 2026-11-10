@@ -26,7 +26,6 @@ from jangseung.evidence.structured_action_capabilities import (
 )
 
 
-DOC_PATH = Path("docs/phase11c_8_hook_judgment_engine_alignment_v0.md")
 REPO_ROOT = Path.cwd()
 
 
@@ -71,11 +70,11 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
             (
                 "Edit",
                 {
-                    "file_path": "jangseung/law/policy.py",
+                    "file_path": "scripts/release_notes.sh",
                     "old_string": "old",
                     "new_string": "new",
                 },
-                "jangseung/law/policy.py",
+                "scripts/release_notes.sh",
             ),
         )
 
@@ -332,31 +331,6 @@ class Phase11C8HookJudgmentEngineAlignmentTests(unittest.TestCase):
         for forbidden_fragment in forbidden_fragments:
             with self.subTest(forbidden_fragment=forbidden_fragment):
                 self.assertNotIn(forbidden_fragment, source)
-
-    def test_doc_records_required_boundaries(self):
-        doc = DOC_PATH.read_text(encoding="utf-8")
-
-        for marker in (
-            "hook policy divergence was unsafe",
-            "existing engine reuse rule",
-            "jangseung.classify",
-            "jangseung.law",
-            "structured_action_capabilities",
-            "is_protected_path",
-            "dangerous Bash safety net",
-            "unclassified Bash = deny/defer, never allow",
-            "@ file references may not trigger Read tool calls",
-            "Aegis PreToolUse governance is a tool-call boundary",
-            "does not claim universal prompt-injection prevention",
-            "evidence store binding is future gate",
-            "no direct .aeg write",
-            "actual hook install = NOT_PERFORMED",
-            "stdout/stderr live hook emission = NOT_PERFORMED",
-            "safe default = hold_current_state",
-            "live_executor_authority = LIVE_EXECUTOR_AUTHORITY_ON_HOLD",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, doc)
 
     def _judge(self, tool_name, tool_input):
         return judge_pretooluse_with_aeg_engine(
@@ -835,12 +809,14 @@ class Phase11C8BashTargetPathGateTests(unittest.TestCase):
                 self.assertEqual(self._judge_bash(command).hook_decision, DENY)
 
     def test_unclassified_bash_stays_ask_no_false_positive(self):
-        # Known file reads now have a separate positive classification.
-        for command in ("python script.py", "npm install", "make build", "echo x > src/app.py"):
+        # Project execution remains uncertain in the brain, even when the
+        # default-mode host wiring can pass it to the person's permission rules.
+        for command in ("python script.py", "npm install", "make build"):
             with self.subTest(command=command):
                 decision = self._judge_bash(command)
                 self.assertEqual(decision.hook_decision, DEFER)
                 self.assertNotEqual(decision.hook_decision, ALLOW)
+        self.assertEqual(self._judge_bash("echo x > src/app.py").hook_decision, ALLOW)
 
     def test_read_only_commands_are_allowed_by_the_positive_grammar(self):
         (self.repo_root / ".git").mkdir()

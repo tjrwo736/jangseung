@@ -15,6 +15,7 @@ lock recovery is performed by either diagnostic command.
 ```text
 aeg explain (--command TEXT | --file PATH | --stdin)
             [--tool Bash|PowerShell] [--substrate claude-code|codex] [--json]
+            [--permission-mode default|acceptEdits|auto|dontAsk|bypassPermissions|plan]
 ```
 
 `--tool` applies only to `--command` (default Bash). `--file` constructs a Read
@@ -24,6 +25,18 @@ substrate is claude-code, matching hook-run. Cwd is passed to the same pure
 `render_hook_response` used by hook-run; it is not silently replaced by a Git
 root. Filesystem metadata can influence the decision, so an earlier explanation
 is not authorization for a later request in a changed context.
+
+Since 0.2.0, `--permission-mode` applies only to `--command`. Omission preserves
+a mode-less payload; `--stdin` takes the mode from its JSON instead. The explicit
+`default` mode can return `permission_decision: host`, category
+`host_permission_flow`, for a limited execution command. This means the hook
+omits its permission decision and leaves normal host rules in control, not that
+the command is safe or has executed. Other modes and Codex keep their prior
+ask/defer mapping. Example:
+
+```text
+aeg explain --command "pytest" --permission-mode default --json
+```
 
 The output separates `hook_decision`, `permission_decision`, `hook_exit_code`
 and `fail_closed`. Human-readable categories are derived from existing reason
@@ -53,7 +66,7 @@ execution is `NOT_CHECKED` even for an allow result.
 ## Doctor
 
 `aeg doctor --hooks [--target claude-code|codex|all] [--json]` adds hook checks
-to the existing runtime checks. Default target is all. `--json` also works
+to the base checks (Git, `.aeg/` directory, ignore rules). Default target is all. `--json` also works
 without `--hooks`; legacy human output remains the default. A FAIL returns 1;
 warnings alone return 0 with PASS_WITH_WARNINGS, as in the existing doctor.
 

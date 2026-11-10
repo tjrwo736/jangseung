@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then exec python3 -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; else exec python -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; fi",
+            "onFailure": "block",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

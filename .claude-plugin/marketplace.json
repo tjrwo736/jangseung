@@ -1,0 +1,16 @@
+{
+  "name": "jangseung",
+  "owner": {
+    "name": "Seokjae Lee"
+  },
+  "metadata": {
+    "description": "Jangseung: a guard hook for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "jangseung",
+      "source": "./",
+      "description": "Guard hook for coding agents: stops secret reads, destructive commands and changes to the guard itself before a tool call runs."
+    }
+  ]
+}
