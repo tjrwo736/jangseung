@@ -416,3 +416,125 @@ def test_allowed_file_grammar_matches_real_shell_effects(project, real_shell, co
     if command.startswith("mv "):
         assert not (project / "notes.txt").exists()
     assert {path: (project / path).read_bytes() for path in protected} == protected
+
+
+# 0.2.1: Claude Code runs read-only git forms on its own, so leaving them to the
+# host printed a stashed .env without approval (measured with 2.1.316).
+@pytest.mark.parametrize("command", [
+    "git stash show", "git stash show -p", "git stash show --patch", "git stash show stash@{0}",
+    "git stash list -p", "git stash list --patch", "git stash -p", "git stash -q show", "git stash show -u -p",
+    "git commit -v", "git commit --verbose", "git commit --dry-run", "git add -p", "git add --patch",
+    "git checkout -p", "git rebase --show-current-patch", "git stash drop", "git stash clear",
+])
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+def test_git_forms_that_print_content_are_not_left_to_the_host(project, command, tool):
+    assert result(project, command, tool=tool).permission_decision in {"ask", "deny"}
+
+
+@pytest.mark.parametrize("command", [
+    "git stash", "git stash push -m wip", "git stash pop", "git stash apply", "git add -A", "git commit -m wip",
+])
+def test_git_forms_that_change_state_are_still_left_to_the_host(project, command):
+    assert result(project, command).permission_decision == "host"
+
+
+def run_and_mark(root, command, session):
+    run_aeg_hook_run(stdin=io.StringIO(payload(root, command, session=session)), stdout=io.StringIO(),
+                     stderr=io.StringIO(), repo_root=root, working_dir=root)
+    from jangseung.state.session_marks import secret_naming_writes
+
+    return secret_naming_writes(root, session)
+
+
+@pytest.mark.parametrize("operation", ["mv", "cp"])
+def test_renaming_a_document_into_code_leaves_the_session_mark(project, operation):
+    (project / "plan.md").write_text("print(open('.env').read())\n", encoding="utf-8")
+    assert result(project, f"{operation} plan.md run.py").permission_decision == "allow"
+    assert "run.py" in run_and_mark(project, f"{operation} plan.md run.py", f"rename-{operation}")
+    held = render_hook_response(payload(project, "python run.py", session=f"rename-{operation}"), repo_root=project)
+    assert held.permission_decision == "ask"
+
+
+def test_copies_to_documents_and_plain_text_leave_no_mark(project):
+    (project / "plan.md").write_text("print(open('.env').read())\n", encoding="utf-8")
+    assert run_and_mark(project, "cp plan.md copy.md", "doc-copy") == ()
+    assert run_and_mark(project, "cp notes.txt notes2.py", "plain-copy") == ()
+    assert run_and_mark(project, "echo hello > out.py", "plain-echo") == ()
+
+
+def test_stash_list_without_patches_stays_an_allowed_read(project):
+    # Names and messages only; the read grammar has always allowed this exact form.
+    assert result(project, "git stash list").permission_decision == "allow"
+
+
+def test_an_echo_naming_a_secret_is_denied_before_any_mark(project):
+    assert result(project, "echo cat .env > run.sh").permission_decision == "deny"
+
+
+def test_a_large_copied_file_is_marked_without_being_read(project):
+    (project / "big.md").write_bytes(b"a " * (600 * 1024))
+    assert "big.py" in run_and_mark(project, "cp big.md big.py", "big-copy")
+
+
+
+# 0.2.1 review: git accepts bundled short flags and unique long-option prefixes.
+@pytest.mark.parametrize("command", [
+    "git add -pu", "git add -up", "git add -pv", "git add -vp", "git add -Ap", "git add --patc", "git add --pa",
+    "git stash -qp", "git stash -pq", "git stash --patc", "git stash push -pq", "git stash push -qp",
+    "git stash push --patc", "git checkout -pq", "git checkout -qp", "git checkout --patc",
+    "git commit -qp", "git commit --patc", "git commit --long -vv", "git commit --verbo --long",
+    "git commit -qv --dry", "git commit -vv --status --dry", "git commit --long --verb", "git commit --short",
+    "git commit --porcelain", "git rebase --show-cur", "git rebase -i", "git add -i", "git add --inter",
+    "git commit --verbose=1", "git add --patch=x",
+])
+def test_bundled_and_abbreviated_git_options_are_not_left_to_the_host(project, command):
+    assert result(project, command).permission_decision in {"ask", "deny"}
+
+
+@pytest.mark.parametrize("command", ["git add -A", "git add -u", "git commit -m wip", "git commit -am wip",
+                                     "git stash push -m wip", "git pull --rebase", "git fetch --all"])
+def test_ordinary_git_options_are_still_left_to_the_host(project, command):
+    assert result(project, command).permission_decision == "host"
+
+
+def test_a_text_file_pytest_collects_is_marked(project):
+    (project / "x.md").write_text("open('.env').read()\n", encoding="utf-8")
+    assert "test_leak.txt" in run_and_mark(project, "cp x.md test_leak.txt", "txt-copy")
+    assert "CMakeLists.txt" in run_and_mark(project, "cp x.md CMakeLists.txt", "cmake-copy")
+
+
+def test_text_past_the_scan_limit_marks(project):
+    (project / "pad.md").write_text("a" * 450_000 + "\nprint(open('.env').read())\n", encoding="utf-8")
+    assert "run.py" in run_and_mark(project, "cp pad.md run.py", "pad-copy")
+    out = io.StringIO()
+    data = json.dumps({"tool_name": "Write", "tool_input": {"file_path": "big.py", "content": "a" * 450_000},
+                       "tool_use_id": "t", "cwd": str(project), "session_id": "pad-write"})
+    run_aeg_hook_run(stdin=io.StringIO(data), stdout=out, stderr=io.StringIO(), repo_root=project, working_dir=project)
+    from jangseung.state.session_marks import secret_naming_writes
+
+    assert secret_naming_writes(project, "pad-write")
+
+
+def test_utf16_source_is_read_as_text(project):
+    (project / "x.md").write_bytes("Get-Content .env".encode("utf-16"))
+    assert "run.ps1" in run_and_mark(project, "cp x.md run.ps1", "utf16-copy")
+
+
+@pytest.mark.parametrize("command,tool", [
+    ("cp -f x.md conftest.py", "Bash"), ("cat x.md > conftest.py", "Bash"),
+    ("Copy-Item x.md conftest.py", "PowerShell"),
+])
+def test_an_asked_copy_of_named_content_marks_the_session(project, command, tool):
+    (project / "x.md").write_text("open('.env').read()\n", encoding="utf-8")
+    session = f"asked-{tool}-{len(command)}"
+    run_aeg_hook_run(stdin=io.StringIO(payload(project, command, tool=tool, session=session)), stdout=io.StringIO(),
+                     stderr=io.StringIO(), repo_root=project, working_dir=project)
+    from jangseung.state.session_marks import secret_naming_writes
+
+    assert secret_naming_writes(project, session)
+
+
+def test_an_asked_copy_of_ordinary_content_or_into_prose_leaves_no_mark(project):
+    (project / "x.md").write_text("open('.env').read()\n", encoding="utf-8")
+    assert run_and_mark(project, "cp -f notes.txt conftest.py", "asked-plain") == ()
+    assert run_and_mark(project, "cp -f x.md other.md", "asked-prose") == ()
