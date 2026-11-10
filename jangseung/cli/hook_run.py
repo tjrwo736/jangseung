@@ -3,9 +3,11 @@
 This is the real I/O boundary that lets the existing in-memory Aegis hook
 judgment brain (Phase 11-C-8 ``judge_pretooluse_with_aeg_engine``) act as a
 PreToolUse hook command: it reads untrusted PreToolUse JSON from stdin, routes
-it through the unchanged judgment brain, and writes a
+it through the shared judgment brain, and writes a
 ``hookSpecificOutput.permissionDecision`` response to stdout with a
-substrate-specific exit code.
+substrate-specific exit code. Selected execution requests in Claude Code's
+``default`` mode return an empty JSON object: the host's permission rules decide,
+not an automatic hook allow and not Claude Code's unrelated wire-level ``defer``.
 
 Safety properties enforced here (not in the judgment brain, which is not
 modified by this module):
@@ -16,16 +18,19 @@ modified by this module):
   internal exception resolves to a ``deny`` JSON response. There is no code
   path where a failure resolves to ``allow``. ``jangseung.cli.entry`` extends
   this to failures that happen before this module can run.
-* the reason string and the dedicated hook ledger carry only decision codes
-  and the tool name, never raw ``tool_input`` content. Only ``updatedInput``,
-  read by the host alone, returns the tool's own input with secrets left out.
+* the reason string carries only fixed sentences, decision codes and the tool
+  name. The hook ledger adds redacted names: project-relative target paths, the
+  program names of a command and a hash of the input. Neither holds file content,
+  command text or arguments. Only ``updatedInput``, read by the host alone,
+  returns the tool's own input with secrets left out.
 * recording is append-only and tamper-evident.  A recording failure never
   changes the permission decision or process exit code; it adds a safe reason
   code to the response instead.
 
 This module does not install a hook, modify ``.claude/settings.json``, execute
 Claude Code itself, execute any tool, or call a provider/model/network.  Its
-only Aegis state write is a decision-only record in ``.aeg/hook_ledger.jsonl``.
+state writes are the record in ``.aeg/hook_ledger.jsonl`` and, when a write
+names a secret file, a mark in ``.aeg/session_marks.json``.
 """
 
 from __future__ import annotations
@@ -36,10 +41,11 @@ import os
 import sys
 from collections.abc import Sequence
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TextIO
 
+from jangseung.cli.reason_text import hook_reason_sentence
 from jangseung.contracts import SAFE_DEFAULT, STATE_DIR
 from jangseung.evidence.claude_code_pretooluse_input_contract import (
     validate_claude_code_pretooluse_input,
@@ -49,17 +55,22 @@ from jangseung.evidence.hook_judgment_engine_alignment import (
     judge_pretooluse_with_aeg_engine,
 )
 from jangseung.state.hook_ledger import append_hook_decision_record
+from jangseung.state.session_marks import mark_secret_naming_write, session_key
 
 
 CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE = "PreToolUse"
 
 # PreToolUse permissionDecision values used by the supported hook substrates.
-# There is no native "defer" value. The default Claude Code path maps the
-# judgment brain's ``defer`` to ``ask``; the explicit Codex substrate path
+# The brain's "defer" is not the host's wire-level "defer" protocol. Claude
+# normally maps it to ask; eligible default-mode execution omits the decision.
+# The explicit Codex substrate path
 # upgrades ``ask``/``defer`` to ``deny`` because Codex does not enforce ask.
 PERMISSION_ALLOW = "allow"
 PERMISSION_DENY = "deny"
 PERMISSION_ASK = "ask"
+# Internal diagnostic/ledger value only; NEVER sent as permissionDecision.
+PERMISSION_HOST = "host"
+HOST_PERMISSION_FLOW_REASON = "claude_default_host_permission_flow"
 
 SUBSTRATE_CLAUDE_CODE = "claude-code"
 SUBSTRATE_CODEX = "codex"
@@ -67,6 +78,7 @@ CODEX_ASK_DEFER_UPGRADED_TO_DENY_REASON = (
     "codex_substrate_ask_not_enforced_upgraded_to_deny"
 )
 HOOK_DECISION_RECORDING_FAILED_REASON = "hook_decision_recording_failed"
+SESSION_MARK_RECORDING_FAILED_REASON = "session_mark_recording_failed"
 OUTPUT_EXCLUDES_READ_PROTECTED_FILES_REASON = "output_excludes_read_protected_files"
 MAX_STDIN_BYTES = 16 * 1024 * 1024
 
@@ -76,7 +88,8 @@ MAX_STDIN_BYTES = 16 * 1024 * 1024
 EXIT_ALLOW_OR_ASK = 0
 EXIT_BLOCK = 2
 
-# hook_decision (from the unchanged 11-C-8 brain) -> (permissionDecision, exit).
+# Default hook_decision -> (permissionDecision, exit) mapping. The narrowly
+# eligible Claude default-mode host delegation is applied after this table.
 # The brain returns DEFER for VALID input whose risk is merely uncertain /
 # not-checked (e.g. a medium-risk read, an unclassified but non-dangerous
 # command). That is a considered "hold, let the user decide", so it maps to
@@ -105,6 +118,12 @@ class HookRunResult:
     tool_name: str
     substrate: str
     updated_input: Mapping[str, Any] | None = None
+    # Redacted facts for the hook record; see ``jangseung.state.hook_ledger``.
+    session_id: str = ""
+    audit_targets: tuple[str, ...] = ()
+    audit_commands: tuple[str, ...] = ()
+    input_hash: str = ""
+    written_text_names_secret_file: bool = False
 
 
 def render_hook_response(
@@ -175,6 +194,7 @@ def render_hook_response(
         decision_reasons = tuple(decision.decision_reasons)
         tool_name = decision.request.tool_name
         updated_input = decision.updated_tool_input
+        session_id = session_key(payload.get("session_id"))
     except Exception:  # noqa: BLE001 - any brain/wiring failure must fail closed.
         return _deny_result(
             "internal_judgment_error_fail_closed_deny",
@@ -194,6 +214,15 @@ def render_hook_response(
 
     permission_decision, mapped_exit_code, substrate_reason_codes = mapping
     reason_codes = (*decision_reasons, *substrate_reason_codes)
+    if (
+        effective_substrate == SUBSTRATE_CLAUDE_CODE
+        and payload.get("permission_mode") == "default"
+        and hook_decision == DEFER
+        and decision.host_delegation_eligible
+        and updated_input is None
+    ):
+        permission_decision = PERMISSION_HOST
+        reason_codes = (*reason_codes, HOST_PERMISSION_FLOW_REASON)
     if updated_input is not None:
         reason_codes = (*reason_codes, OUTPUT_EXCLUDES_READ_PROTECTED_FILES_REASON)
     reason = _reason_string(
@@ -202,6 +231,7 @@ def render_hook_response(
         tool_name=tool_name,
         decision_reasons=reason_codes,
         substrate=effective_substrate,
+        fail_closed=False,
     )
     stdout_json = _permission_decision_json(permission_decision, reason, updated_input)
     stderr_text = reason if mapped_exit_code == EXIT_BLOCK else ""
@@ -221,6 +251,13 @@ def render_hook_response(
         tool_name=tool_name,
         substrate=effective_substrate,
         updated_input=updated_input,
+        session_id=session_id,
+        audit_targets=tuple(decision.audit_targets),
+        audit_commands=tuple(decision.audit_commands),
+        input_hash=decision.request.raw_hook_input_hash,
+        written_text_names_secret_file=(
+            decision.written_text_names_secret_file and permission_decision != PERMISSION_DENY
+        ),
     )
 
 
@@ -304,9 +341,18 @@ def run_aeg_hook_run(
             fail_closed=result.fail_closed,
             reason_codes=result.reason_codes,
             exit_code=result.exit_code,
+            session_id=result.session_id,
+            targets=result.audit_targets,
+            commands=result.audit_commands,
+            input_hash=result.input_hash,
         )
     except Exception:  # noqa: BLE001 - recording failure must not change the judgment.
         result = _with_recording_failure(result)
+    if result.written_text_names_secret_file:
+        try:
+            mark_secret_naming_write(repo_root, result.session_id, result.audit_targets)
+        except Exception:  # noqa: BLE001 - the write was already judged; say the mark is missing.
+            result = _with_recording_failure(result, SESSION_MARK_RECORDING_FAILED_REASON)
     try:
         stdout.write(result.stdout_json + "\n")
     except Exception:  # noqa: BLE001 - with no response to read, only exit 2 can block.
@@ -327,13 +373,17 @@ def run_hook_cli(arguments: Sequence[str]) -> int:
     # Marks the entry ``aeg install --mcp`` adds. Every call is judged the same
     # way, so an MCP call arriving through either entry gets the MCP rules.
     parser.add_argument("--mcp", action="store_true")
-    return run_aeg_hook_run_from_process(substrate=parser.parse_args(list(arguments)).substrate)
+    # Set by the plugin's hook entry, which has no ``aeg install`` step to make ``.aeg/``.
+    parser.add_argument("--ensure-state", action="store_true")
+    parsed = parser.parse_args(list(arguments))
+    return run_aeg_hook_run_from_process(substrate=parsed.substrate, ensure_state=parsed.ensure_state)
 
 
 def run_aeg_hook_run_from_process(
     repo_root: str | Path | None = None,
     *,
     substrate: str | None = None,
+    ensure_state: bool = False,
 ) -> int:
     """Entry point used by the ``aeg hook-run`` CLI subcommand, bound to the
     real process streams."""
@@ -344,6 +394,8 @@ def run_aeg_hook_run_from_process(
     resolved_root = (
         resolve_hook_project_root(working_dir, environ=environ) if repo_root is None else repo_root
     )
+    if ensure_state:
+        ensure_recording_directory(resolved_root)
     return run_aeg_hook_run(
         stdin=sys.stdin,
         stdout=sys.stdout,
@@ -352,6 +404,24 @@ def run_aeg_hook_run_from_process(
         substrate=substrate,
         working_dir=working_dir,
     )
+
+
+def ensure_recording_directory(repo_root: str | Path) -> bool:
+    """Create ``.aeg/`` the way ``aeg install`` does; never touch one that exists.
+
+    A failure only means this call goes unrecorded, which the response then says.
+    """
+
+    try:
+        base = Path(repo_root).resolve()
+        root = base / STATE_DIR
+        if root.is_symlink() or root.exists():
+            return root.is_dir() and not root.is_symlink()
+        root.mkdir()
+        (root / ".gitignore").write_text("*\n", encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 def _deny_result(
@@ -369,6 +439,7 @@ def _deny_result(
         tool_name=None,
         decision_reasons=reason_codes,
         substrate=substrate,
+        fail_closed=fail_closed,
     )
     exit_code = _process_exit_code_for_substrate(
         substrate=substrate,
@@ -388,27 +459,29 @@ def _deny_result(
     )
 
 
-def _with_recording_failure(result: HookRunResult) -> HookRunResult:
-    reason_codes = (*result.reason_codes, HOOK_DECISION_RECORDING_FAILED_REASON)
+def _with_recording_failure(
+    result: HookRunResult,
+    reason_code: str = HOOK_DECISION_RECORDING_FAILED_REASON,
+) -> HookRunResult:
+    reason_codes = (*result.reason_codes, reason_code)
     reason = _reason_string(
         permission_decision=result.permission_decision,
         hook_decision=result.hook_decision,
         tool_name=result.tool_name,
         decision_reasons=reason_codes,
         substrate=result.substrate,
-    )
-    return HookRunResult(
-        stdout_json=_permission_decision_json(result.permission_decision, reason, result.updated_input),
-        stderr_text=reason if result.stderr_text else "",
-        exit_code=result.exit_code,
-        permission_decision=result.permission_decision,
-        hook_decision=result.hook_decision,
         fail_closed=result.fail_closed,
+    )
+    return replace(
+        result,
+        stdout_json=(
+            json.dumps({"systemMessage": reason}, ensure_ascii=True, sort_keys=True)
+            if result.permission_decision == PERMISSION_HOST else
+            _permission_decision_json(result.permission_decision, reason, result.updated_input)
+        ),
+        stderr_text=reason if result.stderr_text else "",
         reason=reason,
         reason_codes=reason_codes,
-        tool_name=result.tool_name,
-        substrate=result.substrate,
-        updated_input=result.updated_input,
     )
 
 
@@ -419,13 +492,23 @@ def _reason_string(
     tool_name: Any,
     decision_reasons: tuple[str, ...],
     substrate: str,
+    fail_closed: bool = False,
 ) -> str:
     # Deliberately excludes raw tool_input so secrets in tool input are never
     # echoed. tool_name is a low-risk enum-like label (Write/Edit/Bash/Read).
     safe_tool_name = tool_name if isinstance(tool_name, str) and tool_name.strip() else "unknown"
     codes = ",".join(decision_reasons) if decision_reasons else "none"
+    # A stop opens with a sentence a person can act on; the codes follow for reports.
+    sentence = hook_reason_sentence(
+        reason_codes=decision_reasons,
+        hook_decision=hook_decision,
+        permission_decision=permission_decision,
+        fail_closed=fail_closed,
+        tool_name=tool_name,
+    )
     return (
-        f"aegis_pretooluse permissionDecision={permission_decision};"
+        (f"{sentence} | " if sentence else "")
+        + f"aegis_pretooluse permissionDecision={permission_decision};"
         f" hook_decision={hook_decision if hook_decision is not None else 'none'};"
         f" substrate={substrate};"
         f" tool_name={safe_tool_name};"
@@ -439,6 +522,9 @@ def _permission_decision_json(
     reason: str,
     updated_input: Mapping[str, Any] | None = None,
 ) -> str:
+    if permission_decision == PERMISSION_HOST:
+        # No permissionDecision, updatedInput or "defer": normal host rules apply.
+        return "{}"
     output: dict[str, Any] = {
         "hookEventName": CLAUDE_CODE_HOOK_EVENT_NAME_PRETOOLUSE,
         "permissionDecision": permission_decision,
@@ -496,6 +582,8 @@ __all__ = [
     "SUBSTRATE_CLAUDE_CODE",
     "SUBSTRATE_CODEX",
     "HookRunResult",
+    "SESSION_MARK_RECORDING_FAILED_REASON",
+    "ensure_recording_directory",
     "read_stdin_text",
     "render_hook_response",
     "resolve_hook_project_root",

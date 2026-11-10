@@ -1,0 +1,11 @@
+{
+  "name": "jangseung",
+  "version": "0.2.0",
+  "description": "Guard hook for coding agents: stops secret reads, destructive commands and changes to the guard itself before a tool call runs, and records each decision.",
+  "author": {
+    "name": "Seokjae Lee"
+  },
+  "homepage": "https://github.com/tjrwo736/jangseung",
+  "repository": "https://github.com/tjrwo736/jangseung",
+  "license": "MIT"
+}

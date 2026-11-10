@@ -66,10 +66,12 @@ def _read_policy_file(repo_root: str | Path) -> HookPolicy:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
         return HookPolicy(present=True, error="policy_file_unreadable")
-    return _parse_policy(data)
+    return parse_policy(data)
 
 
-def _parse_policy(data: Any) -> HookPolicy:
+def parse_policy(data: Any) -> HookPolicy:
+    """Check policy data the way the hook does; ``error`` is set when it would be ignored."""
+
     if not isinstance(data, dict) or set(data) - _KNOWN_KEYS:
         return HookPolicy(present=True, error="policy_file_has_unexpected_shape")
     lists: dict[str, tuple[str, ...]] = {}
@@ -93,4 +95,4 @@ def _parse_policy(data: Any) -> HookPolicy:
     )
 
 
-__all__ = ["HOOK_POLICY_FILE", "HookPolicy", "load_hook_policy"]
+__all__ = ["HOOK_POLICY_FILE", "MAX_POLICY_BYTES", "HookPolicy", "load_hook_policy", "parse_policy"]

@@ -59,6 +59,14 @@ BACKUP_SUFFIX_PREFIX = "aegis-backup"
 TARGET_CLAUDE_CODE = "claude-code"
 TARGET_CODEX = "codex"
 INSTALL_TARGETS = (TARGET_CLAUDE_CODE, TARGET_CODEX)
+# Which Claude Code settings file holds the hook. ``project`` is the file a team
+# shares through git; ``local`` is this person's own file beside it. The hook
+# command is a path on this computer, so the local file is where it belongs when
+# the project file is shared.
+SCOPE_PROJECT = "project"
+SCOPE_LOCAL = "local"
+SETTINGS_SCOPES = (SCOPE_PROJECT, SCOPE_LOCAL)
+_SETTINGS_FILE_NAMES = {SCOPE_PROJECT: "settings.json", SCOPE_LOCAL: "settings.local.json"}
 
 
 class InstallStructureError(Exception):
@@ -68,17 +76,12 @@ class InstallStructureError(Exception):
 def _installed_console_script() -> str | None:
     """Locate the ``aeg`` script of this interpreter, on PATH or not.
 
-    A script found directly in the working directory is ignored: Windows
-    searches there first, and a project must not choose its own guard.
+    The interpreter running ``aeg install`` comes first: the copy a person just
+    installed or upgraded is the one that must judge, whatever an older copy on
+    PATH says. A script found directly in the working directory is ignored:
+    Windows searches there first, and a project must not choose its own guard.
     """
 
-    found = shutil.which("aeg")
-    if isinstance(found, str):
-        try:
-            if Path(found).resolve().parent != Path.cwd().resolve():
-                return found
-        except OSError:
-            pass
     names = ("aeg.exe",) if os.name == "nt" else ("aeg",)
     directories = (sysconfig.get_path("scripts"), sysconfig.get_path("scripts", f"{os.name}_user"))
     for directory in directories:
@@ -86,6 +89,13 @@ def _installed_console_script() -> str | None:
             candidate = Path(directory) / name
             if candidate.is_file():
                 return str(candidate)
+    found = shutil.which("aeg")
+    if isinstance(found, str):
+        try:
+            if Path(found).resolve().parent != Path.cwd().resolve():
+                return found
+        except OSError:
+            pass
     return None
 
 
@@ -184,8 +194,8 @@ def is_aegis_hook(hook: Any) -> bool:
     return isinstance(hook, dict) and _is_managed_hook(hook)
 
 
-def settings_path(base_dir: str | Path) -> Path:
-    return Path(base_dir) / ".claude" / "settings.json"
+def settings_path(base_dir: str | Path, scope: str = SCOPE_PROJECT) -> Path:
+    return Path(base_dir) / ".claude" / _SETTINGS_FILE_NAMES[scope]
 
 
 def codex_config_path(base_dir: str | Path) -> Path:
@@ -411,6 +421,7 @@ def cmd_install(
     global_requested: bool = False,
     target: str = TARGET_CLAUDE_CODE,
     mcp: bool = False,
+    scope: str = SCOPE_PROJECT,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
@@ -419,6 +430,9 @@ def cmd_install(
         normalized_target = normalize_install_target(target)
     except ValueError as exc:
         _write(out, f"aeg install: aborted — {exc}")
+        return 2
+    if scope not in SETTINGS_SCOPES or (scope != SCOPE_PROJECT and normalized_target != TARGET_CLAUDE_CODE):
+        _write(out, "aeg install: aborted — --scope local applies to the claude-code target only.")
         return 2
 
     if global_requested:
@@ -443,9 +457,23 @@ def cmd_install(
         base_dir,
         assume_yes=assume_yes,
         mcp=mcp,
+        scope=scope,
         input_stream=input_stream,
         output_stream=out,
     )
+
+
+def _other_scope_has_hook(base_dir: str | Path, scope: str) -> bool:
+    other = SCOPE_LOCAL if scope == SCOPE_PROJECT else SCOPE_PROJECT
+    data, _, error = load_settings(settings_path(base_dir, other))
+    if error is not None or not isinstance(data, dict):
+        return False
+    hooks = data.get("hooks")
+    entries = hooks.get(HOOK_EVENT_NAME) if isinstance(hooks, dict) else None
+    try:
+        return isinstance(entries, list) and _find_aegis_hook(entries) is not None
+    except InstallStructureError:
+        return False
 
 
 def _cmd_install_claude_code(
@@ -453,12 +481,13 @@ def _cmd_install_claude_code(
     *,
     assume_yes: bool,
     mcp: bool = False,
+    scope: str = SCOPE_PROJECT,
     input_stream: TextIO | None,
     output_stream: TextIO,
 ) -> int:
     out = output_stream
 
-    path = settings_path(base_dir)
+    path = settings_path(base_dir, scope)
     data, existed, error = load_settings(path)
     if error is not None:
         _write(out, f"aeg install: aborted — {error}")
@@ -488,13 +517,13 @@ def _cmd_install_claude_code(
             already = already and mcp_already
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected settings structure: {exc}")
-        _write(out, "Please adjust .claude/settings.json manually, then retry.")
+        _write(out, f"Please adjust .claude/{path.name} manually, then retry.")
         return 1
 
     if already:
         return _repair_recording_setup(base_dir, assume_yes, input_stream, out)
 
-    before_text = _json_text(data) if existed else "(no .claude/settings.json yet)\n"
+    before_text = _json_text(data) if existed else f"(no .claude/{path.name} yet)\n"
     after_text = _json_text(new_data)
 
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
@@ -506,6 +535,25 @@ def _cmd_install_claude_code(
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
     _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")
+    if scope == SCOPE_PROJECT:
+        _write(
+            out,
+            "Note: .claude/settings.json is usually shared through git, and the hook command above is a "
+            "path on this computer. To keep it in your own file instead, run: aeg install --scope local",
+        )
+    else:
+        _write(
+            out,
+            "Note: .claude/settings.local.json is your own file. If git does not ignore it yet, add it "
+            "to .gitignore.",
+        )
+    if _other_scope_has_hook(base_dir, scope):
+        _write(
+            out,
+            "Note: the other Claude Code settings file of this project also registers a Jangseung hook. "
+            "Both would judge every call. Remove one with: aeg uninstall"
+            + (" --scope local" if scope == SCOPE_PROJECT else ""),
+        )
 
     if not assume_yes and not _confirm(input_stream, out):
         _write(out, "aeg install: cancelled; no changes written.")
@@ -593,6 +641,7 @@ def cmd_uninstall(
     assume_yes: bool = False,
     target: str = TARGET_CLAUDE_CODE,
     mcp_only: bool = False,
+    scope: str = SCOPE_PROJECT,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
@@ -602,13 +651,16 @@ def cmd_uninstall(
     except ValueError as exc:
         _write(out, f"aeg uninstall: aborted — {exc}")
         return 2
+    if scope not in SETTINGS_SCOPES or (scope != SCOPE_PROJECT and normalized_target != TARGET_CLAUDE_CODE):
+        _write(out, "aeg uninstall: aborted — --scope local applies to the claude-code target only.")
+        return 2
     kinds = (HOOK_KIND_MCP,) if mcp_only else HOOK_KINDS
     if normalized_target == TARGET_CODEX:
         return _cmd_uninstall_codex(
             base_dir, assume_yes=assume_yes, kinds=kinds,
             input_stream=input_stream, output_stream=out,
         )
-    path = settings_path(base_dir)
+    path = settings_path(base_dir, scope)
     data, existed, error = load_settings(path)
     if error is not None:
         _write(out, f"aeg uninstall: aborted — {error}")

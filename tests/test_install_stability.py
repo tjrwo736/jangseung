@@ -151,7 +151,7 @@ def test_shell_executes_spaced_path(tmp_path):
     executable = directory / "aeg"
     executable.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
     executable.chmod(0o700)
-    with patch("jangseung.cli.install.shutil.which", return_value=str(executable)):
+    with patch("jangseung.cli.install._installed_console_script", return_value=str(executable)):
         command = resolve_hook_command(substrate="codex")
     result = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True)
     assert result.returncode == 0

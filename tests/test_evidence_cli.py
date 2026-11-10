@@ -1,4 +1,4 @@
-"""Read-only evidence list/show CLI coverage."""
+"""Read-only evidence list/show CLI coverage for hook records."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 
 from jangseung.cli.main import _cmd_evidence_list, _cmd_evidence_show
 from jangseung.state.evidence_query import REDACTED_CREDENTIAL
+from jangseung.state.hook_ledger import append_hook_decision_record
 
 
 class EvidenceCliTests(unittest.TestCase):
@@ -21,84 +22,83 @@ class EvidenceCliTests(unittest.TestCase):
         self.repo = Path(self.tempdir.name)
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
         self.state = self.repo / ".aeg"
-        self.runs = self.state / "runs"
-        self.runs.mkdir(parents=True)
+        self.state.mkdir()
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
     def test_list_is_newest_first_and_honors_limit(self):
-        self._write_run("run-001", "2026-07-01T00:00:00Z", "CLEAN_CORE", "LOW")
-        self._write_run("run-002", "2026-07-02T00:00:00Z", "NEEDS_USER_GATE", "HIGH")
+        older = self._append("Read", "2026-07-01T00:00:00Z")
+        newer = self._append("Write", "2026-07-02T00:00:00Z")
 
         exit_code, output = self._capture(_cmd_evidence_list, self.repo, limit=1)
 
         self.assertEqual(exit_code, 0)
         self.assertIn("status: OK", output)
-        self.assertIn("run-002", output)
-        self.assertNotIn("run-001", output)
-        self.assertIn("run:yes/evidence:yes/manifest:yes", output)
+        self.assertIn(newer["record_hash"], output)
+        self.assertNotIn(older["record_hash"], output)
+        self.assertIn("HOOK", output)
+        self.assertIn("hook_record:yes", output)
 
-    def test_show_uses_sections_instead_of_flat_evidence_dump(self):
-        self._write_run("run-sections", "2026-07-01T00:00:00Z", "CLEAN_CORE", "LOW")
+    def test_show_uses_sections_instead_of_flat_record_dump(self):
+        record = self._append("Read", "2026-07-01T00:00:00Z")
 
-        exit_code, output = self._capture(_cmd_evidence_show, self.repo, "run-sections")
+        exit_code, output = self._capture(_cmd_evidence_show, self.repo, record["record_hash"][:12])
 
         self.assertEqual(exit_code, 0)
-        for section in ("[summary]", "[decision]", "[artifacts]", "[provenance]", "[integrity]"):
+        for section in ("[summary]", "[decision]", "[integrity]"):
             self.assertIn(section, output)
-        self.assertIn("status: CLEAN_CORE", output)
+        self.assertIn("status: OK", output)
+        self.assertIn("permission_decision: allow", output)
         self.assertLess(len(output.splitlines()), 40)
 
     def test_list_and_show_do_not_modify_state(self):
-        self._write_run("run-read-only", "2026-07-01T00:00:00Z", "CLEAN_CORE", "LOW")
+        record = self._append("Read", "2026-07-01T00:00:00Z")
         before = self._state_hash()
 
         self.assertEqual(self._capture(_cmd_evidence_list, self.repo)[0], 0)
-        self.assertEqual(self._capture(_cmd_evidence_show, self.repo, "run-read-only")[0], 0)
+        self.assertEqual(self._capture(_cmd_evidence_show, self.repo, record["record_hash"])[0], 0)
 
         self.assertEqual(self._state_hash(), before)
 
     def test_corrupt_ledger_entry_is_unreadable_and_listing_continues(self):
-        self._write_run("run-before-corruption", "2026-07-01T00:00:00Z", "CLEAN_CORE", "LOW")
-        with (self.state / "ledger.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write("{not-json\n")
-        self._write_run("run-after-corruption", "2026-07-02T00:00:00Z", "CLEAN_CORE", "LOW")
+        before = self._append("Read", "2026-07-01T00:00:00Z")
+        after = self._append("Write", "2026-07-02T00:00:00Z")
+        ledger = self.state / "hook_ledger.jsonl"
+        first, second = ledger.read_bytes().splitlines()
+        ledger.write_bytes(first + b"\n{not-json\n" + second + b"\n")
 
         exit_code, output = self._capture(_cmd_evidence_list, self.repo)
 
         self.assertEqual(exit_code, 0)
         self.assertIn("status: DEGRADED", output)
-        self.assertIn("run-before-corruption", output)
-        self.assertIn("run-after-corruption", output)
-        self.assertIn("ledger-line-2", output)
+        self.assertIn(before["record_hash"], output)
+        self.assertIn(after["record_hash"], output)
+        self.assertIn("hook-ledger-line-2", output)
         self.assertIn("UNREADABLE", output)
 
     def test_show_redacts_credential_shapes_in_human_and_json_output(self):
         secret = "sk-proj-abcdefghijklmnopqrstuv"
-        self._write_run(
-            "run-secret",
-            "2026-07-01T00:00:00Z",
-            "CLEAN_CORE",
-            "LOW",
-            evidence_extra={"task_text": f"debug with {secret}", "provider_api_key": secret},
-        )
+        record = self._append("Read", "2026-07-01T00:00:00Z", reason_codes=[f"debug with {secret}"])
 
-        human_code, human_output = self._capture(_cmd_evidence_show, self.repo, "run-secret")
+        human_code, human_output = self._capture(_cmd_evidence_show, self.repo, record["record_hash"])
         json_code, json_output = self._capture(
             _cmd_evidence_show,
             self.repo,
-            "run-secret",
+            record["record_hash"],
             as_json=True,
         )
+        list_code, list_output = self._capture(_cmd_evidence_list, self.repo, as_json=True)
 
-        self.assertEqual((human_code, json_code), (0, 0))
+        self.assertEqual((human_code, json_code, list_code), (0, 0, 0))
         self.assertNotIn(secret, human_output)
         self.assertNotIn(secret, json_output)
+        self.assertNotIn(secret, list_output)
         self.assertIn(REDACTED_CREDENTIAL, human_output)
         self.assertIn(REDACTED_CREDENTIAL, json_output)
         parsed = json.loads(json_output)
-        self.assertEqual(parsed["evidence"]["provider_api_key"], REDACTED_CREDENTIAL)
+        self.assertEqual(parsed["kind"], "hook")
+        self.assertEqual(parsed["record"]["reason_codes"], [f"debug with {REDACTED_CREDENTIAL}"])
 
     def test_empty_state_is_a_successful_empty_list(self):
         exit_code, output = self._capture(_cmd_evidence_list, self.repo)
@@ -108,63 +108,44 @@ class EvidenceCliTests(unittest.TestCase):
         self.assertIn("status: EMPTY", output)
         self.assertEqual(json.loads(json_output), {"items": [], "status": "EMPTY"})
 
-    def test_missing_artifact_is_reported_without_crashing(self):
-        self._write_run("run-missing", "2026-07-01T00:00:00Z", "CLEAN_CORE", "LOW")
-        (self.runs / "run-missing" / "manifest.json").unlink()
+    def test_state_left_by_the_removed_run_runtime_is_ignored_and_untouched(self):
+        run_dir = self.state / "runs" / "run-legacy"
+        run_dir.mkdir(parents=True)
+        for filename in ("run.json", "evidence.json", "manifest.json"):
+            (run_dir / filename).write_text("{}\n", encoding="utf-8")
+        entry = {"run_id": "run-legacy", "recorded_at": "2026-07-03T00:00:00Z", "status": "CLEAN_CORE"}
+        (self.state / "ledger.jsonl").write_text(json.dumps(entry) + "\n{not-json\n", encoding="utf-8")
+        (self.state / "config.json").write_text('{"legacy": true}\n', encoding="utf-8")
+        before = self._state_hash()
 
-        list_code, list_output = self._capture(_cmd_evidence_list, self.repo)
-        show_code, show_output = self._capture(_cmd_evidence_show, self.repo, "run-missing")
+        empty_code, empty_output = self._capture(_cmd_evidence_list, self.repo, as_json=True)
+        show_code, show_output = self._capture(_cmd_evidence_show, self.repo, "run-legacy", as_json=True)
+        self.assertEqual(self._state_hash(), before)
+        record = self._append("Read", "2026-07-01T00:00:00Z")
+        list_code, list_output = self._capture(_cmd_evidence_list, self.repo, as_json=True)
 
-        self.assertEqual(list_code, 0)
-        self.assertIn("manifest:no", list_output)
-        self.assertEqual(show_code, 1)
-        self.assertIn("status: UNREADABLE", show_output)
-        self.assertIn("manifest artifact is missing", show_output)
+        self.assertEqual((empty_code, show_code, list_code), (0, 1, 0))
+        self.assertEqual(json.loads(empty_output), {"items": [], "status": "EMPTY"})
+        self.assertEqual(json.loads(show_output)["status"], "NOT_FOUND")
+        listed = json.loads(list_output)
+        self.assertEqual(listed["status"], "OK")
+        self.assertEqual([(item["kind"], item["id"]) for item in listed["items"]], [("hook", record["record_hash"])])
+        for name in ("ledger.jsonl", "config.json", "runs/run-legacy/evidence.json"):
+            self.assertTrue((self.state / name).is_file(), name)
+        self.assertEqual((self.state / "ledger.jsonl").read_text(encoding="utf-8"), json.dumps(entry) + "\n{not-json\n")
 
-    def _write_run(
-        self,
-        run_id: str,
-        recorded_at: str,
-        status: str,
-        risk_level: str,
-        *,
-        evidence_extra: dict | None = None,
-    ) -> None:
-        run_dir = self.runs / run_id
-        run_dir.mkdir()
-        evidence = {
-            "run_id": run_id,
-            "task_text": "fix typo",
-            "status": status,
-            "intent_risk": "LOW",
-            "impact_risk": "NO_CHANGED_FILES",
-            "risk_level": risk_level,
-            "status_reasons": ["fixture"],
-            "branch": "main",
-            "head_sha": "a" * 40,
-            "tree_sha": "b" * 40,
-            "changed_files": [],
-            "changed_files_source": "no_changed_files",
-            "safe_default": "HOLD",
-            "binding_status": "BOUND",
-        }
-        evidence.update(evidence_extra or {})
-        manifest = {"run_id": run_id, "manifest_hash": "c" * 64}
-        (run_dir / "run.json").write_text("{}\n", encoding="utf-8")
-        (run_dir / "evidence.json").write_text(json.dumps(evidence) + "\n", encoding="utf-8")
-        (run_dir / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
-        entry = {
-            "run_id": run_id,
-            "recorded_at": recorded_at,
-            "status": status,
-            "risk_level": risk_level,
-            "task_text": evidence["task_text"],
-            "run_path": f".aeg/runs/{run_id}/run.json",
-            "evidence_path": f".aeg/runs/{run_id}/evidence.json",
-            "manifest_path": f".aeg/runs/{run_id}/manifest.json",
-        }
-        with (self.state / "ledger.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    def _append(self, tool_name: str, timestamp: str, *, reason_codes: list[str] | None = None) -> dict:
+        return append_hook_decision_record(
+            self.repo,
+            substrate="claude-code",
+            tool_name=tool_name,
+            hook_decision="allow",
+            permission_decision="allow",
+            fail_closed=False,
+            reason_codes=reason_codes or ["fixture"],
+            exit_code=0,
+            timestamp=timestamp,
+        )
 
     def _state_hash(self) -> str:
         digest = hashlib.sha256()

@@ -70,8 +70,18 @@ _DEPLOY_INERT_COMMANDS = frozenset(
     }
 )
 _GIT_GLOBAL_VALUE_OPTIONS = frozenset({"-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env"})
-_GUARD_MODULES = frozenset({"jangseung.cli", "jangseung", "src.cli", "src"})
-_GUARD_COMMANDS = frozenset({"uninstall", "install", "repair-hooks"})
+_GUARD_MODULES = frozenset(
+    {
+        "jangseung", "jangseung.__main__", "jangseung.cli", "jangseung.cli.__main__", "jangseung.cli.main",
+        "jangseung.cli.entry", "src", "src.cli", "src.cli.__main__",
+    }
+)
+_PYTHON_INTERPRETER = re.compile(r"python[\d.]*|pythonw|py|pypy[\d.]*")
+_PYTHON_MODULE_FLAG = re.compile(r"-[bBdEhiIOPqsSuvVx]*m(.*)")
+_PYTHON_VALUE_OPTIONS = frozenset({"-W", "-X", "--check-hash-based-pycs"})
+_TOOL_RUNNERS = frozenset({"uv", "pipx", "poetry", "pdm", "hatch"})
+# ``policy`` is here because it widens what agents may do; only a person runs it.
+_GUARD_COMMANDS = frozenset({"uninstall", "install", "repair-hooks", "policy"})
 
 _POWERSHELL_DYNAMIC = frozenset({"invoke-expression", "iex"})
 _POWERSHELL_NETWORK = frozenset({"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "start-bitstransfer"})
@@ -353,7 +363,12 @@ def dangerous_argv_reason(argv: Sequence[str], *, depth: int = 0) -> str | None:
 
 
 def guard_self_disable(argv: Sequence[str]) -> bool:
-    """True when a command would remove or rewrite the guard's own state."""
+    """True when a command would remove or rewrite the guard's own state.
+
+    Only what the command line itself starts is read: ``aeg``, a Python interpreter
+    running the guard's module or launcher script, or a tool runner in front of
+    either. A program that merely receives ``aeg policy`` as arguments is not it.
+    """
 
     argv = strip_assignments(argv)
     if not argv:
@@ -362,17 +377,59 @@ def guard_self_disable(argv: Sequence[str]) -> bool:
     args = list(argv[1:])
     positional = [arg.lower() for arg in args if not arg.startswith("-")]
     if name == "aeg":
-        return bool(positional) and any(item in _GUARD_COMMANDS for item in positional[:2])
-    if name in {"pip", "pip3", "pipx", "uv"}:
-        return "uninstall" in positional and "jangseung" in positional
-    if "-m" in args and args.index("-m") + 1 < len(args):
-        module = args[args.index("-m") + 1].lower()
-        after_module = [arg.lower() for arg in args[args.index("-m") + 2 :] if not arg.startswith("-")]
-        if module in _GUARD_MODULES:
-            return any(item in _GUARD_COMMANDS for item in after_module[:2])
-        if module == "pip":
-            return "uninstall" in after_module and "jangseung" in after_module
-    return False
+        return _names_guard_command(args)
+    if name in {"pip", "pip3", "pipx", "uv"} and "uninstall" in positional and "jangseung" in positional:
+        return True
+    if name in _TOOL_RUNNERS and "run" in args:
+        return guard_self_disable(args[args.index("run") + 1 :])
+    if not _PYTHON_INTERPRETER.fullmatch(name):
+        return False
+    program = _python_program(args)
+    if program is None:
+        return False
+    kind, target, rest = program
+    target = target.lower().rstrip(". ")
+    if kind == "module":
+        if target in _GUARD_MODULES:
+            return _names_guard_command(rest)
+        if target == "pip":
+            after = [item.lower() for item in rest if not item.startswith("-")]
+            return "uninstall" in after and "jangseung" in after
+        return False
+    return command_name(target) == "aeg" and _names_guard_command(rest)
+
+
+def _python_program(args: Sequence[str]) -> tuple[str, str, Sequence[str]] | None:
+    """What a Python command line runs: a module or a script, and the arguments after it."""
+
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in _PYTHON_VALUE_OPTIONS:
+            index += 2
+            continue
+        module_flag = _PYTHON_MODULE_FLAG.fullmatch(arg)
+        if module_flag is not None:
+            # ``-m module``, ``-mmodule`` and clusters such as ``-Im module``.
+            rest = list(args[index + 1 :])
+            module = module_flag.group(1) or (rest.pop(0) if rest else "")
+            if module.lower() == "runpy":
+                while rest and rest[0].startswith("-"):
+                    rest.pop(0)
+                module = rest.pop(0) if rest else ""
+            return ("module", module, rest) if module else None
+        if arg.startswith("-"):
+            if not arg.startswith("--") and "c" in arg[1:]:
+                return None  # inline code; its words are judged elsewhere
+            index += 1
+            continue
+        return ("script", arg, args[index + 1 :])
+    return None
+
+
+def _names_guard_command(args: Sequence[str]) -> bool:
+    positional = [arg.lower() for arg in args if not arg.startswith("-")]
+    return any(item in _GUARD_COMMANDS for item in positional[:2])
 
 
 def powershell_dangerous_reasons(argvs: Iterable[Sequence[str]], *, depth: int = 0) -> tuple[str, ...]:

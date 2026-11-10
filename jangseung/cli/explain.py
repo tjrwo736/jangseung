@@ -18,9 +18,8 @@ from jangseung.evidence.claude_code_pretooluse_input_contract import (
     OPTIONAL_HOOK_METADATA_FIELDS, REQUIRED_HOOK_INPUT_FIELDS, SUPPORTED_INITIAL_TARGET_TOOLS, is_mcp_tool_name,
 )
 from jangseung.evidence.hook_judgment_engine_alignment import ENGINE_DENY_CAPABILITY_RESULTS
-from jangseung.evidence.mcp_tool_gate import (
-    MCP_GATE_REASON_CODES, MCP_RESOURCE_READ_REQUIRES_APPROVAL, MCP_TOOL_REQUIRES_APPROVAL,
-)
+from jangseung.cli.reason_text import APPROVAL_HELD_REASON, REVIEW_TIER_REASON, explain_decision
+from jangseung.evidence.mcp_tool_gate import MCP_GATE_REASON_CODES
 
 MAX_INPUT_CHARACTERS = 1_048_576
 
@@ -58,6 +57,13 @@ _FIXED_CODES = frozenset({
     "invalid_or_unsupported_pretooluse_input_fail_closed_deny",
     "input_validation_error_fail_closed_deny",
     "internal_judgment_error_fail_closed_deny",
+    "hook_decision_recording_failed",
+    "output_excludes_read_protected_files",
+    "claude_default_host_permission_flow",
+    "structurally_classified_simple_file_operation",
+    "shell_file_targets_are_regular_non_protected_paths_in_repo",
+    APPROVAL_HELD_REASON,
+    REVIEW_TIER_REASON,
     *MCP_GATE_REASON_CODES,
 })
 _DETAIL_CODES = frozenset({
@@ -84,50 +90,12 @@ def _display_code(code: str) -> str:
 
 
 def _explanation(result: HookRunResult) -> tuple[str, str, str]:
-    codes = set(result.reason_codes)
-    if result.fail_closed:
-        if codes & {"internal_judgment_error_fail_closed_deny", "input_validation_error_fail_closed_deny"}:
-            return ("internal_error", "The hook could not complete validation or judgment and denied by default.",
-                    "Report the reason codes and package version; do not include raw credentials or disable the hook.")
-        return ("invalid_input", "The hook input is malformed, incomplete, or uses an unsupported tool.",
-                "Check the PreToolUse JSON shape: tool_name, tool_input and tool_use_id are required.")
-    if codes & {"shell_read_targets_secret_state_or_outside_repo", "shell_command_references_secret_path"}:
-        return ("secret_or_outside_read", "The command reads a secret, protected state or a path outside the repository.",
-                "Run it yourself if it is needed, or list the path under allow_paths in .aeg/policy.json.")
-    if codes & {"dangerous_bash_gate_denies_command", "dangerous_powershell_gate_denies_command"}:
-        return ("dangerous_command", "The existing command-risk gate identified a dangerous command.",
-                "Review the intended operation and narrow its scope; this diagnostic does not authorize execution.")
-    if "repo_boundary_gate_denies_outside_repo_target" in codes:
-        return ("outside_repository", "The target resolves outside the repository boundary.",
-                "Check the project directory and target path, including traversal and symbolic links.")
-    if "aeg_integrity_guard_denies_state_dir_target" in codes:
-        return ("protected_state", "The request targets protected Aegis state.",
-                "Use the evidence commands to inspect records; do not modify the ledger directly.")
-    if codes & {"bash_write_delete_target_protected_or_out_of_scope", "powershell_write_delete_target_protected_or_out_of_scope", "protected_path_gate_denies_target"}:
-        return ("protected_or_outside_target", "A write/delete target is protected or outside the allowed repository scope.",
-                "Review target paths and the intended change before proceeding.")
-    if "law_requires_user_gate_hook_uses_deny_safe_default" in codes:
-        return ("policy_gate", "The existing policy requires a user gate, so the hook denies by default.",
-                "Review protected paths and policy requirements; the explanation does not grant an exception.")
-    if any(code.startswith("capability_gate_denies:") for code in codes):
-        return ("capability_denied", "The existing capability gate does not permit this request.",
-                "Review the requested action and scope; no additional authority is granted here.")
-    if codes & {MCP_TOOL_REQUIRES_APPROVAL, MCP_RESOURCE_READ_REQUIRES_APPROVAL}:
-        return ("mcp_approval_required",
-                "The opt-in MCP hook requires a person's approval for this MCP call; its arguments are not inspected.",
-                "Approve it in the host if you trust the tool, or list the tool under allow_mcp_tools in .aeg/policy.json. "
-                "Resource reads cannot be listed.")
-    if result.hook_decision == "defer":
-        return ("unclassified", "Safety was not established by the current rules; this is not a finding that the command is dangerous.",
-                "Check supported command syntax and whether file targets exist inside the repository. Unsupported flags, expansions or missing files can prevent classification.")
-    if result.permission_decision == "allow":
-        return ("allowed", "The existing hook rules allow this request in the current filesystem context.",
-                "This is a dry-run result, not proof that the host application ran the hook or the tool.")
-    if result.hook_decision == "ask":
-        return ("confirmation_required", "The judgment engine requires user confirmation for this request.",
-                "Review the requested operation. The selected substrate determines how confirmation is enforced.")
-    return ("denied", "The existing hook gates denied the request.",
-            "Use the reason codes when reporting the issue; do not include raw secrets.")
+    return explain_decision(
+        reason_codes=result.reason_codes,
+        hook_decision=result.hook_decision,
+        permission_decision=result.permission_decision,
+        fail_closed=result.fail_closed,
+    )
 
 
 def build_explanation(
@@ -138,6 +106,8 @@ def build_explanation(
     category, summary, next_step = _explanation(result)
     codes = [_display_code(code) for code in result.reason_codes]
     mapping = (
+        "Claude Code default mode: no permissionDecision is emitted; the host's normal permission rules decide."
+        if result.permission_decision == "host" else
         "Codex mapping upgrades ask/defer to deny and returns hook exit code 0; exit 0 does not mean allow."
         if "codex_substrate_ask_not_enforced_upgraded_to_deny" in result.reason_codes else
         "Codex hook responses carry the permission decision in JSON and use exit code 0."
@@ -165,11 +135,15 @@ def build_explanation(
 def cmd_explain(
     cwd: Path, *, command: str | None = None, file: str | None = None,
     tool: str = "Bash", substrate: str | None = None, as_json: bool = False,
+    permission_mode: str | None = None,
     stdin: TextIO, stdout: TextIO,
 ) -> int:
     try:
         if command is not None:
-            raw = json.dumps({"tool_name": tool, "tool_input": {"command": command}, "tool_use_id": "explain-dry-run"})
+            data = {"tool_name": tool, "tool_input": {"command": command}, "tool_use_id": "explain-dry-run"}
+            if permission_mode is not None:
+                data["permission_mode"] = permission_mode
+            raw = json.dumps(data)
         elif file is not None:
             raw = json.dumps({"tool_name": "Read", "tool_input": {"file_path": file}, "tool_use_id": "explain-dry-run"})
         else:

@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import re
 import shlex
+import stat
 import sys
 from types import MappingProxyType
 from typing import Any
@@ -27,7 +28,9 @@ from jangseung.classify import (
     is_host_resolved_path,
     is_protected_path,
     is_read_protected_path,
+    is_documentation_path,
     is_secret_path,
+    names_secret_file,
     search_exclusion_globs,
     strip_path_decorations,
 )
@@ -65,6 +68,7 @@ from jangseung.evidence.claude_code_tool_call_mapping import (
     extract_bash_write_delete_targets,
     extract_powershell_write_delete_targets,
     map_pretooluse_input_to_structured_action_candidate,
+    powershell_argvs,
     powershell_words,
     rewrite_apply_patch_targets,
 )
@@ -75,10 +79,16 @@ from jangseung.evidence.mediated_repo_boundary_write_path import resolve_repo_bo
 from jangseung.evidence.shell_command_risk import (
     GUARD_SELF_DISABLE_REASON,
     bash_words,
+    command_name,
+    git_subcommand,
     scan_bash_command,
     secret_references,
+    strip_assignments,
 )
 from jangseung.evidence.shell_read_only import classify_shell_read, git_output_command
+from jangseung.evidence.shell_normal_work import (
+    classify_shell_file_operation, host_execution_candidate, plain_command_words,
+)
 from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
@@ -97,6 +107,7 @@ from jangseung.evidence.structured_actions import (
     WRITE_FILE,
 )
 from jangseung.law import apply_law
+from jangseung.state.session_marks import secret_naming_writes
 
 PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION = (
     "phase11c_8_hook_judgment_engine_alignment_v0"
@@ -150,6 +161,50 @@ _COMMAND_TARGET_DENY_KINDS = frozenset({"out_of_scope", "secret_path", "protecte
 _SHELL_READ_DENY_KINDS = frozenset({"out_of_scope", "secret_path", "protected_state_dir"})
 _PROJECT_WORKING_FOLDER_KINDS = frozenset({"safe_in_repo", "protected_path", "secret_path"})
 _APPROVED_COMMAND_REJECTED_CHARACTERS = "\n\r\x00$`{}()&;<>|#"
+_TYPOGRAPHIC_QUOTES = frozenset("‘’‚‛“”„‟")
+# Only a space or a tab separates words in every shell. Other "white" characters
+# are word text in bash, so ``tool.py\f2>&1`` runs a file named ``tool.py\f2``.
+_STDERR_TO_STDOUT = re.compile(r"[ \t]+2>&1[ \t]*$")
+# A folder name made of plain components. No option-like ``-`` or ``--``, no ``..``,
+# no dots or spaces a file system might trim: the folder judged must be the folder
+# the shell enters. An optional ``./`` keeps bash from searching CDPATH.
+_LEADING_CD = re.compile(
+    r"[ \t]*cd[ \t]+((?:\./)?[A-Za-z0-9_][A-Za-z0-9_-]*(?:/[A-Za-z0-9_][A-Za-z0-9_-]*)*)[ \t]*&&[ \t]*(?=\S)"
+)
+# A word of an approved prefix that can only name a program, a subcommand or an
+# option. Anything with a dot or a slash may be a file, and a relative file is a
+# different file after ``cd``.
+_FOLDER_INDEPENDENT_WORD = re.compile(r"-{0,2}[A-Za-z0-9_+:=@-]+")
+
+# Permission modes in which the host puts the hook's question to a person. Only modes
+# with that behavior documented or measured belong here; in every other mode a
+# review-tier change stays denied, as it was before this tier existed.
+# Measured with Claude Code 2.1.316 (``claude -p``, Windows): a hook's ``ask`` stopped an
+# Edit in ``default`` and in ``acceptEdits``. ``auto`` stopped it too, but there a
+# classifier may answer in the person's place, so it is left out; ``dontAsk`` and
+# ``bypassPermissions`` were not measured.
+_MODES_WHERE_HOST_ASKS_A_PERSON = frozenset({"default", "acceptEdits"})
+REVIEW_TIER_REASON = "build_or_dependency_file_change_needs_user_review"
+APPROVAL_HELD_REASON = "approved_command_held_after_write_naming_secret_file"
+
+_WRITTEN_TEXT_SEPARATORS = re.compile(r"[\s'\"`(),;=+\[\]{}<>|&:]+")
+_MAX_WRITTEN_TEXT_SCANNED = 400_000
+_MAX_WRITTEN_WORDS_CHECKED = 40_000
+_MAX_AUDIT_ITEMS = 16
+# A program name is short and mostly letters. Anything else in command position, a
+# pasted token included, is recorded as "<other>" so the record cannot carry it.
+_AUDIT_COMMAND_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.+-]{0,23}")
+_AUDIT_GIT_SUBCOMMANDS = frozenset(
+    {
+        "add", "am", "apply", "archive", "bisect", "blame", "branch", "checkout", "cherry-pick", "clean",
+        "clone", "commit", "config", "describe", "diff", "fetch", "gc", "grep", "init", "log", "ls-files",
+        "merge", "mv", "pull", "push", "rebase", "reflog", "remote", "reset", "restore", "rev-parse",
+        "revert", "rm", "show", "stash", "status", "submodule", "switch", "tag", "worktree",
+    }
+)
+_MAX_AUDIT_NAME_DIGITS = 3
+_MAX_AUDIT_NAME_HYPHENS = 2
+OUTSIDE_PROJECT_TARGET = "<outside-project>"
 
 # Read/Write/Edit of a repo-internal, non-protected file that the existing
 # engine classified as a definite LOW or MEDIUM change is "clearly safe normal
@@ -230,6 +285,14 @@ class HookJudgmentEngineDecision:
     # What the host must run instead of the submitted input. Not evidence: it holds
     # raw tool input, so it stays out of the decision hash and record.
     updated_tool_input: Mapping[str, Any] | None = None
+    # Redacted facts for the hook record: which project files and which programs the
+    # call names. Like updated_tool_input, they stay out of the decision hash.
+    audit_targets: tuple[str, ...] = ()
+    audit_commands: tuple[str, ...] = ()
+    written_text_names_secret_file: bool = False
+    # Eligibility is not an allow. Only the wiring for Claude Code/default may
+    # omit its permission decision and let the host's normal rules decide.
+    host_delegation_eligible: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "decision_reasons", tuple(self.decision_reasons))
@@ -296,6 +359,50 @@ def judge_pretooluse_with_aeg_engine(
     # traversal-escaping path keeps its form so the scope defense rejects it.
     base_dir = _effective_working_dir(hook_input, repo_root, working_dir)
     policy = load_hook_policy(repo_root, base_dir)
+    judged = (raw_hook_input, hook_input, validation, ignored_reported_only_fields, repo_root, base_dir)
+    decision = _judge_file_or_command_call(*judged, policy)
+    if decision.hook_decision != DENY or not _host_asks_a_person(raw_hook_input):
+        return decision
+    # Judge again with the review tier left out. If nothing else objects, the only
+    # thing in the way was a build or dependency file, and a person may approve that.
+    reviewed = _judge_file_or_command_call(
+        *judged, replace(policy, paths=replace(policy.paths, review_lifted=True))
+    )
+    if reviewed.hook_decision == DENY:
+        return decision
+    return _build_decision(
+        request=reviewed.request,
+        engine_decision=ASK,
+        hook_decision=ASK,
+        reasons=(REVIEW_TIER_REASON, "hook_decision_matches_or_is_stricter_than_engine"),
+        basis={
+            **reviewed.engine_decision_basis,
+            "review_tier": {
+                "decision_without_review_tier": reviewed.hook_decision,
+                "host_asks_a_person": True,
+            },
+        },
+        audit_targets=reviewed.audit_targets,
+        audit_commands=reviewed.audit_commands,
+        written_text_names_secret_file=reviewed.written_text_names_secret_file,
+    )
+
+
+def _host_asks_a_person(raw_hook_input: Mapping[str, Any]) -> bool:
+    mode = raw_hook_input.get("permission_mode")
+    return isinstance(mode, str) and mode in _MODES_WHERE_HOST_ASKS_A_PERSON
+
+
+def _judge_file_or_command_call(
+    raw_hook_input: Mapping[str, Any],
+    hook_input: ClaudeCodePreToolUseInput,
+    validation: PreToolUseInputValidationResult,
+    ignored_reported_only_fields: Any,
+    repo_root: str | Path,
+    base_dir: Path,
+    policy: HookPolicy,
+) -> HookJudgmentEngineDecision:
+    unnormalized_input = hook_input
     hook_input, path_normalization = _normalize_hook_input_repo_paths(
         hook_input, repo_root, base_dir
     )
@@ -320,8 +427,15 @@ def judge_pretooluse_with_aeg_engine(
     bash_target_gate = _bash_write_delete_target_gate(hook_input, repo_root, base_dir, policy)
     powershell_target_gate = _powershell_write_delete_target_gate(hook_input, repo_root, base_dir, policy)
     shell_read_gate = _shell_read_only_gate(hook_input, repo_root, base_dir, policy)
+    shell_file_gate = _shell_file_operation_gate(hook_input, repo_root, base_dir, policy)
     secret_reference_gate = _secret_reference_gate(hook_input, shell_read_gate, policy)
-    command_approved = _command_approved_by_policy(hook_input, action_candidate.reasons, policy, repo_root, base_dir)
+    approved_by_policy = _command_approved_by_policy(hook_input, action_candidate.reasons, policy, repo_root, base_dir)
+    # An approved command runs project code. Once this session has written text that
+    # names a secret file, that code may read it, so the approval goes back to a person.
+    approval_held = approved_by_policy and secret_naming_writes(
+        repo_root, raw_hook_input.get("session_id")
+    ) != ()
+    command_approved = approved_by_policy and not approval_held
     dangerous_bash_gate = {
         "risk_status": action_candidate.risk_status,
         "dangerous_bash": action_candidate.risk_status in {BASH_DANGEROUS, POWERSHELL_DANGEROUS},
@@ -354,11 +468,13 @@ def judge_pretooluse_with_aeg_engine(
         "bash_target_gate": bash_target_gate,
         "powershell_target_gate": powershell_target_gate,
         "shell_read_gate": shell_read_gate,
+        "shell_file_gate": shell_file_gate,
         "secret_reference_gate": secret_reference_gate,
         "hook_policy": {
             "present": policy.present,
             "error": policy.error,
             "command_approved": command_approved,
+            "approval_held": approval_held,
         },
         "dangerous_bash_gate": dangerous_bash_gate,
         "ignored_reported_only_fields": ignored_reported_only_fields,
@@ -383,6 +499,8 @@ def judge_pretooluse_with_aeg_engine(
         protected_path_gate=protected_path_gate,
         secret_reference_gate=secret_reference_gate,
         command_approved=command_approved,
+        approval_held=approval_held,
+        shell_file_gate=shell_file_gate,
     )
     hook_decision = engine_decision
     updated_tool_input = None
@@ -399,7 +517,151 @@ def judge_pretooluse_with_aeg_engine(
         reasons=reasons,
         basis=basis,
         updated_tool_input=updated_tool_input,
+        # PowerShell targets are named from the command's own words: once normalized,
+        # a provider path such as HKCU:\x can no longer be told from a project path.
+        audit_targets=_audit_targets(
+            () if hook_input.tool_name == "PowerShell" else request.target_paths,
+            (*bash_target_gate.get("targets", ()), *powershell_target_gate.get("targets", ())),
+            repo_root,
+            base_dir,
+        ),
+        audit_commands=_audit_commands(hook_input),
+        # A denied write puts nothing on disk, so there is nothing to mark.
+        written_text_names_secret_file=hook_decision != DENY and _written_text_names_secret_file(
+            unnormalized_input, request.target_paths, policy
+        ),
+        host_delegation_eligible=(
+            hook_decision == DEFER and not policy.error
+            and _host_execution_gate(hook_input, repo_root, base_dir, policy)
+            and secret_naming_writes(repo_root, raw_hook_input.get("session_id")) == ()
+        ),
     )
+
+
+def _audit_targets(
+    request_paths: Sequence[str],
+    command_targets: Sequence[str],
+    repo_root: str | Path,
+    base_dir: str | Path,
+) -> tuple[str, ...]:
+    """Project-relative names of the files a call targets; nothing outside is named."""
+
+    named: list[str] = []
+    for path in request_paths:
+        inside = _repo_relative_candidate(path) and not path.strip().startswith("~") and not is_host_resolved_path(path)
+        named.append(path if inside else OUTSIDE_PROJECT_TARGET)
+    for target in command_targets:
+        text = target.strip()
+        # The shell resolves these itself: a home folder, another drive's current
+        # folder, a PowerShell provider such as HKCU:, an alternate data stream.
+        shell_resolved = text.startswith("~") or (":" in text and not _looks_like_windows_absolute_path(text))
+        try:
+            normalized, record = _normalize_command_target(target, repo_root, base_dir)
+        except Exception:  # noqa: BLE001 - a record must never fail the judgment.
+            normalized, record = OUTSIDE_PROJECT_TARGET, {"in_repo": False}
+        inside = record.get("in_repo") is True and not shell_resolved
+        named.append(normalized if inside else OUTSIDE_PROJECT_TARGET)
+    kept = [item if len(item) <= 240 else "<long-path>" for item in named]
+    return tuple(dict.fromkeys(kept))[:_MAX_AUDIT_ITEMS]
+
+
+def _audit_commands(hook_input: ClaudeCodePreToolUseInput) -> tuple[str, ...]:
+    """Program names of a command, such as ``git push``; arguments are never kept."""
+
+    command = hook_input.tool_input.get("command")
+    if hook_input.tool_name not in _COMMAND_TOOL_NAMES or not isinstance(command, str):
+        return ()
+    try:
+        if hook_input.tool_name == "PowerShell":
+            argvs = powershell_argvs(command)
+        else:
+            scan = scan_bash_command(command)
+            if scan.dynamic or scan.error is not None:
+                # After a substitution the scanner cannot tell a program from an argument.
+                return ("<dynamic>",)
+            argvs = scan.argvs()
+    except Exception:  # noqa: BLE001 - a record must never fail the judgment.
+        return ("<unparsed>",)
+    names: list[str] = []
+    for argv in argvs:
+        words = strip_assignments(argv)
+        if not words:
+            continue
+        name = command_name(words[0])
+        if (
+            not _AUDIT_COMMAND_NAME.fullmatch(name)
+            or sum(char.isdigit() for char in name) > _MAX_AUDIT_NAME_DIGITS
+            or name.count("-") > _MAX_AUDIT_NAME_HYPHENS
+            or not _written_bare_in_command_position(words[0], command)
+        ):
+            names.append("<other>")
+            continue
+        if name == "git":
+            subcommand, _ = git_subcommand(words[1:])
+            if subcommand in _AUDIT_GIT_SUBCOMMANDS:
+                name = f"git {subcommand}"
+        names.append(name)
+    return tuple(dict.fromkeys(names))[:_MAX_AUDIT_ITEMS]
+
+
+def _written_bare_in_command_position(word: str, command: str) -> bool:
+    """True when ``word`` stands unquoted where a command starts in the raw text.
+
+    A quoted string in command position is data, not a program, and the same word
+    used elsewhere as an argument must not vouch for it.
+    """
+
+    starts_a_command = r"(?:^|[;|&({\n])[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*"
+    return re.search(starts_a_command + re.escape(word) + r"(?=$|[\s;|&)}<>])", command) is not None
+
+
+def _written_text(hook_input: ClaudeCodePreToolUseInput) -> tuple[str, ...]:
+    tool_input = hook_input.tool_input
+    texts: tuple[Any, ...] = ()
+    if hook_input.tool_name == "Write":
+        texts = (tool_input.get("content"),)
+    elif hook_input.tool_name == "Edit":
+        texts = (tool_input.get("new_string"),)
+    elif hook_input.tool_name == "MultiEdit":
+        edits = tool_input.get("edits")
+        if _is_sequence(edits):
+            texts = tuple(edit.get("new_string") for edit in edits if isinstance(edit, Mapping))
+    elif hook_input.tool_name == "NotebookEdit":
+        texts = (tool_input.get("new_source"),)
+    elif hook_input.tool_name == "apply_patch":
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            texts = tuple(line[1:] for line in command.splitlines() if line.startswith("+"))
+    return tuple(text for text in texts if isinstance(text, str))
+
+
+def _written_text_names_secret_file(
+    hook_input: ClaudeCodePreToolUseInput,
+    target_paths: Sequence[str],
+    policy: HookPolicy,
+) -> bool:
+    """True when a write to a non-documentation file names a secret file such as ``.env``.
+
+    This reads names, not behavior. Text that builds the name from pieces passes.
+    """
+
+    if hook_input.tool_name not in _WRITE_LIKE_TOOL_NAMES:
+        return False
+    if target_paths and all(is_documentation_path(path) for path in target_paths):
+        return False
+    scanned = 0
+    words: set[str] = set()
+    for text in _written_text(hook_input):
+        piece = text[: _MAX_WRITTEN_TEXT_SCANNED - scanned]
+        scanned += len(piece)
+        words.update(_WRITTEN_TEXT_SEPARATORS.split(piece))
+        if scanned >= _MAX_WRITTEN_TEXT_SCANNED:
+            break
+    words.discard("")
+    if len(words) > _MAX_WRITTEN_WORDS_CHECKED:
+        # Too much to read within a hook call. Marking costs a question; missing costs more.
+        return True
+    return any(names_secret_file(word, policy.paths) for word in words)
 
 
 def _judge_mcp_tool_call(
@@ -1099,6 +1361,78 @@ def _shell_read_only_gate(
     }
 
 
+def _shell_file_operation_gate(
+    hook_input: ClaudeCodePreToolUseInput,
+    repo_root: str | Path,
+    base_dir: str | Path,
+    policy: HookPolicy,
+) -> dict[str, Any]:
+    operation = classify_shell_file_operation(hook_input.tool_input.get("command"), tool_name=hook_input.tool_name)
+    if operation is None or policy.error:
+        return {"allow": False}
+    if _classify_command_target(".", repo_root, base_dir, policy) != "safe_in_repo":
+        return {"allow": False}
+    targets = []
+    root = Path(repo_root).resolve()
+    for path in operation.paths:
+        if _classify_command_target(path, repo_root, base_dir, policy) != "safe_in_repo":
+            return {"allow": False}
+        target = Path(base_dir).absolute() / path
+        # A copy/move through a link may reach a different file; hard links can
+        # overwrite a secret under another name. Do not grant either case here.
+        for part in (target, *target.parents):
+            try:
+                attributes = getattr(part.lstat(), "st_file_attributes", 0)
+            except (FileNotFoundError, NotADirectoryError):
+                attributes = 0
+            # st_file_attributes also covers Windows junctions on Python 3.10,
+            # which does not yet provide Path.is_junction().
+            if part.is_symlink() or attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                return {"allow": False}
+            if part == root:
+                break
+        if target.is_file() and target.stat().st_nlink != 1:
+            return {"allow": False}
+        targets.append(target)
+    if operation.operation == "mkdir":
+        allowed = all(not target.exists() or target.is_dir() for target in targets)
+    elif operation.operation in {"touch", "write"}:
+        allowed = all(not target.exists() or target.is_file() for target in targets)
+    elif operation.operation in {"cp", "mv"}:
+        source, destination = targets
+        allowed = source.is_file() and (not destination.exists() or destination.is_file())
+    else:  # rm: one existing regular file, never a directory or a recursive form.
+        allowed = targets[0].is_file()
+    return {"allow": allowed, "operation": operation.operation}
+
+
+def _host_execution_gate(
+    hook_input: ClaudeCodePreToolUseInput,
+    repo_root: str | Path,
+    base_dir: str | Path,
+    policy: HookPolicy,
+) -> bool:
+    command = hook_input.tool_input.get("command")
+    if hook_input.tool_name not in _COMMAND_TOOL_NAMES or not host_execution_candidate(command):
+        return False
+    if _classify_command_target(".", repo_root, base_dir, policy) != "safe_in_repo":
+        return False
+    words = plain_command_words(command)
+    if words[0] == "git" and not _git_uses_a_guarded_repository(base_dir):
+        return False
+    # Do not hand literal secret, guard, review or external paths to the host.
+    # A flag's value is a possible path too; unknown shell syntax never got here.
+    for word in words[1:]:
+        candidate = word.partition("=")[2] if "=" in word else word
+        if candidate.startswith("-"):
+            if any(char in candidate for char in "/:") or ".." in candidate:
+                return False
+            continue
+        if candidate and _classify_command_target(candidate, repo_root, base_dir, policy) != "safe_in_repo":
+            return False
+    return True
+
+
 def _canonical_command_target(path: str, repo_root: str | Path, base_dir: str | Path) -> Path:
     normalized, _ = _normalize_command_target(path, repo_root, base_dir)
     return Path(resolve_repo_boundary_path(repo_root=repo_root, submitted_target=normalized).canonical_target)
@@ -1173,6 +1507,78 @@ def _secret_reference_gate(
     return {"applicable": True, "deny": bool(references), "reference_count": len(references)}
 
 
+def _blank_quoted_text(command: str) -> str | None:
+    """``command`` with each quoted run replaced by filler of the same length.
+
+    None when the shells behind the tool could disagree about where a quote ends.
+    PowerShell also closes on typographic quotes, stops parsing at ``--%`` and
+    expands ``$`` and backticks inside double quotes; a backslash escapes a quote in
+    a POSIX shell only; and a quote in mid-word splits words differently.
+    """
+
+    if "'" not in command and '"' not in command:
+        return command
+    if "\\" in command or "--%" in command or _TYPOGRAPHIC_QUOTES.intersection(command):
+        return None
+    blanked: list[str] = []
+    index = 0
+    previous = " "
+    while index < len(command):
+        char = command[index]
+        if char not in "'\"":
+            blanked.append(char)
+            previous = char
+            index += 1
+            continue
+        end = command.find(char, index + 1)
+        if previous not in " \t" or end == -1:
+            return None
+        inner = command[index + 1 : end]
+        if any(mark in inner for mark in "\n\r\x00") or (char == '"' and ("$" in inner or "`" in inner)):
+            return None
+        if '"' in inner:
+            # A literal double quote ends the quoting cmd.exe applies when the
+            # program is a .cmd or .bat file, and what follows runs as a command.
+            return None
+        if end + 1 < len(command) and command[end + 1] not in " \t":
+            return None
+        blanked.append("Q" * (end - index + 1))
+        previous = "Q"
+        index = end + 1
+    return "".join(blanked)
+
+
+def _approvable_command(command: str) -> tuple[tuple[str, ...], str | None] | None:
+    """Reduce ``command`` to the one plain command a policy prefix can approve.
+
+    Three spellings do not change which program runs and are read through: quoted
+    text, a trailing ``2>&1`` and a leading ``cd <folder> &&``. The folder is
+    returned for the caller to judge. Anything else a shell would act on leaves the
+    command unapproved.
+    """
+
+    blanked = _blank_quoted_text(command)
+    text = command if blanked is None else blanked
+    start, end, folder = 0, len(text), None
+    if blanked is not None:
+        merged_streams = _STDERR_TO_STDOUT.search(text)
+        if merged_streams is not None:
+            end = merged_streams.start()
+        leading_cd = _LEADING_CD.match(text[:end])
+        if leading_cd is not None:
+            start, folder = leading_cd.end(), leading_cd.group(1)
+            if command[leading_cd.start(1) : leading_cd.end(1)] != folder:
+                # The folder was quoted: the match saw filler, not its name.
+                return None
+    if any(char in text[start:end] for char in _APPROVED_COMMAND_REJECTED_CHARACTERS):
+        return None
+    try:
+        argv = tuple(shlex.split(command[start:end]))
+    except ValueError:
+        return None
+    return (argv, folder) if argv else None
+
+
 def _command_approved_by_policy(
     hook_input: ClaudeCodePreToolUseInput,
     mapping_reasons: Sequence[str],
@@ -1192,18 +1598,33 @@ def _command_approved_by_policy(
         or hook_input.tool_name not in _COMMAND_TOOL_NAMES
         or not isinstance(command, str)
         or GUARD_SELF_DISABLE_REASON in mapping_reasons
-        or any(char in command for char in _APPROVED_COMMAND_REJECTED_CHARACTERS)
     ):
         return False
-    try:
-        argv = tuple(shlex.split(command))
-    except ValueError:
+    parsed = _approvable_command(command)
+    if parsed is None:
         return False
-    return (
-        bool(argv)
-        and policy.approves_command(argv)
-        and _classify_command_target(".", repo_root, base_dir, policy) in _PROJECT_WORKING_FOLDER_KINDS
-    )
+    argv, folder = parsed
+    if not policy.approves_command(argv):
+        return False
+    if _classify_command_target(".", repo_root, base_dir, policy) not in _PROJECT_WORKING_FOLDER_KINDS:
+        return False
+    if folder is None:
+        return True
+    # ``cd sub && bash scripts/run.sh`` runs sub's script, not the one a person
+    # approved, so after ``cd`` only prefixes that name no file are honored. And
+    # with CDPATH set, bash may enter another folder unless the name starts with ./
+    prefixes = [prefix for prefix in policy.allow_commands if argv[: len(prefix)] == prefix]
+    if not any(all(_FOLDER_INDEPENDENT_WORD.fullmatch(word) for word in prefix) for prefix in prefixes):
+        return False
+    if os.environ.get("CDPATH") and not folder.startswith("./"):
+        return False
+    try:
+        return (
+            _classify_command_target(folder, repo_root, base_dir, policy) == "safe_in_repo"
+            and _canonical_command_target(folder, repo_root, base_dir).is_dir()
+        )
+    except (OSError, ValueError):
+        return False
 
 
 def _collapse_engine_decision(
@@ -1222,6 +1643,8 @@ def _collapse_engine_decision(
     protected_path_gate: Mapping[str, Any],
     secret_reference_gate: Mapping[str, Any],
     command_approved: bool,
+    approval_held: bool = False,
+    shell_file_gate: Mapping[str, Any] | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -1270,6 +1693,19 @@ def _collapse_engine_decision(
             "structurally_classified_read_only_shell_command",
             "shell_read_paths_are_regular_non_secret_files_in_repo",
             "hook_decision_matches_engine_decision",
+        )
+
+    if shell_file_gate and shell_file_gate.get("allow") is True:
+        return ALLOW, (
+            "structurally_classified_simple_file_operation",
+            "shell_file_targets_are_regular_non_protected_paths_in_repo",
+            "hook_decision_matches_engine_decision",
+        )
+
+    if approval_held:
+        return ASK, (
+            APPROVAL_HELD_REASON,
+            "hook_decision_matches_or_is_stricter_than_engine",
         )
 
     if command_approved:
@@ -1345,6 +1781,10 @@ def _build_decision(
     reasons: Sequence[str],
     basis: Mapping[str, Any],
     updated_tool_input: Mapping[str, Any] | None = None,
+    audit_targets: Sequence[str] = (),
+    audit_commands: Sequence[str] = (),
+    written_text_names_secret_file: bool = False,
+    host_delegation_eligible: bool = False,
 ) -> HookJudgmentEngineDecision:
     payload = {
         "contract_version": PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION,
@@ -1373,6 +1813,10 @@ def _build_decision(
             >= HOOK_DECISION_STRENGTH[engine_decision]
         ),
         updated_tool_input=updated_tool_input,
+        audit_targets=tuple(audit_targets),
+        audit_commands=tuple(audit_commands),
+        written_text_names_secret_file=written_text_names_secret_file,
+        host_delegation_eligible=host_delegation_eligible,
     )
 
 
@@ -1589,7 +2033,10 @@ def _sha256_json(payload: Any) -> str:
 
 
 __all__ = [
+    "APPROVAL_HELD_REASON",
     "ENGINE_BASIS_SOURCES",
+    "OUTSIDE_PROJECT_TARGET",
+    "REVIEW_TIER_REASON",
     "PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION",
     "HookJudgmentEngineDecision",
     "HookJudgmentEngineRequest",

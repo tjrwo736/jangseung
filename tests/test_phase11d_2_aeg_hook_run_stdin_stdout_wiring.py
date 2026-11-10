@@ -224,7 +224,7 @@ class RenderHookResponseTests(unittest.TestCase):
     # --- dangerous (must deny + block) ----------------------------------
 
     def test_protected_path_writes_deny_and_block(self):
-        for path in (".env", ".github/workflows/ci.yml", ".aeg/x", "Dockerfile", "pyproject.toml", "jangseung/law/x.py"):
+        for path in (".env", ".github/workflows/ci.yml", ".aeg/x", "Dockerfile", "pyproject.toml", "scripts/deploy.sh"):
             with self.subTest(path=path):
                 result = _render(
                     {"tool_name": "Write", "tool_input": {"file_path": path, "content": "x"}, "tool_use_id": "t"},

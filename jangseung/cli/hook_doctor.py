@@ -29,11 +29,56 @@ def _regular(path: Path) -> bool:
     return stat.S_ISREG(info.st_mode) and info.st_nlink == 1
 
 
-def _config_checks(repo: Path, target: str) -> list[DoctorCheck]:
-    directory, filename = ((".codex", "config.toml") if target == "codex" else (".claude", "settings.json"))
+CLAUDE_LOCAL_SETTINGS = "settings.local.json"
+CLAUDE_LOCAL_LABEL = "claude-code local"
+
+
+def _managed_main_hook_count(path: Path) -> int:
+    """Managed main hooks in a Claude Code settings file; 0 when it cannot be read."""
+
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
+            return 0
+        text = path.read_text(encoding="utf-8")
+        entries = (json.loads(text) if text.strip() else {}).get("hooks", {}).get("PreToolUse", [])
+        return sum(
+            1 for entry in entries for hook in entry["hooks"]
+            if _is_managed_hook(hook) and _managed_hook_kind(hook) == HOOK_KIND_MAIN
+        )
+    except Exception:  # noqa: BLE001 - the full check reports unreadable files.
+        return 0
+
+
+def _claude_code_checks(repo: Path) -> list[DoctorCheck]:
+    """Claude Code reads the shared project file and a person's own file beside it."""
+
+    project = _managed_main_hook_count(repo / ".claude" / "settings.json")
+    local = _managed_main_hook_count(repo / ".claude" / CLAUDE_LOCAL_SETTINGS)
+    if local == 0:
+        return _config_checks(repo, "claude-code")
+    local_checks = _config_checks(repo, "claude-code", filename=CLAUDE_LOCAL_SETTINGS, label=CLAUDE_LOCAL_LABEL)
+    if project == 0:
+        return local_checks
+    return [
+        *_config_checks(repo, "claude-code"),
+        *local_checks,
+        DoctorCheck(
+            "claude-code duplicate registration", WARN,
+            "Both .claude/settings.json and .claude/settings.local.json register the hook; each call is judged twice.",
+            fix_hint="Keep one: run aeg uninstall for the shared file or aeg uninstall --scope local for your own.",
+        ),
+    ]
+
+
+def _config_checks(
+    repo: Path, target: str, *, filename: str | None = None, label: str | None = None,
+) -> list[DoctorCheck]:
+    directory, default_filename = ((".codex", "config.toml") if target == "codex" else (".claude", "settings.json"))
+    filename = filename or default_filename
+    label = label or target
     parent = repo / directory
     path = parent / filename
-    name = f"{target} hook config"
+    name = f"{label} hook config"
     install_hint = "Run aeg install" + (" --target codex" if target == "codex" else "") + " from the project root after reviewing the changes."
     try:
         if parent.is_symlink() or parent.resolve() != parent or path.is_symlink():
@@ -70,13 +115,13 @@ def _config_checks(repo: Path, target: str) -> list[DoctorCheck]:
     main_hooks = [(entry, hook) for entry, hook, kind in managed if kind == HOOK_KIND_MAIN]
     mcp_hooks = [(entry, hook) for entry, hook, kind in managed if kind == HOOK_KIND_MCP]
     count = len(main_hooks)
-    checks.append(DoctorCheck(f"{target} hook registration", PASS if count == 1 else WARN,
+    checks.append(DoctorCheck(f"{label} hook registration", PASS if count == 1 else WARN,
                               f"Recognized managed PreToolUse hooks: {count}. Custom wrappers are not assessed.",
                               fix_hint=install_hint if count == 0 else "Review duplicate registrations." if count > 1 else "",
                               next_step="Codex runs a project hook only after you trust it; until then nothing is blocked. Trust state is NOT_CHECKED." if target == "codex" and count else ""))
     mcp_count = len(mcp_hooks)
     opt_in = "aeg install --mcp" + (" --target codex" if target == "codex" else "")
-    checks.append(DoctorCheck(f"{target} MCP hook registration", PASS if mcp_count <= 1 else WARN,
+    checks.append(DoctorCheck(f"{label} MCP hook registration", PASS if mcp_count <= 1 else WARN,
                               f"MCP protection is off: MCP tool calls and resource reads are not checked. Opt in with {opt_in}."
                               if mcp_count == 0 else
                               "MCP protection hook is registered. Arguments are not inspected; tools are judged by name."
@@ -86,9 +131,9 @@ def _config_checks(repo: Path, target: str) -> list[DoctorCheck]:
                               if target == "codex" and mcp_count else ""))
     expected_main = CODEX_AEGIS_HOOK_MATCHER if target == "codex" else claude_code_hook_matcher()
     expected_mcp = CODEX_MCP_HOOK_MATCHER if target == "codex" else CLAUDE_CODE_MCP_HOOK_MATCHER
-    for kind, hooks, label in ((HOOK_KIND_MAIN, main_hooks, "hook"), (HOOK_KIND_MCP, mcp_hooks, "MCP hook")):
+    for kind, hooks, hook_label in ((HOOK_KIND_MAIN, main_hooks, "hook"), (HOOK_KIND_MCP, mcp_hooks, "MCP hook")):
         for index, (entry, hook) in enumerate(hooks, 1):
-            checks.extend(_hook_checks(f"{target} {label} {index}", target, kind, entry, hook,
+            checks.extend(_hook_checks(f"{label} {hook_label} {index}", target, kind, entry, hook,
                                        expected_main if kind == HOOK_KIND_MAIN else expected_mcp, install_hint))
     return checks
 
@@ -237,7 +282,7 @@ def run_hook_doctor(cwd: Path, *, target: str = "all") -> list[DoctorCheck]:
                           "Read-only project-local snapshot. No configured commands, write probes, lock recovery or network calls are performed.",
                           details=(("host_execution", "NOT_CHECKED"), ("global_settings", "NOT_CHECKED")))]
     for item in INSTALL_TARGETS if target == "all" else (target,):
-        checks.extend(_config_checks(repo, item))
+        checks.extend(_claude_code_checks(repo) if item == "claude-code" else _config_checks(repo, item))
     checks.extend(_recording_checks(repo))
     checks.append(_policy_check(repo))
     return checks

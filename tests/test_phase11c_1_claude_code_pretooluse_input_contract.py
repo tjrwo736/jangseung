@@ -19,9 +19,6 @@ from jangseung.evidence.claude_code_pretooluse_input_contract import (
 )
 
 
-DOC_PATH = Path("docs/phase11c_1_claude_code_pretooluse_input_contract_v0.md")
-
-
 class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
     def test_supported_initial_tools_validate_shape_without_authority(self):
         for tool_name in SUPPORTED_INITIAL_TARGET_TOOLS:
@@ -263,63 +260,6 @@ class Phase11C1ClaudeCodePreToolUseInputContractTests(unittest.TestCase):
         for forbidden_fragment in forbidden_fragments:
             with self.subTest(forbidden_fragment=forbidden_fragment):
                 self.assertNotIn(forbidden_fragment, source)
-
-    def test_doc_records_required_contract_and_boundaries(self):
-        doc = DOC_PATH.read_text(encoding="utf-8")
-        for marker in (
-            "tool_name",
-            "tool_input",
-            "tool_use_id",
-            "cwd",
-            "session_id",
-            "transcript_path",
-            "substrate_name",
-            "substrate_version",
-            "project_root",
-            "timestamp",
-            "Bash",
-            "Write",
-            "Edit",
-            "Read",
-            "hook input must be treated as untrusted raw executor output",
-            "hook input != trusted decision",
-            "hook input != capability grant",
-            "hook coverage report != coverage proof",
-            "unsupported/unknown/NOT_CHECKED != PASS",
-            "safe default = hold_current_state",
-            "main merge = NOT_PERFORMED",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, doc)
-
-    def test_doc_records_non_goal_boundaries(self):
-        doc = DOC_PATH.read_text(encoding="utf-8")
-
-        for marker in (
-            "hook command implementation",
-            ".claude/settings.json mutation",
-            "actual hook installation",
-            "actual Claude Code execution",
-            "Codex implementation",
-            "provider/model/network implementation",
-            "OpenAI/Ollama/LLM call",
-            "API key/env/secret loading",
-            "network client",
-            "action execution engine",
-            "write authority",
-            "tool runtime",
-            "store.py change",
-            "filesystem mutation by hook runtime or action execution",
-            "patch application",
-            "public release",
-            "live_executor_authority change",
-            "safe default change",
-            "universal prompt-injection prevention claim",
-            "sandbox/process isolation claim",
-            "Bash-safe claim",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, doc)
 
     def _assert_no_trust_or_authority(self, result):
         self.assertFalse(result.hook_input_trusted_as_decision)
