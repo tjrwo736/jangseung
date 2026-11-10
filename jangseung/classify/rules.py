@@ -678,6 +678,22 @@ def _is_docs_or_formatting_path(path: str) -> bool:
     return any(name.endswith(extension) for extension in DOCS_OR_FORMATTING_EXTENSIONS)
 
 
+# Prose that no runner picks up by default. Plain ``.txt`` is not here: pytest runs
+# ``test*.txt`` as doctests and CMake reads ``CMakeLists.txt``.
+_PROSE_EXTENSIONS = (".md", ".markdown", ".rst", ".adoc")
+_PROSE_NAMES = frozenset({".gitignore", "changelog", "license", "readme"})
+
+
+def is_prose_path(path: str) -> bool:
+    """True for a file only people read. A project can still configure a tool to run it."""
+
+    items = _normalize_changed_files([path])
+    if not items:
+        return False
+    name = items[0].rsplit("/", 1)[-1].lower()
+    return name in _PROSE_NAMES or name.endswith(_PROSE_EXTENSIONS)
+
+
 def is_documentation_path(path: str) -> bool:
     """True for prose and listing files, which no tool runs."""
 

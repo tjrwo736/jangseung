@@ -29,6 +29,7 @@ from jangseung.classify import (
     is_protected_path,
     is_read_protected_path,
     is_documentation_path,
+    is_prose_path,
     is_secret_path,
     names_secret_file,
     search_exclusion_globs,
@@ -191,6 +192,9 @@ APPROVAL_HELD_REASON = "approved_command_held_after_write_naming_secret_file"
 _WRITTEN_TEXT_SEPARATORS = re.compile(r"[\s'\"`(),;=+\[\]{}<>|&:]+")
 _MAX_WRITTEN_TEXT_SCANNED = 400_000
 _MAX_WRITTEN_WORDS_CHECKED = 40_000
+# A copied file is read whole when small; a larger one is marked without reading.
+_MAX_COPIED_BYTES_SCANNED = 1024 * 1024
+_MAX_ASKED_SOURCES_CHECKED = 8
 _MAX_AUDIT_ITEMS = 16
 # A program name is short and mostly letters. Anything else in command position, a
 # pasted token included, is recorded as "<other>" so the record cannot carry it.
@@ -530,8 +534,16 @@ def _judge_file_or_command_call(
         ),
         audit_commands=_audit_commands(hook_input),
         # A denied write puts nothing on disk, so there is nothing to mark.
-        written_text_names_secret_file=hook_decision != DENY and _written_text_names_secret_file(
-            unnormalized_input, request.target_paths, policy
+        written_text_names_secret_file=hook_decision != DENY and (
+            _written_text_names_secret_file(unnormalized_input, request.target_paths, policy)
+            or (hook_decision == ALLOW and _shell_file_operation_names_secret_file(hook_input, shell_file_gate, policy))
+            or (
+                hook_decision in {ASK, DEFER}
+                and hook_input.tool_name in _COMMAND_TOOL_NAMES
+                and _asked_shell_copy_names_secret_file(
+                    hook_input, (bash_target_gate, powershell_target_gate), repo_root, base_dir, policy
+                )
+            )
         ),
         host_delegation_eligible=(
             hook_decision == DEFER and not policy.error
@@ -650,11 +662,101 @@ def _written_text_names_secret_file(
 
     if hook_input.tool_name not in _WRITE_LIKE_TOOL_NAMES:
         return False
-    if target_paths and all(is_documentation_path(path) for path in target_paths):
+    if target_paths and all(is_prose_path(path) for path in target_paths):
         return False
+    return _text_names_secret_file(_written_text(hook_input), policy)
+
+
+def _shell_file_operation_names_secret_file(
+    hook_input: ClaudeCodePreToolUseInput,
+    shell_file_gate: Mapping[str, Any],
+    policy: HookPolicy,
+) -> bool:
+    """The same check for an allowed shell file operation that leaves a non-documentation file.
+
+    ``mv plan.md run.py`` turns text no one marked, because it went to a document,
+    into a file a command may run; ``cp`` does the same and ``echo ... > f`` writes text.
+    """
+
+    operation = shell_file_gate.get("operation")
+    paths = shell_file_gate.get("paths", ())
+    if not shell_file_gate.get("allow") or operation not in {"cp", "mv", "write"} or not paths:
+        return False
+    source, destination = Path(paths[0]), Path(paths[-1])
+    if is_prose_path(destination.name):
+        return False
+    if operation == "write":
+        command = hook_input.tool_input.get("command")
+        return isinstance(command, str) and _text_names_secret_file((command,), policy)
+    return _file_names_secret_file(source, policy)
+
+
+def _file_names_secret_file(path: Path, policy: HookPolicy) -> bool:
+    """Whether a project file's content names a secret file; unreadable or large counts as yes."""
+
+    try:
+        if path.stat().st_size > _MAX_COPIED_BYTES_SCANNED:
+            return True
+        data = path.read_bytes()
+    except OSError:
+        return True
+    texts = [data.decode("utf-8", errors="replace")]
+    if b"\x00" in data:
+        # PowerShell runs UTF-16 scripts; read them as text too.
+        texts += [data.decode(encoding, errors="replace") for encoding in ("utf-16-le", "utf-16-be")]
+    return any(_text_names_secret_file((text,), policy) for text in texts)
+
+
+def _asked_shell_copy_names_secret_file(
+    hook_input: ClaudeCodePreToolUseInput,
+    target_gates: Sequence[Mapping[str, Any]],
+    repo_root: str | Path,
+    base_dir: str | Path,
+    policy: HookPolicy,
+) -> bool:
+    """For a shell command a person is asked about: does it put named content into a runnable file?
+
+    ``cp -f plan.md conftest.py`` or ``cat plan.md > conftest.py`` asks, and the person
+    sees only names. If a project file the command names holds a secret file name and
+    a write target is not prose, mark the session, as an allowed copy would.
+    """
+
+    targets = [target for gate in target_gates for target in gate.get("targets", ())]
+    if not targets or all(is_prose_path(target) for target in targets):
+        return False
+    command = hook_input.tool_input.get("command")
+    if not isinstance(command, str):
+        return False
+    words = (
+        powershell_words(command)
+        if hook_input.tool_name == "PowerShell"
+        else tuple(bash_words(scan_bash_command(command)))
+    )
+    checked = 0
+    for word in dict.fromkeys(words):
+        if word.startswith("-") or word in targets:
+            continue
+        try:
+            if _classify_command_target(word, repo_root, base_dir, policy) != "safe_in_repo":
+                continue
+            source = _canonical_command_target(word, repo_root, base_dir)
+            if not source.is_file():
+                continue
+        except (OSError, ValueError):
+            continue
+        checked += 1
+        if checked > _MAX_ASKED_SOURCES_CHECKED or _file_names_secret_file(source, policy):
+            return True
+    return False
+
+
+def _text_names_secret_file(texts: Sequence[str], policy: HookPolicy) -> bool:
+    if sum(len(text) for text in texts) > _MAX_WRITTEN_TEXT_SCANNED:
+        # Text past the limit is not read. Marking costs a question; missing costs more.
+        return True
     scanned = 0
     words: set[str] = set()
-    for text in _written_text(hook_input):
+    for text in texts:
         piece = text[: _MAX_WRITTEN_TEXT_SCANNED - scanned]
         scanned += len(piece)
         words.update(_WRITTEN_TEXT_SEPARATORS.split(piece))
@@ -1418,7 +1520,7 @@ def _shell_file_operation_gate(
         allowed = source.is_file() and (not destination.exists() or destination.is_file())
     else:  # rm: one existing regular file, never a directory or a recursive form.
         allowed = targets[0].is_file()
-    return {"allow": allowed, "operation": operation.operation}
+    return {"allow": allowed, "operation": operation.operation, "paths": tuple(str(target) for target in targets)}
 
 
 def _host_execution_gate(

@@ -24,6 +24,27 @@ _EXECUTION_PROGRAMS = frozenset({
     "make", "gmake", "cmake", "ninja", "cargo", "rustc", "go", "dotnet", "gradle", "mvn",
 })
 _GIT_EXECUTION = frozenset({"add", "commit", "fetch", "pull", "merge", "rebase", "switch", "checkout", "stash", "cherry-pick"})
+# Leaving a request to the host is only safe when the host itself asks a person.
+# Claude Code runs read-only git forms on its own: measured with 2.1.316, it ran
+# ``git stash show -p`` with no approval and printed a stashed .env. So only stash
+# forms that change state are left to it, and no form that prints file content.
+_GIT_STASH_STATE_CHANGES = frozenset({"push", "pop", "apply", "save", "branch"})
+# git takes bundled short flags (``-pq``) and any unique prefix of a long option
+# (``--patc``), so options are matched by letter and by prefix, not by spelling.
+# ``--long``, ``--short`` and ``--porcelain`` make ``git commit`` a dry run that prints.
+_GIT_CONTENT_SHORT_FLAGS = frozenset("pvi")
+_GIT_CONTENT_LONG_OPTIONS = (
+    "patch", "verbose", "dry-run", "show-current-patch", "interactive", "long", "short", "porcelain",
+)
+
+
+def _git_option_prints_content(word: str) -> bool:
+    if word.startswith("--"):
+        name = word[2:].partition("=")[0]
+        return bool(name) and any(option.startswith(name) for option in _GIT_CONTENT_LONG_OPTIONS)
+    if word.startswith("-") and len(word) > 1:
+        return bool(_GIT_CONTENT_SHORT_FLAGS.intersection(word[1:]))
+    return False
 _GH_EXECUTION = frozenset({"pr", "issue", "run", "workflow"})
 
 
@@ -54,7 +75,14 @@ and the host permission rules, including existing allow rules, decide execution.
             # suspected guard-control invocation into host-delegated execution.
             return False
     if name == "git":
-        return bool(arguments) and arguments[0] in _GIT_EXECUTION
+        if not arguments or arguments[0] not in _GIT_EXECUTION:
+            return False
+        if any(_git_option_prints_content(word) for word in arguments[1:]):
+            return False
+        if arguments[0] == "stash":
+            subcommand = next((word for word in arguments[1:] if not word.startswith("-")), None)
+            return subcommand is None or subcommand in _GIT_STASH_STATE_CHANGES
+        return True
     if name == "gh":
         return bool(arguments) and arguments[0] in _GH_EXECUTION
     if _INTERPRETERS.fullmatch(name):
