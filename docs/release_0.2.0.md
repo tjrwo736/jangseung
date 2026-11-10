@@ -44,11 +44,13 @@ Claude Code의 정확한 `default` 모드에서는 `pytest`, `npm test`, `python
 - **기록에 대상 추가**: hook 기록에 `targets`(프로젝트 상대 경로), `commands`(프로그램 이름), `session_id`, `input_hash`가 들어갑니다. 파일 내용, 명령 인자, 명령 원문은 넣지 않습니다. `aeg evidence list`에 TOOL, WHAT 열이 생겼습니다.
 - **개인 설정 파일 설치**: `aeg install --scope local`은 `.claude/settings.local.json`에 등록합니다. 공유되는 `.claude/settings.json`에 PC별 절대 경로를 적지 않아도 됩니다.
 - **Claude Code 플러그인**: `/plugin install jangseung --marketplace tjrwo736/jangseung`. `pip` 설치 없이 hook이 동작합니다. PATH에 Python 3.10 이상이 필요하고, Windows에서는 Git Bash가 필요합니다.
-- **셸 파서 차등 테스트**: 장승의 bash·PowerShell 낱말 분리를 실제 `bash`와 PowerShell 파서의 결과와 비교하는 테스트를 추가했습니다(고정 사례와 난수 사례 841건). 이 테스트로 찾은 차이는 없습니다.
+- **셸 파서 차등 테스트**: 장승의 bash·PowerShell 낱말 분리를 실제 `bash`와 PowerShell 파서의 결과와 비교하는 테스트를 추가했습니다(고정 사례와 난수 사례 841건). macOS CI에서 찾은 14건은 명령 끝의 따옴표 없는 백슬래시였습니다. Bash 3.2는 이를 버리고 5.3은 유지하므로, 이 구문은 한쪽 해석을 택하지 않고 deny합니다. 테스트는 두 해석을 모두 대조하고 나머지 사례는 정확히 일치해야 통과합니다.
 
 ## 고친 결함
 
 - **다른 설치본이 등록되던 문제**: `aeg install`은 PATH의 `aeg`를 먼저 찾았습니다. 가상환경의 `aeg`로 설치해도 PATH에 있는 다른 설치본이 hook으로 등록될 수 있었고, 그 설치본이 예전 버전이면 예전 규칙이 판정했습니다. 이제 설치를 실행한 인터프리터의 `aeg`를 먼저 씁니다. 0.1.9 이하로 설치한 프로젝트는 `aeg doctor --hooks`로 등록된 경로를 확인하고, 다르면 `aeg install`을 다시 실행하세요.
+- **프로젝트 루트 별칭**: macOS의 `/var` → `/private/var`처럼 루트에 별칭이 있으면 새 단순 파일 조작 관문이 정상 작업도 보류했습니다. 신뢰한 프로젝트 루트 접두부만 정규화하고, 프로젝트 내부의 symlink/junction/hard link 제한은 유지합니다.
+- **OS별 경로 테스트**: POSIX에서 인코딩할 수 없는 surrogate 경로는 쓰기 전에 fail-closed deny되므로 세션 표시가 생기지 않습니다. 이를 정상 쓰기 후 기록과 구분해 검증하고, 기록기의 ASCII 저장·복원은 별도 테스트로 모든 OS에서 확인합니다. 이 수정은 쓰기 판정을 완화하지 않습니다.
 
 ## 제거
 
@@ -62,6 +64,7 @@ Claude Code의 정확한 `default` 모드에서는 `pytest`, `npm test`, `python
 2. **`aeg run`·`aeg verify`·`aeg init`을 쓰는 스크립트**는 동작하지 않습니다.
 3. **0.1.9 이하로 내리는 경우**: 호스트 위임은 `hook_decision_record_v2`, `permission_decision: host`로 기록하며 예전 버전은 v2가 든 chain을 검증하거나 이어 쓸 수 없습니다. 일반 allow/ask/deny는 v1을 유지합니다. 0.2.0은 v1/v2 혼합 chain을 검증합니다. 기록을 보존하고 다운그레이드 시 기록 운영 계획을 먼저 세우세요. 자동 삭제/변환은 하지 않습니다. `.aeg/session_marks.json`은 예전 버전이 쓰지 않습니다.
 4. hook 등록은 다시 하지 않아도 됩니다. 등록된 명령은 그대로 동작합니다.
+5. **명령 끝의 따옴표 없는 백슬래시**: Bash 버전별 의미가 달라 deny합니다. 불필요한 끝 escape를 제거하거나 의도한 리터럴을 명확히 따옴표로 묶고 다시 판정하세요. `aeg explain`은 `ambiguous_shell_syntax`로 설명합니다.
 
 ## 확인 결과
 

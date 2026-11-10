@@ -228,7 +228,7 @@ class WrittenTextScanTests(Case):
 
 
 class SessionMarkEncodingTests(Case):
-    def test_a_path_utf8_cannot_encode_is_still_marked_and_holds_the_approval(self):
+    def test_permitted_writes_are_marked_and_unencodable_paths_fail_closed(self):
         self.policy(allow_commands=["pytest"])
         for index, path in enumerate(("src/x\ud800.py", "src/\udfff\ud800y.py", "src/\U0001f600.py", "src/한글.py")):
             with self.subTest(path=ascii(path)):
@@ -236,10 +236,23 @@ class SessionMarkEncodingTests(Case):
                 out = io.StringIO()
                 payload = {"tool_name": "Write", "tool_input": {"file_path": path, "content": "open('.env').read()"},
                            "tool_use_id": "t", "cwd": str(self.root), "session_id": session}
-                run_aeg_hook_run(stdin=io.StringIO(json.dumps(payload)), stdout=out, stderr=io.StringIO(),
-                                 repo_root=self.root, working_dir=self.root)
-                reason = json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"]
+                exit_code = run_aeg_hook_run(stdin=io.StringIO(json.dumps(payload)), stdout=out, stderr=io.StringIO(),
+                                            repo_root=self.root, working_dir=self.root)
+                response = json.loads(out.getvalue())["hookSpecificOutput"]
+                reason = response["permissionDecisionReason"]
                 self.assertNotIn("session_mark_recording_failed", reason)
+                try:
+                    os.fsencode(path)
+                except UnicodeEncodeError:
+                    # POSIX cannot inspect these lone surrogates. The write is
+                    # denied before it could create code; no mark is needed.
+                    self.assertEqual(response["permissionDecision"], "deny")
+                    self.assertEqual(exit_code, 2)
+                    self.assertIn("internal_judgment_error_fail_closed_deny", reason)
+                    self.assertEqual(secret_naming_writes(self.root, session), ())
+                    continue
+                self.assertEqual(response["permissionDecision"], "allow")
+                self.assertEqual(exit_code, 0)
                 self.assertTrue(secret_naming_writes(self.root, session))
                 held = render_hook_response(
                     json.dumps({"tool_name": "Bash", "tool_input": {"command": "pytest"}, "tool_use_id": "t",
@@ -248,6 +261,16 @@ class SessionMarkEncodingTests(Case):
                 )
                 self.assertEqual(held.permission_decision, "ask")
         self.assertEqual([p.name for p in (self.root / ".aeg").iterdir() if p.name.startswith(".session-marks-")], [])
+
+    def test_recorder_preserves_surrogates_even_where_paths_are_unencodable(self):
+        self.policy(allow_commands=["pytest"])
+        paths = ["src/x\ud800.py", "src/\udfff\ud800y.py", "src/\U0001f600.py", "src/한글.py"]
+        mark_secret_naming_write(self.root, "s", paths)
+        self.assertEqual(secret_naming_writes(self.root, "s"), tuple(paths))
+        # This checks the original ASCII-recorder regression on every OS,
+        # separately from whether that OS permits the preceding Write request.
+        (self.root / ".aeg/session_marks.json").read_text(encoding="ascii")
+        self.assertEqual(self.bash("pytest"), "ask")
 
 
 class SessionMarkCapacityTests(Case):

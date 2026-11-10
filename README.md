@@ -309,6 +309,8 @@ PowerShell에서는 `Get-Content`(`gc`, `cat`, `type`), `Get-ChildItem`(`gci`, `
 
 새 문법과 호스트 위임은 자동 테스트로 검증했습니다. 파일 조작은 Windows의 실제 Git Bash와 PowerShell에서도 대조했습니다. 이 두 변경을 포함한 Claude Code 실제 세션은 사용 한도로 실행하지 못했고, Codex 실제 세션도 미확인입니다.
 
+macOS의 `/var` 별칭처럼 신뢰한 프로젝트 루트의 별칭은 정규화하지만, 프로젝트 내부 링크는 여전히 자동 허용하지 않습니다. 명령 끝의 따옴표 없는 백슬래시는 Bash 3.2와 5.3에서 의미가 달라 deny합니다. `aeg explain`은 이를 `ambiguous_shell_syntax`로 설명합니다.
+
 ### 프로젝트 승인 정책 (0.1.5부터)
 
 내장 규칙이 정상 작업을 막으면 `.aeg/policy.json`으로 프로젝트별 예외를 둘 수 있습니다. 에이전트는 어떤 도구로도 `.aeg/`에 쓸 수 없으므로 사람만 이 파일을 바꿀 수 있습니다. `.aeg/`는 보통 Git에서 제외되므로 이 설정은 해당 PC에만 적용됩니다.

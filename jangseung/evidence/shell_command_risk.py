@@ -1,8 +1,8 @@
 """Command-position risk rules shared by the Bash and PowerShell judgments.
 
 These helpers only read command text and never execute anything. A finding here
-can deny a command; finding nothing never allows one, because automatic allow
-comes only from the positive grammar in ``shell_read_only``.
+can deny a command; finding nothing never allows one. Automatic allow requires
+a positive read/file-operation grammar or the separate project approval policy.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import re
 from jangseung.classify import PathPolicy, is_secret_path
 
 GUARD_SELF_DISABLE_REASON = "dangerous_bash_guard_self_disable"
+BASH_TRAILING_ESCAPE_REASON = "bash_version_dependent_trailing_escape"
 MAX_NESTED_SHELL_DEPTH = 4
 
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -192,6 +193,11 @@ class _BashScanner:
 
     def _backslash(self) -> None:
         following = self.command[self.index + 1 : self.index + 2]
+        if not following:
+            # Bash 3.2 drops this byte at EOF; Bash 5.3 retains it. It can
+            # change an executable, subcommand or protected target, so neither
+            # interpretation is a portable basis for permission.
+            raise ValueError(BASH_TRAILING_ESCAPE_REASON)
         self.index += 2
         if following != "\n":
             self.in_word = True
@@ -658,6 +664,7 @@ def _deploy_reason(name: str, args: Sequence[str]) -> str | None:
 
 
 __all__ = [
+    "BASH_TRAILING_ESCAPE_REASON",
     "GUARD_SELF_DISABLE_REASON",
     "BashScan",
     "BashWord",

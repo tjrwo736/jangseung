@@ -23,6 +23,7 @@ from jangseung.evidence.claude_code_pretooluse_input_contract import (
     UNTRUSTED_RAW_EXECUTOR_OUTPUT,
 )
 from jangseung.evidence.shell_command_risk import (
+    BASH_TRAILING_ESCAPE_REASON,
     bash_dangerous_reasons,
     command_name,
     git_subcommand,
@@ -586,6 +587,10 @@ def _bash_risk(command: str) -> tuple[str, tuple[str, ...]]:
         )
 
     scan = scan_bash_command(stripped)
+    if scan.error == BASH_TRAILING_ESCAPE_REASON:
+        # A version-dependent parse must not hide an otherwise blocked command
+        # (for example `aeg uninstall` followed by an unquoted backslash).
+        return (BASH_DANGEROUS, (BASH_TRAILING_ESCAPE_REASON,))
     if scan.error is not None:
         return (
             BASH_NOT_CHECKED,

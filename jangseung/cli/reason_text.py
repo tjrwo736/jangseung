@@ -52,6 +52,9 @@ def explain_decision(
     if codes & {"shell_read_targets_secret_state_or_outside_repo", "shell_command_references_secret_path"}:
         return ("secret_or_outside_read", "The command reads a secret, protected state or a path outside the repository.",
                 "Run it yourself if it is needed, or list the path under allow_paths in .aeg/policy.json.")
+    if "bash_version_dependent_trailing_escape" in codes:
+        return ("ambiguous_shell_syntax", "Bash versions disagree on an unquoted trailing escape; the command is denied.",
+                "Remove the dangling escape or use an explicitly quoted literal, then check the command again.")
     if codes & {"dangerous_bash_gate_denies_command", "dangerous_powershell_gate_denies_command"}:
         return ("dangerous_command", "The existing command-risk gate identified a dangerous command.",
                 "Review the intended operation and narrow its scope; this diagnostic does not authorize execution.")

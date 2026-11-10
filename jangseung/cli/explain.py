@@ -28,6 +28,7 @@ _FIXED_CODES = frozenset({
     "aeg_integrity_guard_denies_state_dir_target",
     "tool_call_mapping_deny_candidate",
     "dangerous_bash_gate_denies_command",
+    "bash_version_dependent_trailing_escape",
     "dangerous_powershell_gate_denies_command",
     "protected_path_gate_denies_target",
     "shell_read_targets_secret_state_or_outside_repo",

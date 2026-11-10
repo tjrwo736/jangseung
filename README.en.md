@@ -309,6 +309,8 @@ Paths must be simple relative paths made of ASCII letters, digits, `_`, `-`, `.`
 
 The new grammar and host delegation have automated coverage. File operations were also compared against real Git Bash and PowerShell on Windows. A Claude Code session with these two changes could not run because of the account usage limit; a real Codex session is also unverified.
 
+Aliases of the trusted project root, such as macOS's `/var`, are normalized; links inside the project are still excluded from auto-allow. An unquoted backslash at the end of a Bash command is denied because Bash 3.2 and 5.3 interpret it differently. `aeg explain` reports `ambiguous_shell_syntax` for this case.
+
 ### Project approval policy (since 0.1.5)
 
 If the built-in rules block normal work, you can set per-project exceptions with `.aeg/policy.json`. The agent cannot write to `.aeg/` with any tool, so only a person can change this file. `.aeg/` is usually excluded from Git, so this setting applies only to that PC.

@@ -89,6 +89,7 @@ from jangseung.evidence.shell_read_only import classify_shell_read, git_output_c
 from jangseung.evidence.shell_normal_work import (
     classify_shell_file_operation, host_execution_candidate, plain_command_words,
 )
+from jangseung.evidence.shell_command_risk import BASH_TRAILING_ESCAPE_REASON
 from jangseung.evidence.structured_action_capabilities import (
     CAPABILITY_DENIED,
     CAPABILITY_GATE_ALLOWED,
@@ -503,6 +504,8 @@ def _judge_file_or_command_call(
         shell_file_gate=shell_file_gate,
     )
     hook_decision = engine_decision
+    if BASH_TRAILING_ESCAPE_REASON in action_candidate.reasons:
+        reasons = (*reasons, BASH_TRAILING_ESCAPE_REASON)
     updated_tool_input = None
     if hook_input.tool_name == "Grep" and hook_decision != DENY:
         updated_tool_input = _grep_input_without_read_protected_files(raw_hook_input["tool_input"], policy)
@@ -1374,10 +1377,22 @@ def _shell_file_operation_gate(
         return {"allow": False}
     targets = []
     root = Path(repo_root).resolve()
+    # The trusted project root itself may have an OS alias (macOS /var ->
+    # /private/var). Canonicalize that prefix only, not links below the root:
+    # resolving the whole working directory would hide an in-project link.
+    raw_base = Path(base_dir).absolute()
+    for spelling in (Path(repo_root).absolute(), root):
+        try:
+            base = root / raw_base.relative_to(spelling)
+            break
+        except ValueError:
+            continue
+    else:
+        return {"allow": False}
     for path in operation.paths:
         if _classify_command_target(path, repo_root, base_dir, policy) != "safe_in_repo":
             return {"allow": False}
-        target = Path(base_dir).absolute() / path
+        target = base / path
         # A copy/move through a link may reach a different file; hard links can
         # overwrite a secret under another name. Do not grant either case here.
         for part in (target, *target.parents):

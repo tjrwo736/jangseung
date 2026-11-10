@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 
 from jangseung.evidence.claude_code_tool_call_mapping import powershell_argvs
-from jangseung.evidence.shell_command_risk import scan_bash_command
+from jangseung.evidence.shell_command_risk import BASH_TRAILING_ESCAPE_REASON, scan_bash_command
 
 SEED = 20261110
 RANDOM_CASES = 400
@@ -241,13 +241,25 @@ class BashWordSplittingDifferentialTests(unittest.TestCase):
         expected = _bash_words(bash, cases)
         self.assertEqual(len(expected), len(cases))
         mismatches = []
+        ambiguous_endings = 0
         for case, real in zip(cases, expected):
             scan = scan_bash_command(case)
+            if scan.error == BASH_TRAILING_ESCAPE_REASON:
+                ambiguous_endings += 1
+                self.assertTrue(case.endswith("\\"))
+                # The same bytes have two real meanings across Bash versions.
+                # Check both readings explicitly; the production risk gate
+                # rejects this syntax instead of choosing the host we test on.
+                alternatives = [scan_bash_command(case[:-1]), scan_bash_command(case + "\\")]
+                self.assertTrue(all(item.error is None for item in alternatives))
+                self.assertIn(real, [[word for argv in item.argvs() for word in argv] for item in alternatives])
+                continue
             ours = None if scan.error is not None else [word for argv in scan.argvs() for word in argv]
             self.assertFalse(scan.dynamic and scan.error is None, f"static text read as dynamic: {case!r}")
             if ours != real:
                 mismatches.append((case, ours, real))
         self.assertEqual(mismatches, [], f"{len(mismatches)} of {len(cases)} cases differ from bash")
+        self.assertEqual(ambiguous_endings, 14)
 
 
 class PowerShellWordSplittingDifferentialTests(unittest.TestCase):

@@ -158,6 +158,23 @@ def test_explain_distinguishes_host_from_safe_allow(project):
     assert not answer["reason_details_redacted"]
 
 
+@pytest.mark.parametrize("command", ["pytest", "aeg uninstall", "cat .env", "echo x > notes.txt", "rm -rf ."])
+@pytest.mark.parametrize("substrate", ["claude-code", "codex"])
+def test_version_dependent_trailing_escape_is_denied(project, command, substrate):
+    # Even a policy-approved executable cannot make an ambiguous command safe.
+    (project / ".aeg/policy.json").write_text(json.dumps({"allow_commands": ["pytest"]}), encoding="utf-8")
+    answer = result(project, command + "\\", substrate=substrate)
+    assert answer.permission_decision == "deny"
+    assert answer.exit_code == (0 if substrate == "codex" else 2)
+    assert "bash_version_dependent_trailing_escape" in answer.reason_codes
+
+
+def test_trailing_escape_diagnostic_explains_ambiguity_not_proven_danger(project):
+    answer = build_explanation(payload(project, "pytest\\"), repo_root=project)
+    assert answer["category"] == "ambiguous_shell_syntax"
+    assert not answer["reason_details_redacted"]
+
+
 @pytest.mark.parametrize("command", [
     "mkdir -p docs/new", "mkdir docs", "touch new.txt", "touch one.txt two.txt",
     "cp README.md copy.md", "mv notes.txt moved.txt", "rm notes.txt",
@@ -221,6 +238,58 @@ def test_symlink_parent_never_auto_allows(project):
     except OSError as error:
         pytest.skip(f"symlinks unavailable: {type(error).__name__}")
     assert result(project, "touch linked/new.txt").permission_decision in {"ask", "deny"}
+
+
+@pytest.fixture
+def project_alias(project, tmp_path_factory):
+    alias = tmp_path_factory.mktemp("root-alias") / "project"
+    if os.name == "nt":
+        created = subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "mklink", "/J", str(alias), str(project)],
+            capture_output=True, text=True,
+        )
+        if created.returncode:
+            pytest.skip("junction creation is unavailable")
+    else:
+        alias.symlink_to(project, target_is_directory=True)
+    try:
+        yield alias
+    finally:
+        # Only unlink the fixture alias, never recurse into the project target.
+        if os.name == "nt":
+            alias.rmdir()
+        else:
+            alias.unlink()
+
+
+@pytest.mark.parametrize("canonical_cwd", [False, True])
+def test_trusted_project_root_alias_does_not_block_normal_files(project, project_alias, canonical_cwd):
+    cwd = project if canonical_cwd else project_alias
+    assert result(project_alias, "echo x > src/app.py", cwd=cwd).permission_decision == "allow"
+    assert result(project_alias, "echo x > .env", cwd=cwd).permission_decision == "deny"
+
+
+def test_in_project_link_is_not_hidden_by_a_root_alias(project, project_alias):
+    # A link to the root from inside it must not be mistaken for the trusted
+    # root spelling. This also checks a link used as the working directory.
+    link = project / "linked"
+    if os.name == "nt":
+        created = subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "mklink", "/J", str(link), str(project)],
+            capture_output=True, text=True,
+        )
+        if created.returncode:
+            pytest.skip("junction creation is unavailable")
+    else:
+        link.symlink_to(project, target_is_directory=True)
+    try:
+        assert result(project_alias, "touch linked/new.txt").permission_decision in {"ask", "deny"}
+        assert result(project_alias, "touch new.txt", cwd=project_alias / "linked").permission_decision in {"ask", "deny"}
+    finally:
+        if os.name == "nt":
+            link.rmdir()
+        else:
+            link.unlink()
 
 
 @pytest.mark.parametrize("operator", [";", "&&", "||", "|", "&", "\n", "\r", "\x00", "\x0c", "\u00a0", "\u2003"])
