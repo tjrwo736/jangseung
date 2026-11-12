@@ -28,6 +28,7 @@ from jangseung.classify import (
     is_host_resolved_path,
     is_protected_path,
     is_read_protected_path,
+    is_agent_instruction_path,
     is_prose_path,
     is_secret_path,
     names_secret_file,
@@ -98,7 +99,7 @@ from jangseung.evidence.shell_glob_targets import (
     reads_matched_files,
     repository_relative_text,
 )
-from jangseung.evidence.shell_read_only import classify_shell_read, git_output_command
+from jangseung.evidence.shell_read_only import classify_shell_read, git_output_command, split_command_sequence
 from jangseung.evidence.shell_normal_work import (
     classify_shell_file_operation, host_execution_candidate, plain_command_words,
 )
@@ -121,6 +122,7 @@ from jangseung.evidence.structured_actions import (
     WRITE_FILE,
 )
 from jangseung.law import apply_law
+from jangseung.state.allow_once import approved_once as _approved_once_on_file
 from jangseung.state.session_marks import secret_naming_writes
 
 PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION = (
@@ -199,6 +201,7 @@ _FOLDER_INDEPENDENT_WORD = re.compile(r"-{0,2}[A-Za-z0-9_+:=@-]+")
 # ``bypassPermissions`` were not measured.
 _MODES_WHERE_HOST_ASKS_A_PERSON = frozenset({"default", "acceptEdits"})
 REVIEW_TIER_REASON = "build_or_dependency_file_change_needs_user_review"
+AGENT_INSTRUCTION_REASON = "agent_instruction_file_change_needs_user_review"
 APPROVAL_HELD_REASON = "approved_command_held_after_write_naming_secret_file"
 
 _WRITTEN_TEXT_SEPARATORS = re.compile(r"[\s'\"`(),;=+\[\]{}<>|&:]+")
@@ -328,6 +331,21 @@ class HookJudgmentEngineDecision:
         }
 
 
+def _changes_agent_instructions(decision: HookJudgmentEngineDecision) -> bool:
+    """Whether a file the call writes is an agent instruction file, for the stop's wording."""
+
+    paths = list(decision.request.target_paths)
+    basis = decision.engine_decision_basis
+    for key in ("bash_target_gate", "powershell_target_gate", "shell_file_gate"):
+        gate = basis.get(key)
+        if isinstance(gate, Mapping):
+            for field in ("targets", "paths"):
+                values = gate.get(field)
+                if isinstance(values, (list, tuple)):
+                    paths.extend(str(value) for value in values)
+    return any(is_agent_instruction_path(path) for path in paths)
+
+
 def judge_pretooluse_with_aeg_engine(
     raw_hook_input: Mapping[str, Any],
     *,
@@ -391,7 +409,11 @@ def judge_pretooluse_with_aeg_engine(
         request=reviewed.request,
         engine_decision=ASK,
         hook_decision=ASK,
-        reasons=(REVIEW_TIER_REASON, "hook_decision_matches_or_is_stricter_than_engine"),
+        reasons=(
+            REVIEW_TIER_REASON,
+            *((AGENT_INSTRUCTION_REASON,) if _changes_agent_instructions(reviewed) else ()),
+            "hook_decision_matches_or_is_stricter_than_engine",
+        ),
         basis={
             **reviewed.engine_decision_basis,
             "review_tier": {
@@ -447,6 +469,10 @@ def _judge_file_or_command_call(
     shell_file_gate = _shell_file_operation_gate(hook_input, repo_root, base_dir, policy)
     secret_reference_gate = _secret_reference_gate(hook_input, shell_read_gate, policy, repo_root, base_dir)
     approved_by_policy = _command_approved_by_policy(hook_input, action_candidate.reasons, policy, repo_root, base_dir)
+    approved_once = not approved_by_policy and _command_approved_once(
+        hook_input, action_candidate.reasons, policy, repo_root, base_dir
+    )
+    approved_by_policy = approved_by_policy or approved_once
     # An approved command runs project code. Once this session has written text that
     # names a secret file, that code may read it, so the approval goes back to a person.
     approval_held = approved_by_policy and secret_naming_writes(
@@ -491,6 +517,7 @@ def _judge_file_or_command_call(
             "present": policy.present,
             "error": policy.error,
             "command_approved": command_approved,
+            "approved_once": approved_once,
             "approval_held": approval_held,
         },
         "dangerous_bash_gate": dangerous_bash_gate,
@@ -519,6 +546,7 @@ def _judge_file_or_command_call(
         approval_held=approval_held,
         shell_file_gate=shell_file_gate,
         action_reasons=action_candidate.reasons,
+        approved_once=approved_once,
     )
     hook_decision = engine_decision
     if BASH_TRAILING_ESCAPE_REASON in action_candidate.reasons:
@@ -527,9 +555,15 @@ def _judge_file_or_command_call(
     if hook_input.tool_name == "Grep" and hook_decision != DENY:
         updated_tool_input = _grep_input_without_read_protected_files(raw_hook_input["tool_input"], policy)
     elif hook_decision == ALLOW and shell_read_gate.get("allow"):
-        updated_tool_input = _git_input_without_read_protected_files(
-            raw_hook_input["tool_input"], hook_input.tool_name, repo_root, base_dir, policy
-        )
+        if shell_read_gate.get("sequence_parts"):
+            rebuilt_command = shell_read_gate.get("rebuilt_command")
+            updated_tool_input = (
+                {**raw_hook_input["tool_input"], "command": rebuilt_command} if rebuilt_command else None
+            )
+        else:
+            updated_tool_input = _git_input_without_read_protected_files(
+                raw_hook_input["tool_input"], hook_input.tool_name, repo_root, base_dir, policy
+            )
     return _build_decision(
         request=request,
         engine_decision=engine_decision,
@@ -1437,12 +1471,24 @@ def _shell_read_only_gate(
 ) -> dict[str, Any]:
     if hook_input.tool_name not in _COMMAND_TOOL_NAMES:
         return {"classified": False, "allow": False, "deny": False}
-    extraction = classify_shell_read(
-        hook_input.tool_input.get("command"), tool_name=hook_input.tool_name,
-    )
-    if not extraction.classified:
-        return {"classified": False, "allow": False, "deny": False}
+    command = hook_input.tool_input.get("command")
+    extraction = classify_shell_read(command, tool_name=hook_input.tool_name)
+    if extraction.classified:
+        verdicts = _read_verdicts(extraction, repo_root, base_dir, policy)
+        return {
+            "classified": True,
+            "allow": all(verdict == "readable" for verdict in verdicts),
+            "deny": any(verdict in _SHELL_READ_DENY_KINDS for verdict in verdicts),
+            "path_verdicts": tuple(verdicts),
+        }
+    if hook_input.tool_name == "Bash":
+        return _shell_read_sequence_gate(command, hook_input.tool_name, repo_root, base_dir, policy)
+    return {"classified": False, "allow": False, "deny": False}
 
+
+def _read_verdicts(
+    extraction: Any, repo_root: str | Path, base_dir: str | Path, policy: HookPolicy
+) -> list[str]:
     def kind(path: str) -> str:
         return _classify_command_target(path, repo_root, base_dir, policy)
 
@@ -1461,6 +1507,9 @@ def _shell_read_only_gate(
         verdicts.append("unguarded_git_directory")
     if extraction.git_output is not None and not extraction.git_output.can_be_narrowed:
         verdicts.append("git_output_cannot_be_narrowed")
+    for program in getattr(extraction, "programs", ()):
+        if not _program_lives_outside_project(program, repo_root):
+            verdicts.append("program_found_inside_project")
     # The host runs the command in the folder it reports, which can be another
     # repository (Codex's workdir), and a form naming no path says nothing about it.
     for path in (".", *extraction.metadata_paths):
@@ -1471,12 +1520,110 @@ def _shell_read_only_gate(
             verdicts.append("readable")
         else:
             verdicts.append("metadata_of_state" if verdict == "protected_state_dir" else verdict)
-    return {
+    return verdicts
+
+
+def _program_lives_outside_project(name: str, repo_root: str | Path) -> bool:
+    """Where PATH finds ``name``, and whether that is outside the project.
+
+    ``python --version`` runs whatever ``python`` PATH finds first. If that is in a
+    folder of the project, such as an activated ``.venv`` inside it, the agent may
+    have written it. Not found counts as inside: the host may find another one.
+    """
+
+    extensions = [""]
+    if os.name == "nt":
+        extensions = [item for item in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";") if item]
+        extensions.insert(0, "")
+    root = os.path.normcase(os.path.abspath(str(repo_root)))
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            return False  # A relative PATH entry is the working folder: the project.
+        for extension in extensions:
+            candidate = os.path.join(folder, name + extension)
+            try:
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    resolved = os.path.normcase(os.path.realpath(candidate))
+                    try:
+                        inside = os.path.commonpath([resolved, root]) == root
+                    except ValueError:
+                        inside = False
+                    return not inside
+            except (OSError, ValueError):
+                return False
+    return False
+
+
+def _shell_read_sequence_gate(
+    command: Any, tool_name: str, repo_root: str | Path, base_dir: str | Path, policy: HookPolicy
+) -> dict[str, Any]:
+    """``ls -la; pwd``, ``cd src && ls``: each part judged as its own read command.
+
+    Every part must be in the read grammar, judged in the folder it runs in. A ``cd``
+    is followed only through an unbroken ``&&`` chain, so a later part runs only
+    where the ``cd`` succeeded. A part that prints git file content is rebuilt with
+    the same exclusions as a single command, and the whole line is returned rebuilt.
+    """
+
+    unclassified = {"classified": False, "allow": False, "deny": False}
+    sequence = split_command_sequence(command) if isinstance(command, str) else None
+    if sequence is None:
+        return unclassified
+    parsed: list[tuple[str, str, list[str] | None]] = []
+    for segment, operator in sequence:
+        try:
+            parsed.append((segment, operator, shlex.split(segment)))
+        except ValueError:
+            return unclassified
+    changes_folder = any(words[:1] == ["cd"] for _, _, words in parsed)
+    if changes_folder and any(operator not in {"&&", ""} for _, operator, _ in parsed):
+        return unclassified
+    folder = Path(base_dir)
+    verdicts: list[str] = []
+    rebuilt: list[str] = []
+    narrowed = False
+    for segment, operator, words in parsed:
+        extraction = classify_shell_read(segment, tool_name=tool_name)
+        if not extraction.classified:
+            return unclassified
+        segment_verdicts = _read_verdicts(extraction, repo_root, folder, policy)
+        verdicts.extend(segment_verdicts)
+        text = segment
+        if extraction.git_output is not None:
+            narrowed = True
+            output = _git_input_without_read_protected_files({"command": segment}, tool_name, repo_root, folder, policy)
+            if output is None:
+                verdicts.append("git_output_cannot_be_narrowed")
+            else:
+                text = output["command"]
+        rebuilt.append(f"{text} {operator} " if operator else text)
+        if words and words[0] == "cd":
+            target = words[1]
+            # The path rules strip edge spaces and trailing dots, which bash keeps:
+            # ``cd 'src '`` is another folder than ``src``.
+            if any(part != part.strip() or (part.endswith(".") and part not in {".", ".."})
+                   for part in "/".join(target.split("\\")).split("/")):
+                return unclassified
+            if (
+                os.environ.get("CDPATH") and not target.startswith("./")
+            ) or _classify_command_target(target, repo_root, folder, policy) != "safe_in_repo":
+                return unclassified
+            try:
+                folder = _canonical_command_target(target, repo_root, folder)
+            except (OSError, ValueError):
+                return unclassified
+            if not folder.is_dir():
+                return unclassified
+    gate: dict[str, Any] = {
         "classified": True,
         "allow": all(verdict == "readable" for verdict in verdicts),
         "deny": any(verdict in _SHELL_READ_DENY_KINDS for verdict in verdicts),
         "path_verdicts": tuple(verdicts),
+        "sequence_parts": len(parsed),
     }
+    if narrowed:
+        gate["rebuilt_command"] = "".join(rebuilt)
+    return gate
 
 
 def _shell_file_operation_gate(
@@ -1543,10 +1690,42 @@ def _host_execution_gate(
     policy: HookPolicy,
 ) -> bool:
     command = hook_input.tool_input.get("command")
-    if hook_input.tool_name not in _COMMAND_TOOL_NAMES or not host_execution_candidate(command):
+    if hook_input.tool_name not in _COMMAND_TOOL_NAMES or not isinstance(command, str):
         return False
     if _classify_command_target(".", repo_root, base_dir, policy) != "safe_in_repo":
         return False
+    if host_execution_candidate(command):
+        return _host_command_words_ok(command, repo_root, base_dir, policy)
+    # ``git add -A && git commit -m wip``: every part is an execution request the
+    # host asks about, or a read this hook would allow on its own. A part that
+    # changes folder or prints git file content is not left to the host, which
+    # would run such a read itself.
+    sequence = split_command_sequence(command) if hook_input.tool_name == "Bash" else None
+    if sequence is None:
+        return False
+    executes = False
+    for segment, _ in sequence:
+        if host_execution_candidate(segment):
+            if not _host_command_words_ok(segment, repo_root, base_dir, policy):
+                return False
+            executes = True
+            continue
+        extraction = classify_shell_read(segment, tool_name=hook_input.tool_name)
+        if (
+            not extraction.classified
+            or extraction.git_output is not None
+            or plain_command_words(segment)[:1] == ("cd",)
+            or segment.lstrip().startswith("cd")
+        ):
+            return False
+        if not all(verdict == "readable" for verdict in _read_verdicts(extraction, repo_root, base_dir, policy)):
+            return False
+    return executes
+
+
+def _host_command_words_ok(
+    command: str, repo_root: str | Path, base_dir: str | Path, policy: HookPolicy
+) -> bool:
     words = plain_command_words(command)
     if words[0] == "git" and not _git_uses_a_guarded_repository(base_dir):
         return False
@@ -1900,6 +2079,43 @@ def _approvable_command(command: str) -> tuple[tuple[str, ...], str | None] | No
     return (argv, folder) if argv else None
 
 
+ALLOW_ONCE_REASON = "hook_allow_once_approved_command"
+
+
+def _command_approved_once(
+    hook_input: ClaudeCodePreToolUseInput,
+    mapping_reasons: Sequence[str],
+    policy: HookPolicy,
+    repo_root: str | Path,
+    base_dir: str | Path,
+) -> bool:
+    """A person approved this exact command text once, with ``aeg allow-once``.
+
+    It lifts what an ``allow_commands`` entry lifts and nothing more: the target,
+    secret and guard gates still apply, guard commands are never lifted, and the
+    working folder must be the project's.
+    """
+
+    command = hook_input.tool_input.get("command")
+    if (
+        hook_input.tool_name not in _COMMAND_TOOL_NAMES
+        or not isinstance(command, str)
+        or GUARD_SELF_DISABLE_REASON in mapping_reasons
+        or not _is_project_root_folder(base_dir, repo_root)
+    ):
+        return False
+    return _approved_once_on_file(command, repo_root, hook_input.tool_name)
+
+
+def _is_project_root_folder(base_dir: str | Path, repo_root: str | Path) -> bool:
+    """The approval names a command, and the same command runs other code in a subfolder."""
+
+    try:
+        return Path(base_dir).resolve() == Path(repo_root).resolve()
+    except (OSError, ValueError):
+        return False
+
+
 def _command_approved_by_policy(
     hook_input: ClaudeCodePreToolUseInput,
     mapping_reasons: Sequence[str],
@@ -1987,6 +2203,7 @@ def _collapse_engine_decision(
     approval_held: bool = False,
     shell_file_gate: Mapping[str, Any] | None = None,
     action_reasons: Sequence[str] = (),
+    approved_once: bool = False,
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -2056,7 +2273,7 @@ def _collapse_engine_decision(
 
     if command_approved:
         return ALLOW, (
-            "hook_policy_approved_command",
+            ALLOW_ONCE_REASON if approved_once else "hook_policy_approved_command",
             "hook_decision_matches_engine_decision",
         )
 

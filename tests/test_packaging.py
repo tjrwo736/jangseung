@@ -19,7 +19,7 @@ class PackagingMetadataTests(unittest.TestCase):
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         self.assertEqual(pyproject["project"]["name"], "jangseung")
-        self.assertEqual(pyproject["project"]["version"], "0.2.2")
+        self.assertEqual(pyproject["project"]["version"], "0.3.0")
         self.assertEqual(pyproject["project"]["dependencies"], ["tomlkit>=0.13,<1"])
         self.assertEqual(pyproject["project"]["scripts"]["aeg"], "jangseung.cli.entry:main")
         self.assertEqual(

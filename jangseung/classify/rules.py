@@ -139,7 +139,11 @@ PROTECTED_FILE_NAME_GLOBS = (
     "dockerfile.*",
     "*.dockerfile",
     "docker-compose.yml",
+    "docker-compose.yaml",
     "docker-compose.*.yml",
+    "docker-compose.*.yaml",
+    "compose.yml",
+    "compose.yaml",
     "pyproject.toml",
     "setup.cfg",
     "setup.py",
@@ -149,6 +153,81 @@ PROTECTED_FILE_NAME_GLOBS = (
     "makefile",
     "gnumakefile",
     ".pre-commit-config.yaml",
+    # 0.3.0: task runners and test configuration that run commands.
+    "justfile",
+    ".justfile",
+    "taskfile.yml",
+    "taskfile.yaml",
+    "tox.ini",
+    "noxfile.py",
+    "pytest.ini",
+    "lefthook.yml",
+    "lefthook.yaml",
+    ".lefthook.yml",
+    ".lefthook.yaml",
+    # Python runs these at start-up from any folder on its path.
+    "sitecustomize.py",
+    "usercustomize.py",
+    # Build and dependency files of other languages.
+    "cargo.toml",
+    "build.rs",
+    "go.mod",
+    "go.work",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "pom.xml",
+    "gemfile",
+    "rakefile",
+    "composer.json",
+    "cmakelists.txt",
+    "*.cmake",
+    "meson.build",
+    "build.zig",
+    "deno.json",
+    "deno.jsonc",
+    "bunfig.toml",
+    ".yarnrc.yml",
+    # JavaScript configuration is code: build tools, test runners and linters run it.
+    "*.config.js",
+    "*.config.cjs",
+    "*.config.mjs",
+    "*.config.ts",
+    "*.config.cts",
+    "*.config.mts",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+    ".babelrc.js",
+    ".prettierrc.js",
+    ".prettierrc.cjs",
+    "gulpfile.*",
+    "gruntfile.*",
+    # Deployment settings that name a build command.
+    "netlify.toml",
+    "vercel.json",
+)
+
+# Instructions that coding agents load in later sessions. An agent that rewrites
+# them steers the next session, so a person sees the change. They are judged
+# like build files: ask where a person is asked, deny elsewhere.
+AGENT_INSTRUCTION_FILE_NAMES = (
+    "claude.md",
+    "claude.local.md",
+    "agents.md",
+    "gemini.md",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+)
+AGENT_INSTRUCTION_GLOBS = (
+    "*.claude/commands/*",
+    "*.claude/agents/*",
+    "*.claude/skills/*",
+    "*.cursor/rules/*",
+    "*.github/copilot-instructions.md",
+    "*.github/instructions/*",
+    "*.gemini/*",
 )
 
 PROTECTED_PREFIXES = (
@@ -165,11 +244,17 @@ PROTECTED_GLOBS = (
     "requirements*.txt",
     "scripts/deploy*",
     "scripts/release*",
+    # Editor and container settings that run commands when a folder is opened.
+    "*.vscode/tasks.json",
+    "*.vscode/settings.json",
+    "*.vscode/launch.json",
+    "*.devcontainer/*",
+    "*.devcontainer.json",
 )
 
 # The guard's own configuration and state. Nothing, including a project policy,
 # can make these writable: an agent that edits them can turn the guard off.
-GUARD_DIRECTORY_NAMES = frozenset({".aeg", ".git", ".codex", ".husky"})
+GUARD_DIRECTORY_NAMES = frozenset({".aeg", ".git", ".codex", ".husky", ".jangseung"})
 GUARD_FILE_NAMES = frozenset({".mcp.json", ".claude.json", ".gitconfig", ".gitmodules"})
 CLAUDE_DIRECTORY = ".claude"
 CLAUDE_AGENT_AUTHORED_DIRECTORIES = frozenset({"commands", "agents", "skills", "worktrees"})
@@ -557,12 +642,31 @@ def is_protected_path(path: str, policy: PathPolicy | None = None) -> bool:
 def _is_review_tier(parts: tuple[str, ...]) -> bool:
     if any(fnmatchcase(parts[-1], pattern) for pattern in PROTECTED_FILE_NAME_GLOBS):
         return True
+    if _is_agent_instruction(parts):
+        return True
     item = "/".join(_without_claude_worktree(parts))
     if item in PROTECTED_EXACT_PATHS:
         return True
     if any(item.startswith(prefix) for prefix in PROTECTED_PREFIXES):
         return True
     return any(fnmatchcase(item, pattern) for pattern in PROTECTED_GLOBS)
+
+
+def _is_agent_instruction(parts: tuple[str, ...]) -> bool:
+    parts = _without_claude_worktree(parts)
+    if not parts:
+        return False
+    if parts[-1] in AGENT_INSTRUCTION_FILE_NAMES:
+        return True
+    item = "/".join(parts)
+    return any(fnmatchcase(item, pattern) for pattern in AGENT_INSTRUCTION_GLOBS)
+
+
+def is_agent_instruction_path(path: str) -> bool:
+    """True for a file that coding agents read as instructions in later sessions."""
+
+    parts = _policy_parts(path)
+    return bool(parts) and _is_agent_instruction(parts)
 
 
 def is_review_path(path: str, policy: PathPolicy | None = None) -> bool:

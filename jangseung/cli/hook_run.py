@@ -54,6 +54,7 @@ from jangseung.evidence.hook_judgment_engine_alignment import (
     judge_pretooluse_with_aeg_engine,
 )
 from jangseung.state.hook_ledger import append_hook_decision_record
+from jangseung.state.allow_once import consume_once
 from jangseung.state.session_marks import mark_secret_naming_write, session_key
 
 
@@ -70,6 +71,12 @@ PERMISSION_ASK = "ask"
 # Internal diagnostic/ledger value only; NEVER sent as permissionDecision.
 PERMISSION_HOST = "host"
 HOST_PERMISSION_FLOW_REASON = "claude_default_host_permission_flow"
+ALLOW_ONCE_REASON = "hook_allow_once_approved_command"
+ALLOW_ONCE_NOT_SPENT_REASON = "allow_once_could_not_be_spent_fail_closed_deny"
+# Modes where Claude Code was measured to ask a person before every command family
+# this hook leaves to it (2.1.316, Windows, 33 forms each, 2026-11-12). ``acceptEdits``
+# runs file commands such as ``rm`` on its own, which is why those are never left to it.
+HOST_DELEGATION_MODES = frozenset({"default", "acceptEdits"})
 
 SUBSTRATE_CLAUDE_CODE = "claude-code"
 SUBSTRATE_CODEX = "codex"
@@ -123,6 +130,9 @@ class HookRunResult:
     audit_commands: tuple[str, ...] = ()
     input_hash: str = ""
     written_text_names_secret_file: bool = False
+    # The exact command an ``aeg allow-once`` approval allowed; spent before the answer is sent.
+    allow_once_command: str = ""
+    allow_once_tool: str = ""
 
 
 def render_hook_response(
@@ -215,7 +225,8 @@ def render_hook_response(
     reason_codes = (*decision_reasons, *substrate_reason_codes)
     if (
         effective_substrate == SUBSTRATE_CLAUDE_CODE
-        and payload.get("permission_mode") == "default"
+        and isinstance(payload.get("permission_mode"), str)
+        and payload.get("permission_mode") in HOST_DELEGATION_MODES
         and hook_decision == DEFER
         and decision.host_delegation_eligible
         and updated_input is None
@@ -257,6 +268,12 @@ def render_hook_response(
         written_text_names_secret_file=(
             decision.written_text_names_secret_file and permission_decision != PERMISSION_DENY
         ),
+        allow_once_command=(
+            str(payload.get("tool_input", {}).get("command", ""))
+            if permission_decision == PERMISSION_ALLOW and ALLOW_ONCE_REASON in reason_codes
+            else ""
+        ),
+        allow_once_tool=str(tool_name or ""),
     )
 
 
@@ -330,6 +347,20 @@ def run_aeg_hook_run(
             fail_closed=True,
             substrate=_normalize_substrate(substrate),
         )
+    if result.allow_once_command:
+        # The approval is spent before the answer leaves. If it cannot be spent, or
+        # another call spent it first, the command is not allowed on its strength.
+        try:
+            spent = consume_once(result.allow_once_command, repo_root, result.allow_once_tool or "Bash")
+        except Exception:  # noqa: BLE001
+            spent = False
+        if not spent:
+            result = _deny_result(
+                ALLOW_ONCE_NOT_SPENT_REASON,
+                hook_decision=result.hook_decision,
+                fail_closed=True,
+                substrate=result.substrate,
+            )
     try:
         append_hook_decision_record(
             repo_root,

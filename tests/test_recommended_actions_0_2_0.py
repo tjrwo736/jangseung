@@ -338,9 +338,9 @@ class HookRecordTests(ProjectCase):
         self.assertTrue(deny["permissionDecisionReason"].startswith("Jangseung: This reads a secret file"))
         self.assertIn("aeg policy add --path", deny["permissionDecisionReason"])
         self.assertIn("aegis_pretooluse permissionDecision=deny", deny["permissionDecisionReason"])
-        # acceptEdits retains explicit ask; default-mode execution now emits no
+        # plan mode retains explicit ask; default and acceptEdits execution emit no
         # permission decision, tested separately in test_approval_fatigue_0_2_0.
-        _, ask = self.run_hook("Bash", {"command": "pytest super-secret-argument"}, mode="acceptEdits")
+        _, ask = self.run_hook("Bash", {"command": "pytest super-secret-argument"}, mode="plan")
         self.assertTrue(ask["permissionDecisionReason"].startswith("Jangseung: "))
         self.assertNotIn("super-secret-argument", ask["permissionDecisionReason"])
         _, allow = self.run_hook("Read", {"file_path": "README.md"})

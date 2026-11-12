@@ -28,6 +28,9 @@ HOOK_HOST_RECORD_VERSION = "hook_decision_record_v2"
 HOOK_RECORD_HASH_GENESIS = "0" * 64
 HOOK_LEDGER_REPAIRED_REASON = "hook_ledger_repaired"
 HOOK_LEDGER_REPAIR_TOOL_NAME = "aeg-evidence-repair-hooks"
+HOOK_LEDGER_ARCHIVED_REASON = "hook_ledger_archived"
+HOOK_LEDGER_ARCHIVE_TOOL_NAME = "aeg-evidence-archive-hooks"
+HOOK_LEDGER_ARCHIVE_DIR = "archive"
 _TAIL_CHUNK_BYTES = 64 * 1024
 
 _REQUIRED_FIELDS = (
@@ -174,6 +177,76 @@ def hook_ledger_needs_repair(repo_root: str | Path) -> bool:
     if any(not item.readable for item in read_hook_ledger(repo_root)):
         return True
     return _has_torn_tail(state_root(repo_root) / HOOK_LEDGER_FILE)
+
+
+@dataclass(frozen=True)
+class HookLedgerArchive:
+    archived_records: int
+    archive_path: str | None
+
+
+def archive_hook_ledger(repo_root: str | Path) -> HookLedgerArchive:
+    """Move an intact ledger to ``.aeg/archive/`` and start a new chain that names it.
+
+    The new chain's first record holds the archived file's record count, last record
+    hash and SHA-256, so the two files stay linked: the archive can be checked
+    against the record, and ``verify-hooks`` checks the new file from its start.
+    A damaged ledger is refused; repair it first.
+    """
+
+    root = state_root(repo_root)
+    if not root.is_dir():
+        raise FileNotFoundError("Aegis state is not initialized; .aeg directory is missing")
+    ledger_path = root / HOOK_LEDGER_FILE
+    lock_path = root / HOOK_LEDGER_LOCK_FILE
+    if ledger_path.is_symlink() or lock_path.is_symlink():
+        raise ValueError("hook ledger and its lock must not be symbolic links")
+    with _exclusive_lock(lock_path):
+        if not ledger_path.is_file():
+            return HookLedgerArchive(0, None)
+        items = read_hook_ledger(repo_root)
+        if not items:
+            return HookLedgerArchive(0, None)
+        if hook_ledger_needs_repair(repo_root):
+            raise ValueError("hook ledger is damaged; run aeg evidence repair-hooks first")
+        tail = items[-1].record
+        raw = ledger_path.read_bytes()
+        archive_root = root / HOOK_LEDGER_ARCHIVE_DIR
+        if archive_root.is_symlink() or (archive_root.exists() and not archive_root.is_dir()):
+            raise ValueError(".aeg/archive must be a local directory")
+        archive_root.mkdir(exist_ok=True)
+        stamp = re.sub(r"[^0-9A-Za-z]", "", _utc_timestamp())
+        archive = archive_root / f"hook_ledger-{stamp}.jsonl"
+        counter = 1
+        while archive.exists():
+            archive = archive_root / f"hook_ledger-{stamp}-{counter}.jsonl"
+            counter += 1
+        archive.write_bytes(raw)
+        if archive.read_bytes() != raw:
+            raise OSError("the archive copy does not match the ledger")
+        temporary = root / f"{HOOK_LEDGER_FILE}.archive-{stamp}"
+        temporary.write_bytes(b"")
+        os.replace(temporary, ledger_path)
+        _append_record(
+            ledger_path,
+            previous_hash=HOOK_RECORD_HASH_GENESIS,
+            sequence_number=1,
+            timestamp=None,
+            substrate="claude-code",
+            tool_name=HOOK_LEDGER_ARCHIVE_TOOL_NAME,
+            hook_decision=None,
+            permission_decision="deny",
+            fail_closed=False,
+            reason_codes=(
+                HOOK_LEDGER_ARCHIVED_REASON,
+                f"archived_file:{archive.name}",
+                f"archived_records:{len(items)}",
+                f"archived_last_record_hash:{tail['record_hash'] if tail else ''}",
+                f"archived_sha256:{hashlib.sha256(raw).hexdigest()}",
+            ),
+            exit_code=0,
+        )
+        return HookLedgerArchive(len(items), str(archive))
 
 
 def repair_hook_ledger(repo_root: str | Path) -> HookLedgerRepair:
@@ -546,8 +619,11 @@ def _utc_timestamp() -> str:
 
 
 __all__ = [
+    "HOOK_LEDGER_ARCHIVED_REASON",
     "HOOK_LEDGER_FILE",
     "HOOK_LEDGER_REPAIRED_REASON",
+    "HookLedgerArchive",
+    "archive_hook_ledger",
     "HOOK_RECORD_HASH_GENESIS",
     "HOOK_RECORD_VERSION",
     "HookLedgerItem",

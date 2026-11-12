@@ -177,7 +177,7 @@ _PYTHON_MODULE_FLAG = re.compile(r"-[bBdEhiIOPqsSuvVx]*m(.*)")
 _PYTHON_VALUE_OPTIONS = frozenset({"-W", "-X", "--check-hash-based-pycs"})
 _TOOL_RUNNERS = frozenset({"uv", "pipx", "poetry", "pdm", "hatch"})
 # ``policy`` is here because it widens what agents may do; only a person runs it.
-_GUARD_COMMANDS = frozenset({"uninstall", "install", "repair-hooks", "policy"})
+_GUARD_COMMANDS = frozenset({"uninstall", "install", "repair-hooks", "policy", "allow-once", "archive-hooks"})
 
 _POWERSHELL_DYNAMIC = frozenset({"invoke-expression", "iex"})
 _POWERSHELL_NETWORK = frozenset({"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "start-bitstransfer"})
@@ -823,6 +823,21 @@ def _publish_reason(name: str, args: Sequence[str]) -> str | None:
         if tuple(positional[: len(sequence)]) == sequence:
             return f"dangerous_bash_publish:{name}"
     return None
+
+
+def programs_with_dangerous_subcommands() -> frozenset[str]:
+    """Programs that are safe for some subcommands and dangerous for others."""
+
+    return frozenset(
+        {
+            *_PUBLISH_SUBCOMMANDS, *_PUBLISH_SEQUENCES, *_REMOTE_RESOURCE_CLIS, *_DATABASE_CLIENTS,
+            *_DATABASE_DROP_COMMANDS, *_PARTITION_SHOW_OPTIONS, *_DANGEROUS_COMMANDS, *_POSIX_SHELLS,
+            *_POWERSHELL_SHELLS, *_WRAPPER_COMMANDS,
+            "git", "gh", "mysqladmin", "pg_restore", "mongorestore", "diskutil", "vssadmin", "bcdedit", "shutdown",
+            "systemctl", "init", "telinit", "format", "kill", "pkill", "killall", "rm", "find", "xargs", "wipefs",
+            "pip", "pip3", "make", "npx", "pnpm", "yarn", "bun",
+        }
+    )
 
 
 def _destroy_reason(name: str, args: Sequence[str]) -> str | None:

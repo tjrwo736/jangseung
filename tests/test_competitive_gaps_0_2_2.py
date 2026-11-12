@@ -302,7 +302,7 @@ def test_the_hook_path_does_not_load_modules_it_never_uses():
 
 # --- aeg evidence summary
 
-def _record(project, command, *, mode="acceptEdits", session="summary"):
+def _record(project, command, *, mode="plan", session="summary"):
     run_aeg_hook_run(stdin=io.StringIO(payload(project, command, mode=mode, session=session)), stdout=io.StringIO(),
                      stderr=io.StringIO(), repo_root=project, working_dir=project)
 

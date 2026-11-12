@@ -18,7 +18,8 @@ from jangseung.cli.install import (
     cmd_install,
     cmd_uninstall,
 )
-from jangseung.cli.policy import PRESETS, cmd_policy_add, cmd_policy_show
+from jangseung.cli.allow_once import cmd_allow_once
+from jangseung.cli.policy import PRESETS, cmd_policy_add, cmd_policy_add_shared, cmd_policy_show, cmd_policy_suggest
 from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, doctor_status, run_doctor
 from jangseung.state.evidence_query import (
@@ -29,7 +30,12 @@ from jangseung.state.evidence_query import (
     summarize_hook_evidence,
     sanitize_for_display,
 )
-from jangseung.state.hook_ledger import hook_ledger_needs_repair, repair_hook_ledger, verify_hook_ledger
+from jangseung.state.hook_ledger import (
+    archive_hook_ledger,
+    hook_ledger_needs_repair,
+    repair_hook_ledger,
+    verify_hook_ledger,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         help="verify the dedicated hook decision ledger hash chain",
     )
     evidence_verify_hooks_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_archive_hooks_parser = evidence_subparsers.add_parser(
+        "archive-hooks",
+        help="move an intact hook ledger to .aeg/archive/ and start a new chain that names it (run by a person)",
+    )
+    evidence_archive_hooks_parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     evidence_repair_hooks_parser = evidence_subparsers.add_parser(
         "repair-hooks",
         help="move damaged hook ledger lines into a quarantine file and continue the chain",
@@ -178,6 +189,17 @@ def main(argv: list[str] | None = None) -> int:
         "--scope", choices=SETTINGS_SCOPES, default=SCOPE_PROJECT,
         help="claude-code only: which settings file to remove the hook from (default: project)",
     )
+    allow_once_parser = subparsers.add_parser(
+        "allow-once",
+        help="let an agent run one exact command once, within minutes (run by a person; mainly for Codex)",
+    )
+    allow_once_parser.add_argument("allowed_command", nargs="?", default=None, help="the exact command text, quoted")
+    allow_once_parser.add_argument("--minutes", type=int, default=10, help="minutes until it expires (1-60, default 10)")
+    allow_once_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
+    allow_once_parser.add_argument("--clear", action="store_true", help="remove every pending approval")
+    allow_once_parser.add_argument("--status", action="store_true", help="show how many approvals are pending")
+    allow_once_parser.add_argument("--tool", choices=("Bash", "PowerShell"), default="Bash",
+                                   help="the shell tool the agent will use (default: Bash; Codex always uses Bash)")
     policy_parser = subparsers.add_parser(
         "policy",
         help="show or extend the project approval policy in .aeg/policy.json (run by a person, not an agent)",
@@ -195,8 +217,17 @@ def main(argv: list[str] | None = None) -> int:
                                    help="extra path agents must not change")
     policy_add_parser.add_argument("--mcp-tool", dest="policy_mcp_tools", action="append", default=[],
                                    help="exact MCP tool name, such as mcp__server__tool")
+    policy_suggest_parser = policy_subparsers.add_parser(
+        "suggest", help="name the commands you were asked about most often (prints only)",
+    )
+    policy_suggest_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
+    policy_suggest_parser.add_argument("--days", type=_positive_int, default=14, help="look back this many days (default 14)")
+    policy_suggest_parser.add_argument("--min", dest="minimum", type=_positive_int, default=3,
+                                       help="only programs asked about at least this often (default 3)")
     policy_preset_parser = policy_subparsers.add_parser("preset", help="add a starting set of commands")
     policy_preset_parser.add_argument("preset", choices=sorted(PRESETS))
+    policy_add_parser.add_argument("--shared", action="store_true",
+                                   help="write --protect paths to .jangseung/policy.json, the committed team file")
     for policy_writer in (policy_add_parser, policy_preset_parser):
         policy_writer.add_argument("--project", default=None, help="project directory (default: cwd)")
         policy_writer.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -226,14 +257,25 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_evidence_verify_hooks(Path.cwd(), as_json=args.as_json)
         if args.evidence_command == "repair-hooks":
             return _cmd_evidence_repair_hooks(Path.cwd(), assume_yes=args.yes)
+        if args.evidence_command == "archive-hooks":
+            return _cmd_evidence_archive_hooks(Path.cwd(), assume_yes=args.yes)
     if args.command == "hook-run":
         return run_aeg_hook_run_from_process(substrate=args.substrate, ensure_state=args.ensure_state)
+    if args.command == "allow-once":
+        return cmd_allow_once(Path(args.project) if args.project else Path.cwd(), args.allowed_command,
+                              minutes=args.minutes, clear=args.clear, status=args.status, tool=args.tool)
     if args.command == "policy":
         project = Path(args.project) if args.project else Path.cwd()
         if args.policy_command == "show":
             return cmd_policy_show(project, as_json=args.as_json)
+        if args.policy_command == "suggest":
+            return cmd_policy_suggest(project, days=args.days, minimum=args.minimum)
         if args.policy_command == "preset":
             return cmd_policy_add(project, preset=args.preset, assume_yes=args.yes)
+        if args.shared:
+            if args.policy_commands or args.policy_allow_paths or args.policy_mcp_tools:
+                parser.error("--shared takes --protect only: the committed team file can only add protection")
+            return cmd_policy_add_shared(project, protect_paths=args.policy_protect_paths, assume_yes=args.yes)
         return cmd_policy_add(
             project,
             commands=args.policy_commands,
@@ -428,6 +470,29 @@ def _cmd_evidence_show(cwd: Path, evidence_id: str, *, as_json: bool = False) ->
         print(f"[{section}]")
         for key, value in rows:
             print(f"{key}: {_display_value(value)}")
+    return 0
+
+
+def _cmd_evidence_archive_hooks(cwd: Path, *, assume_yes: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        ledger = repo / ".aeg" / "hook_ledger.jsonl"
+        size = ledger.stat().st_size if ledger.is_file() else 0
+        if size == 0:
+            print("aeg evidence archive-hooks: no hook records; nothing to archive.")
+            return 0
+        print(f"aeg evidence archive-hooks: will move {ledger} ({size} bytes) to .aeg/archive/ and start a new chain.")
+        if not assume_yes:
+            answer = input("Proceed? [y/N] ").strip().lower()
+            if answer not in {"y", "yes"}:
+                print("aeg evidence archive-hooks: cancelled; no changes written.")
+                return 0
+        result = archive_hook_ledger(repo)
+    except Exception as exc:  # noqa: BLE001 - report, do not crash.
+        print(f"aeg evidence archive-hooks: failed: {exc}")
+        return 1
+    print(f"aeg evidence archive-hooks: archived {result.archived_records} record(s) to {result.archive_path}.")
+    print("The new ledger starts with a record naming the archive's last hash and SHA-256.")
     return 0
 
 

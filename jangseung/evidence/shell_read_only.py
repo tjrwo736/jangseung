@@ -51,6 +51,9 @@ class ShellRead:
     compared_paths: tuple[str, ...] = ()
     runs_git: bool = False
     git_output: GitOutput | None = None
+    # Programs found on PATH that a status or version command runs. The caller
+    # checks that each one lives outside the project, where an agent cannot write it.
+    programs: tuple[str, ...] = ()
 
 
 @dataclass
@@ -61,6 +64,7 @@ class _Reads:
     compared: list[str] = field(default_factory=list)
     git: bool = False
     git_output: GitOutput | None = None
+    programs: list[str] = field(default_factory=list)
 
 
 _POWERSHELL_COMMAND = re.compile(r"(?i)^\s*(?:Get-Content|Get-ChildItem|Test-Path|Select-String)(?:\s|$)")
@@ -128,6 +132,32 @@ _GIT_REV_PARSE_FLAGS = frozenset(
 _GIT_DESCRIBE_FLAGS = frozenset({"--tags", "--always", "--dirty", "--long"})
 _GIT_REVISION = re.compile(r"[\w./@^~-]+")
 
+# Commands that only report on the machine or wait. They take no file argument.
+_NO_ARGUMENT_COMMANDS = frozenset({"true", "false", "whoami", "id", "nproc", "arch", "tty", "hostname"})
+_UNAME_FLAGS = frozenset({"-a", "-s", "-r", "-m", "-n", "-v", "-o", "-p", "-i", "--all"})
+_DATE_FLAGS = frozenset({"-u", "--utc", "-R", "--rfc-email", "-I", "-Iseconds", "-Iminutes", "-Ihours", "-Idate"})
+_DURATION = re.compile(r"\d{1,6}(?:\.\d{1,3})?[smhd]?")
+_PROGRAM_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}")
+# Programs whose version form only prints a version, with that one exact form.
+# A bare word is not a version form: ``python version`` runs a file named
+# ``version``, ``npm version`` changes package.json and ``pytest -v`` runs the
+# tests. ``pytest --version`` loads conftest.py, so pytest is not here at all.
+# Launchers that hand over to a program a project file names are left out too:
+# yarn (``yarnPath``), cargo and rustc (``rust-toolchain.toml``), dotnet
+# (``global.json``), go (``toolchain`` in go.mod), npm and pnpm (``packageManager``),
+# poetry, pdm and composer (project plugins), and the per-project node tools.
+_VERSION_FORMS = {
+    **dict.fromkeys(
+        ("python", "python3", "node", "deno", "gh", "docker", "jq", "rg", "fd", "bash", "pwsh", "gcc", "clang",
+         "cmake", "ruff"),
+        frozenset({"--version"}),
+    ),
+    "java": frozenset({"-version", "--version"}),
+    "javac": frozenset({"-version", "--version"}),
+}
+_SEQUENCE_OPERATORS = (";", "&&", "||")
+MAX_SEQUENCE_SEGMENTS = 16
+
 
 def classify_shell_read(command: str, *, tool_name: str) -> ShellRead:
     if not isinstance(command, str) or not command.strip() or len(command) > 16000:
@@ -179,6 +209,7 @@ def classify_shell_read(command: str, *, tool_name: str) -> ShellRead:
         reads.compared.extend(parsed.compared)
         reads.git = reads.git or parsed.git
         reads.git_output = reads.git_output or parsed.git_output
+        reads.programs.extend(parsed.programs)
     # Select-String opens the files a listing hands it: this is not a text filter.
     if powershell and segments[0][0].lower() in _POWERSHELL_LIST_COMMANDS and any(
         segment[0].lower() in _POWERSHELL_SELECT_STRING_COMMANDS for segment in segments[1:]
@@ -194,6 +225,7 @@ def classify_shell_read(command: str, *, tool_name: str) -> ShellRead:
         tuple(dict.fromkeys(reads.compared)),
         reads.git,
         reads.git_output,
+        tuple(dict.fromkeys(reads.programs)),
     )
 
 
@@ -281,7 +313,107 @@ def _posix_read(tokens: list[str], piped: bool) -> _Reads | None:
         return None
     if name == "git":
         return _git_command_read(args)
+    return _posix_status_read(name, args)
+
+
+_SHELL_BUILTINS = frozenset({"true", "false", "cd", "command"})
+
+
+def _posix_status_read(name: str, args: list[str]) -> _Reads | None:
+    """Commands that print a status, a version or nothing, and read no file."""
+
+    parsed = _posix_status_form(name, args)
+    if parsed is not None and name not in _SHELL_BUILTINS:
+        parsed.programs.append(name)
+    return parsed
+
+
+def _posix_status_form(name: str, args: list[str]) -> _Reads | None:
+    if name in _NO_ARGUMENT_COMMANDS:
+        return _Reads() if not args else None
+    if name == "uname":
+        return _Reads() if all(arg in _UNAME_FLAGS for arg in args) else None
+    if name == "date":
+        # ``date -s`` would set the clock; only formats and zones are taken.
+        return _Reads() if all(arg in _DATE_FLAGS or arg.startswith("+") for arg in args) else None
+    if name == "sleep":
+        return _Reads() if len(args) == 1 and _DURATION.fullmatch(args[0]) else None
+    if name == "which":
+        names = [arg for arg in args if arg != "-a"]
+        return _Reads() if names and all(_PROGRAM_NAME.fullmatch(arg) for arg in names) else None
+    if name == "command":
+        return _Reads() if len(args) == 2 and args[0] == "-v" and _PROGRAM_NAME.fullmatch(args[1]) else None
+    if name == "cd":
+        # The folder is judged like any listed path. A shell that has CDPATH set may
+        # enter another folder; the host then reports that folder on the next call.
+        return _Reads(metadata=[args[0]]) if len(args) == 1 and not args[0].startswith("-") else None
+    if name in _VERSION_FORMS:
+        return _Reads() if len(args) == 1 and args[0] in _VERSION_FORMS[name] else None
     return None
+
+
+def split_command_sequence(command: str) -> tuple[tuple[str, str], ...] | None:
+    """A Bash command cut at ``;``, ``&&`` and ``||`` outside quotes, with the operator after each part.
+
+    ``None`` unless there are two or more parts and nothing the read grammar refuses
+    anyway: substitutions, redirections, grouping, comments, backslashes, newlines and
+    background jobs (a single ``&``) are left out before splitting.
+    """
+
+    if not isinstance(command, str) or len(command) > 16000:
+        return None
+    if any(char in command for char in "\n\r\x00$`{}()<>#\\"):
+        return None
+    parts: list[tuple[str, str]] = []
+    current: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            current.append(char)
+            quote = "" if char == quote else quote
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+        pair = command[index : index + 2]
+        if pair in ("&&", "||"):
+            operator = pair
+            index += 2
+        elif char == ";":
+            if command[index + 1 : index + 2] == ";":
+                return None
+            operator = ";"
+            index += 1
+        elif char == "&":
+            return None
+        else:
+            current.append(char)
+            index += 1
+            continue
+        segment = "".join(current).strip()
+        if not segment:
+            return None
+        parts.append((segment, operator))
+        current = []
+        if len(parts) > MAX_SEQUENCE_SEGMENTS:
+            return None
+    if quote:
+        return None
+    tail = "".join(current).strip()
+    if tail:
+        parts.append((tail, ""))
+    elif not parts or parts[-1][1] != ";":
+        return None
+    else:
+        parts[-1] = (parts[-1][0], "")
+    if len(parts) < 2 or len(parts) > MAX_SEQUENCE_SEGMENTS:
+        return None
+    return tuple(parts)
 
 
 def _posix_content_read(name: str, args: list[str], piped: bool) -> _Reads | None:

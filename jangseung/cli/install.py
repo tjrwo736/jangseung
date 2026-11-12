@@ -55,6 +55,11 @@ MANAGED_MODULE_ARGS = (ISOLATED_MODULE_ARGS, ("-m", "jangseung.cli"), LEGACY_MOD
 # A hook that cannot start or crashes must stop the tool call, not wave it through.
 CLAUDE_HOOK_ON_FAILURE = "block"
 HOOK_EVENT_NAME = "PreToolUse"
+# A second, read-only hook that tells the person at session start when the guard's
+# own hook is missing or broken. It never blocks; see jangseung.cli.session_check.
+SESSION_EVENT_NAME = "SessionStart"
+SESSION_CHECK_SUBCOMMAND = "session-check"
+SESSION_CHECK_TIMEOUT = 15
 BACKUP_SUFFIX_PREFIX = "aegis-backup"
 TARGET_CLAUDE_CODE = "claude-code"
 TARGET_CODEX = "codex"
@@ -280,14 +285,16 @@ def build_uninstalled_settings(
     structures."""
 
     new_data = deepcopy(data)
+    removed = 0
+    if HOOK_KIND_MAIN in kinds:
+        new_data, removed = _without_session_check(new_data)
     hooks = new_data.get("hooks")
     if not isinstance(hooks, dict):
-        return (new_data, 0)
+        return (new_data, removed)
     pretooluse = hooks.get(HOOK_EVENT_NAME)
     if not isinstance(pretooluse, list):
-        return (new_data, 0)
+        return (new_data, removed)
 
-    removed = 0
     kept_entries: list[Any] = []
     for entry in pretooluse:
         if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
@@ -312,7 +319,94 @@ def build_uninstalled_settings(
         hooks.pop(HOOK_EVENT_NAME, None)
     if not hooks:
         new_data.pop("hooks", None)
+    else:
+        new_data["hooks"] = hooks
     return (new_data, removed)
+
+
+def session_check_command(command: str, args: Sequence[str] | None) -> tuple[str, tuple[str, ...] | None]:
+    """The main hook's program with ``session-check`` in place of ``hook-run`` and its options."""
+
+    if args is not None:
+        tail = list(args)
+        return command, (*tail[: tail.index("hook-run")], SESSION_CHECK_SUBCOMMAND)
+    parts = shlex.split(command)
+    return shlex.join((*parts[: parts.index("hook-run")], SESSION_CHECK_SUBCOMMAND)), None
+
+
+def is_session_check_hook(hook: Any) -> bool:
+    """A SessionStart entry this installer wrote: the guard's program running ``session-check``."""
+
+    if not isinstance(hook, dict) or hook.get("type") != "command" or not isinstance(hook.get("command"), str):
+        return False
+    try:
+        if isinstance(hook.get("args"), list):
+            argv = [hook["command"], *hook["args"]]
+        else:
+            argv = shlex.split(hook["command"])
+    except ValueError:
+        return False
+    if len(argv) < 2 or argv[-1] != SESSION_CHECK_SUBCOMMAND or not all(isinstance(item, str) for item in argv):
+        return False
+    middle = argv[1:-1]
+    program = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if middle == []:
+        return program in {"aeg", "aeg.exe"}
+    return middle in (list(ISOLATED_MODULE_ARGS), ["-m", "jangseung.cli"])
+
+
+def build_session_check_settings(
+    data: dict[str, Any], command: str, *, args: Sequence[str] | None = None
+) -> tuple[dict[str, Any], bool]:
+    """Return (new_settings, already_installed) with one up-to-date session-check entry."""
+
+    new_data = deepcopy(data)
+    hooks = new_data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise InstallStructureError("'hooks' is not a JSON object")
+    entries = hooks.setdefault(SESSION_EVENT_NAME, [])
+    if not isinstance(entries, list):
+        raise InstallStructureError(f"'hooks.{SESSION_EVENT_NAME}' is not a JSON array")
+    desired: dict[str, Any] = {"type": "command", "command": command, "timeout": SESSION_CHECK_TIMEOUT}
+    if args is not None:
+        desired["args"] = list(args)
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            continue
+        for hook in entry["hooks"]:
+            if is_session_check_hook(hook):
+                if hook == desired:
+                    return new_data, True
+                hook.clear()
+                hook.update(desired)
+                return new_data, False
+    entries.append({"hooks": [desired]})
+    return new_data, False
+
+
+def _without_session_check(data: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict) or not isinstance(hooks.get(SESSION_EVENT_NAME), list):
+        return data, 0
+    removed = 0
+    kept_entries: list[Any] = []
+    for entry in hooks[SESSION_EVENT_NAME]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            kept_entries.append(entry)
+            continue
+        kept = [hook for hook in entry["hooks"] if not is_session_check_hook(hook)]
+        removed += len(entry["hooks"]) - len(kept)
+        if len(kept) == len(entry["hooks"]):
+            kept_entries.append(entry)
+        elif kept:
+            kept_entries.append({**entry, "hooks": kept})
+    if kept_entries:
+        hooks[SESSION_EVENT_NAME] = kept_entries
+    else:
+        hooks.pop(SESSION_EVENT_NAME, None)
+    if not hooks:
+        data.pop("hooks", None)
+    return data, removed
 
 
 def normalize_install_target(target: str) -> str:
@@ -515,6 +609,9 @@ def _cmd_install_claude_code(
                 kind=HOOK_KIND_MCP,
             )
             already = already and mcp_already
+        check_command, check_args = session_check_command(command, args)
+        new_data, check_already = build_session_check_settings(new_data, check_command, args=check_args)
+        already = already and check_already
     except InstallStructureError as exc:
         _write(out, f"aeg install: aborted — unexpected settings structure: {exc}")
         _write(out, f"Please adjust .claude/{path.name} manually, then retry.")
@@ -532,6 +629,7 @@ def _cmd_install_claude_code(
     if mcp_entry:
         _write(out, f"  MCP command:  {_format_hook_command(mcp_command, args=mcp_args)}")
         _write(out, f"  MCP matcher:  {CLAUDE_CODE_MCP_HOOK_MATCHER}")
+    _write(out, f"  session check (SessionStart, read-only): {_format_hook_command(check_command, args=check_args)}")
     _write(out, "")
     _write_diff(out, before_text, after_text, path)
     _write(out, "Recording setup: ensure local .aeg/ exists; existing records are preserved.")

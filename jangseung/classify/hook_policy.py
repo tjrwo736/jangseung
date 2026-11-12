@@ -21,6 +21,13 @@ from jangseung.contracts import STATE_DIR
 
 HOOK_POLICY_FILE = "policy.json"
 MAX_POLICY_BYTES = 64 * 1024
+# A policy a team commits to git. It can only add protection: ``protect_paths`` is
+# its one key. ``.aeg/`` stays each person's own and is not committed. Agents cannot
+# write this folder (it is a guard path), so a person edits it, by hand or with
+# ``aeg policy add --shared --protect <path>``.
+SHARED_POLICY_DIR = ".jangseung"
+SHARED_POLICY_FILE = "policy.json"
+_SHARED_KEYS = frozenset({"protect_paths"})
 
 _KNOWN_KEYS = frozenset({"allow_paths", "protect_paths", "allow_commands", "allow_mcp_tools"})
 _APPROVED_COMMAND = re.compile(r"[\w ./:=@+-]+")
@@ -48,10 +55,41 @@ def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = Non
     """The person's policy plus what git would run, which no policy can open to agents."""
 
     policy = _read_policy_file(repo_root)
+    shared, shared_error = read_shared_protect_paths(repo_root)
+    if shared_error is not None:
+        # A broken team file must not quietly drop its protection. Which paths it meant
+        # cannot be known, so every path is protected until a person fixes the file,
+        # and the policy is marked as failed (no host delegation, no file-operation allows).
+        shared = (*shared, "*")
+        if policy.error is None:
+            policy = replace(policy, error=f"shared_{shared_error}")
     git_paths = git_program_paths(repo_root, working_dir)
-    if not git_paths:
+    extra = (*shared, *git_paths)
+    if not extra:
         return policy
-    return replace(policy, paths=replace(policy.paths, protect_paths=(*policy.paths.protect_paths, *git_paths)))
+    return replace(policy, paths=replace(policy.paths, protect_paths=(*policy.paths.protect_paths, *extra)))
+
+
+def read_shared_protect_paths(repo_root: str | Path) -> tuple[tuple[str, ...], str | None]:
+    """``protect_paths`` of the committed team policy, and an error when it cannot be used."""
+
+    path = Path(repo_root) / SHARED_POLICY_DIR / SHARED_POLICY_FILE
+    try:
+        if path.parent.is_symlink() or path.is_symlink():
+            return (), "policy_file_is_a_link"
+        if not path.exists():
+            return (), None
+        if not path.is_file() or path.stat().st_size > MAX_POLICY_BYTES:
+            return (), "policy_file_not_a_small_regular_file"
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return (), "policy_file_unreadable"
+    if not isinstance(data, dict) or set(data) - _SHARED_KEYS:
+        return (), "policy_file_may_only_hold_protect_paths"
+    value = data.get("protect_paths", [])
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        return (), "policy_protect_paths_must_be_a_list_of_strings"
+    return tuple(value), None
 
 
 def _read_policy_file(repo_root: str | Path) -> HookPolicy:
@@ -95,4 +133,13 @@ def parse_policy(data: Any) -> HookPolicy:
     )
 
 
-__all__ = ["HOOK_POLICY_FILE", "MAX_POLICY_BYTES", "HookPolicy", "load_hook_policy", "parse_policy"]
+__all__ = [
+    "HOOK_POLICY_FILE",
+    "MAX_POLICY_BYTES",
+    "SHARED_POLICY_DIR",
+    "SHARED_POLICY_FILE",
+    "HookPolicy",
+    "load_hook_policy",
+    "parse_policy",
+    "read_shared_protect_paths",
+]
