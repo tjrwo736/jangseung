@@ -35,7 +35,9 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 막습니다 (사용자 승인 없이는 실행 안 됨):
 
 - 비밀 노출 위험: `.env`와 `.env.*`, 비밀키(`id_rsa`, `*.pem`, `*.key` 등), 인증 파일(`.ssh/`, `.aws/`, `.npmrc`, `credentials.json` 등)의 읽기와 수정. 폴더 깊이와 대소문자 표기에 관계없이 적용합니다. `.env.example` 같은 템플릿은 비밀로 보지 않습니다. 다만 폴더 전체 `Grep`에서는 함께 건너뜁니다.
+- 이름을 적지 않고 비밀 파일에 닿는 명령 (0.2.2부터): `cat .en?`, `cat .env*`, `cat certs/*` 같은 와일드카드가 지금 있는 비밀 파일에 닿는 경우, `cat .en{v,x}` 같은 나열, `$(echo LmVudg== | base64 -d)`처럼 통째로 base64·hex로 적은 이름. 비밀 파일에 닿지 않는 와일드카드(`wc -l *.py`)는 해당하지 않습니다. 대조는 프로젝트 안에서만 합니다. 글자나 숫자가 없는 패턴(`cat *`)과 프로젝트 밖의 패턴(`cat ~/.ss?/id_*`)은 대조하지 않고 확인을 요청합니다.
 - 되돌릴 수 없는 파괴: `rm -rf`, `git reset --hard`, `git clean -f`, `git checkout -- .`
+- 프로젝트 밖의 파괴 (0.2.2부터): 클라우드·호스팅 리소스 삭제(`aws s3 rb`, `aws ec2 terminate-instances`, `gcloud ... delete`, `az ... delete`, `vercel rm` 등), DB 내용 삭제(`psql -c 'DROP TABLE ...'`, `redis-cli FLUSHALL`, `dropdb` 등), 디스크·시스템(`mkfs`, `shutdown`, `kill -9 -1` 등). 조회 명령(`aws s3 ls`, `psql -c 'select ...'`)과 로컬 개발 자원 삭제(`docker compose down -v`)는 확인을 요청합니다.
 - 외부 반출과 배포: `git push`, `npm publish`, `gh release create`, `kubectl apply`, `terraform apply`, `curl`
 - 장승 무력화: `.claude/settings*.json`, `.codex/`, `.mcp.json`, `.git/` 수정과 `aeg uninstall`, `aeg policy` 실행
 - git이 실행하는 파일: `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` 등 git 설정이 가리키는 프로젝트 안 경로의 수정 (0.1.7부터)
@@ -68,6 +70,8 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 ## 우리가 못 막는 것
 
 장승(Jangseung)은 "완벽하게 안전하다"고 말하지 않습니다. 지키는 선을 정확히 말합니다.
+
+막지 못한다고 알고 받아들인 것과, 통과하면 결함으로 다루는 것의 전체 목록은 [잔여 위험 등록부](docs/residual_risk.md)에 있습니다 (0.2.2부터).
 
 장승(Jangseung)은 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용하려는 순간에 끼어들어 판단합니다. 그래서 도구를 거치지 않는 것들 — AI가 참조로 직접 읽어 들이는 파일 내용, 이미 허용된 명령이 내부에서 실행하는 다른 프로그램 — 은 이 선 바깥에 있습니다.
 
@@ -165,7 +169,7 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이, 0.1.9에는 선택해서 켜는 [MCP 보호](#mcp-보호-019부터-선택)가 포함됩니다. **0.2.1은 0.2.0에서 생긴 비밀 노출 결함을 고친 보안 수정입니다**([0.2.1 릴리스 노트](docs/release_0.2.1.md)). 0.2.0은 빌드 파일 판정, 승인 정책 명령, 기록 내용을 바꾸고 `aeg run`, `aeg verify`, `aeg init` 명령을 제거합니다. 바뀐 점과 올릴 때 확인할 것은 [0.2.0 릴리스 노트](docs/release_0.2.0.md)에 있습니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이, 0.1.9에는 선택해서 켜는 [MCP 보호](#mcp-보호-019부터-선택)가 포함됩니다. **0.2.1은 0.2.0에서 생긴 비밀 노출 결함을 고친 보안 수정입니다**([0.2.1 릴리스 노트](docs/release_0.2.1.md)). 0.2.0은 빌드 파일 판정, 승인 정책 명령, 기록 내용을 바꾸고 `aeg run`, `aeg verify`, `aeg init` 명령을 제거합니다. 바뀐 점과 올릴 때 확인할 것은 [0.2.0 릴리스 노트](docs/release_0.2.0.md)에 있습니다. 0.2.2에는 와일드카드·나열·인코딩으로 비밀 파일에 닿는 명령과 프로젝트 밖을 파괴하는 명령의 차단, 종류별 차단 사유, hook 호출 시간 단축, `aeg evidence summary`가 들어 있습니다([릴리스 노트](docs/release_0.2.2.md)).
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -408,12 +412,15 @@ aeg doctor --hooks --json  # 두 대상 모두 확인
 ```bash
 aeg evidence list --limit 20
 aeg evidence list --json
+aeg evidence summary --days 7
 aeg evidence show <hook-record-hash-prefix>
 aeg evidence verify-hooks
 aeg evidence repair-hooks
 ```
 
 `list`는 최신순으로 시각, 판정, 도구, 대상을 보여 줍니다. `show`는 summary, decision, call, integrity 섹션으로 나눕니다. 조회 결과는 credential 형태 필터를 거치며 `.aeg`를 수정하지 않습니다. 손상된 행은 `UNREADABLE`로 표시합니다.
+
+`summary`(0.2.2부터)는 판정별 건수와, 자주 멈춘 프로그램·파일을 횟수순으로 보여 줍니다. 어떤 명령을 `aeg policy add --command`로 풀어 줄지 정할 때 씁니다. 기록에 명령 원문이 없으므로 프로그램 이름까지만 나옵니다.
 
 기록 한 건에 들어가는 것은 다음과 같습니다.
 

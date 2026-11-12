@@ -1282,7 +1282,10 @@ class PowerShellFileSearchTests(_Project):
             "Get-ChildItem -Name | Select-String x",
         ):
             with self.subTest(command=command):
-                self.assertEqual(self.judge("PowerShell", command=command).permission_decision, "ask")
+                # Since 0.2.2 a wildcard that hands an existing secret file to a reading
+                # command is denied outright; the others still go to a person.
+                expected = "deny" if ".e*" in command else "ask"
+                self.assertEqual(self.judge("PowerShell", command=command).permission_decision, expected)
                 self.assertEqual(self.judge("PowerShell", command=command, substrate="codex").permission_decision, "deny")
 
     def test_select_string_fed_by_a_listing_that_names_a_secret_is_denied(self) -> None:

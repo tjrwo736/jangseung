@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -101,6 +100,10 @@ def mark_secret_naming_write(repo_root: str | Path, session_id: object, paths: S
         # surrogate, and a mark that cannot be written is an approval not held.
         text = json.dumps({"version": 1, "sessions": dict(newest)}, ensure_ascii=True, sort_keys=True, indent=1)
         temporary: Path | None = None
+        # Imported here: the hook runs on every tool call and rarely writes a mark,
+        # and ``tempfile`` costs about 10 ms to load.
+        import tempfile
+
         try:
             with tempfile.NamedTemporaryFile(
                 "w", encoding="ascii", newline="\n", dir=root, prefix=".session-marks-", delete=False

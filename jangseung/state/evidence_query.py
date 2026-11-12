@@ -8,7 +8,9 @@ entries without changing ``.aeg/`` or crashing the whole list.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -144,6 +146,88 @@ def hook_human_sections(detail: HookEvidenceDetail) -> list[tuple[str, list[tupl
     ]
 
 
+_SUMMARY_DECISIONS = ("allow", "host", "ask", "deny")
+MAX_SUMMARY_ROWS = 15
+
+
+def summarize_hook_evidence(
+    repo_root: str | Path,
+    *,
+    days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Count decisions and name what was stopped most often, without mutating state.
+
+    The ledger holds program names and file paths, never command lines, so the
+    rows say which program or file kept being stopped and how, not what was typed.
+    """
+
+    cutoff = None
+    if days is not None:
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    decisions: Counter[str] = Counter()
+    stopped: Counter[tuple[str, str, str, str]] = Counter()
+    unreadable = 0
+    for item in read_hook_ledger(repo_root):
+        record = item.record
+        if not item.readable or record is None:
+            unreadable += 1
+            continue
+        if cutoff is not None and not _recorded_since(record, cutoff):
+            continue
+        decision = str(record.get("permission_decision", ""))
+        if decision not in _SUMMARY_DECISIONS:
+            continue
+        decisions[decision] += 1
+        if decision not in {"ask", "deny"}:
+            continue
+        tool = str(record.get("tool_name", "unknown"))
+        commands = record.get("commands") if isinstance(record.get("commands"), list) else []
+        targets = record.get("targets") if isinstance(record.get("targets"), list) else []
+        names = [str(name) for name in (commands or targets[:1])] or [tool]
+        codes = record.get("reason_codes") if isinstance(record.get("reason_codes"), list) else []
+        category = _stop_category(codes, str(record.get("hook_decision", "")), decision)
+        for name in dict.fromkeys(names):
+            stopped[(decision, tool, name, category)] += 1
+    rows = [
+        {"decision": decision, "tool_name": tool, "what": what, "category": category, "count": count}
+        for (decision, tool, what, category), count in sorted(
+            stopped.items(), key=lambda entry: (-entry[1], entry[0])
+        )[:MAX_SUMMARY_ROWS]
+    ]
+    return {
+        "days": days,
+        "records": sum(decisions.values()),
+        "unreadable": unreadable,
+        "decisions": {name: decisions[name] for name in _SUMMARY_DECISIONS},
+        "stopped": rows,
+    }
+
+
+def _recorded_since(record: Mapping[str, Any], cutoff: datetime) -> bool:
+    text = str(record.get("timestamp", ""))
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return True  # A record whose time cannot be read is counted, not dropped.
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment >= cutoff
+
+
+def _stop_category(codes: list[Any], hook_decision: str, decision: str) -> str:
+    # Imported here so that reading records does not load the judgment modules.
+    from jangseung.cli.reason_text import explain_decision
+
+    category, _, _ = explain_decision(
+        reason_codes=[str(code) for code in codes],
+        hook_decision=hook_decision or None,
+        permission_decision=decision,
+        fail_closed=False,
+    )
+    return category
+
+
 def _item_timestamp(item: HookLedgerItem) -> str:
     record = item.record or {}
     return str(record.get("timestamp", ""))
@@ -157,4 +241,5 @@ __all__ = [
     "list_hook_evidence",
     "load_hook_evidence",
     "sanitize_for_display",
+    "summarize_hook_evidence",
 ]

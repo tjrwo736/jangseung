@@ -56,7 +56,9 @@ def explain_decision(
         return ("ambiguous_shell_syntax", "Bash versions disagree on an unquoted trailing escape; the command is denied.",
                 "Remove the dangling escape or use an explicitly quoted literal, then check the command again.")
     if codes & {"dangerous_bash_gate_denies_command", "dangerous_powershell_gate_denies_command"}:
-        return ("dangerous_command", "The existing command-risk gate identified a dangerous command.",
+        kinds = [code.split(":", 1)[1] for code in sorted(codes) if code.startswith("dangerous_command_kind:")]
+        summary = _DANGEROUS_KIND_SUMMARIES.get(kinds[0] if kinds else "", "")
+        return ("dangerous_command", summary or "The existing command-risk gate identified a dangerous command.",
                 "Review the intended operation and narrow its scope; this diagnostic does not authorize execution.")
     if "repo_boundary_gate_denies_outside_repo_target" in codes:
         return ("outside_repository", "The target resolves outside the repository boundary.",
@@ -89,6 +91,18 @@ def explain_decision(
                 "Review the requested operation. The selected substrate determines how confirmation is enforced.")
     return ("denied", "The existing hook gates denied the request.",
             "Use the reason codes when reporting the issue; do not include raw secrets.")
+
+
+# What the command gate found, in words. The family comes from a fixed list.
+_DANGEROUS_KIND_SUMMARIES = {
+    "publish": "This command publishes, releases or changes something outside this machine (a package, an image, a cluster or a repository).",
+    "deploy": "This command deploys.",
+    "remote_destroy": "This command deletes resources in a cloud or hosting account, which no project file can restore.",
+    "database_destroy": "This command drops or empties database contents.",
+    "system_destroy": "This command formats a disk, shuts the machine down or kills every process.",
+    "rm_recursive_force": "This command deletes a folder and everything in it without asking.",
+    "token": "This program can send data off this machine, print environment variables or change privileges and permissions.",
+}
 
 
 # What a person can do about a stop, said to whoever reads the host's message.

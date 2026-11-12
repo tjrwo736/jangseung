@@ -26,6 +26,7 @@ from jangseung.state.evidence_query import (
     hook_human_sections,
     list_hook_evidence,
     load_hook_evidence,
+    summarize_hook_evidence,
     sanitize_for_display,
 )
 from jangseung.state.hook_ledger import hook_ledger_needs_repair, repair_hook_ledger, verify_hook_ledger
@@ -62,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     evidence_list_parser.add_argument("--limit", type=_positive_int, default=20)
     evidence_list_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_summary_parser = evidence_subparsers.add_parser(
+        "summary",
+        help="count decisions and show what was stopped most often",
+    )
+    evidence_summary_parser.add_argument("--days", type=_positive_int, default=None,
+                                         help="only records from the last N days (default: all)")
+    evidence_summary_parser.add_argument("--json", action="store_true", dest="as_json")
     evidence_show_parser = evidence_subparsers.add_parser(
         "show",
         help="show structured details for one hook record",
@@ -210,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "evidence":
         if args.evidence_command == "list":
             return _cmd_evidence_list(Path.cwd(), limit=args.limit, as_json=args.as_json)
+        if args.evidence_command == "summary":
+            return _cmd_evidence_summary(Path.cwd(), days=args.days, as_json=args.as_json)
         if args.evidence_command == "show":
             return _cmd_evidence_show(Path.cwd(), args.evidence_id, as_json=args.as_json)
         if args.evidence_command == "verify-hooks":
@@ -321,6 +331,61 @@ def _cmd_evidence_list(cwd: Path, *, limit: int = 20, as_json: bool = False) -> 
     for item in summaries:
         if item["error"]:
             print(f"warning: {item['id']}: {item['error']}")
+    return 0
+
+
+_SUMMARY_HINTS = {
+    "unclassified": (
+        "Unclassified commands a person trusts for this project can be allowed with: "
+        'aeg policy add --command "<command>" (or: aeg policy preset python|node|git)'
+    ),
+    "dangerous_command": (
+        'A dangerous command a person wants agents to run here can be allowed by prefix with: aeg policy add --command "<command>"'
+    ),
+    "build_file_review": "A build or dependency file a person no longer wants to be asked about: aeg policy add --path <path>",
+    "secret_or_outside_read": "A path wrongly treated as secret can be opened with: aeg policy add --path <path>",
+}
+
+
+def _cmd_evidence_summary(cwd: Path, *, days: int | None = None, as_json: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        summary = sanitize_for_display(summarize_hook_evidence(repo, days=days))
+    except Exception as exc:  # noqa: BLE001 - inspection errors must be reported, not crash.
+        if as_json:
+            print(json.dumps({"status": "FAIL", "error": str(exc)}, sort_keys=True))
+        else:
+            _print_card("Aegis evidence summary", "FAIL", [("error", str(exc))])
+        return 1
+    status = "EMPTY" if not summary["records"] else ("DEGRADED" if summary["unreadable"] else "OK")
+    if as_json:
+        print(json.dumps({"status": status, **summary}, ensure_ascii=True, sort_keys=True))
+        return 0
+    print("Aegis evidence summary")
+    print(f"status: {status}")
+    span = "all records" if days is None else f"last {days} day(s)"
+    print(f"records: {summary['records']} ({span})")
+    if summary["unreadable"]:
+        print(f"unreadable lines: {summary['unreadable']} (see: aeg evidence verify-hooks)")
+    if not summary["records"]:
+        print("No persisted hook records found.")
+        return 0
+    counts = summary["decisions"]
+    print("decisions: " + ", ".join(f"{name} {counts[name]}" for name in ("allow", "host", "ask", "deny")))
+    if not summary["stopped"]:
+        print("Nothing was stopped.")
+        return 0
+    print("stopped most often (program or file, not the command line):")
+    _print_table(
+        ("COUNT", "DECISION", "TOOL", "WHAT", "WHY"),
+        [
+            (str(row["count"]), str(row["decision"]).upper(), str(row["tool_name"]), str(row["what"]), str(row["category"]))
+            for row in summary["stopped"]
+        ],
+    )
+    for category in dict.fromkeys(str(row["category"]) for row in summary["stopped"]):
+        if category in _SUMMARY_HINTS:
+            print(f"hint: {_SUMMARY_HINTS[category]}")
     return 0
 
 

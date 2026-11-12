@@ -35,7 +35,6 @@ names a secret file, a mark in ``.aeg/session_marks.json``.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
@@ -365,18 +364,64 @@ def run_aeg_hook_run(
     return result.exit_code
 
 
+_HOOK_OPTIONS = ("--substrate", "--mcp", "--ensure-state")
+
+
+def _parse_hook_arguments(arguments: list[str]) -> tuple[str | None, bool]:
+    """Read the three ``aeg hook-run`` options by hand.
+
+    ``argparse`` loads ``shutil`` and colour support the hook never uses, about
+    12 ms on every tool call. The accepted forms are the ones it accepted: a
+    unique prefix of an option, and ``--substrate=codex``. Anything else ends the
+    process with status 2, which the hosts treat as a block.
+    """
+
+    substrate: str | None = None
+    ensure_state = False
+    index = 0
+    while index < len(arguments):
+        word, _, attached = arguments[index].partition("=")
+        matches = [option for option in _HOOK_OPTIONS if word.startswith("--") and len(word) > 2 and option.startswith(word)]
+        option = word if word in _HOOK_OPTIONS else (matches[0] if len(matches) == 1 else None)
+        has_value = "=" in arguments[index]
+        if option == "--substrate":
+            if not has_value:
+                index += 1
+                if index >= len(arguments):
+                    _hook_usage_error("--substrate needs a value")
+                attached = arguments[index]
+            if attached not in (SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX):
+                _hook_usage_error("--substrate must be claude-code or codex")
+            substrate = attached
+        elif option == "--ensure-state" and not has_value:
+            # Set by the plugin's hook entry, which has no ``aeg install`` step to make ``.aeg/``.
+            ensure_state = True
+        elif option == "--mcp" and not has_value:
+            # Marks the entry ``aeg install --mcp`` adds. Every call is judged the same
+            # way, so an MCP call arriving through either entry gets the MCP rules.
+            pass
+        else:
+            _hook_usage_error("unrecognized argument")
+        index += 1
+    return substrate, ensure_state
+
+
+def _hook_usage_error(message: str) -> None:
+    try:
+        sys.stderr.write(
+            "usage: aeg hook-run [--substrate {claude-code,codex}] [--mcp] [--ensure-state]\n"
+            f"aeg hook-run: error: {message}\n"
+        )
+    except Exception:  # noqa: BLE001 - the exit status alone blocks the call.
+        pass
+    raise SystemExit(2)
+
+
 def run_hook_cli(arguments: Sequence[str]) -> int:
     """Parse ``aeg hook-run`` arguments without loading the whole CLI."""
 
-    parser = argparse.ArgumentParser(prog="aeg hook-run", add_help=False)
-    parser.add_argument("--substrate", choices=(SUBSTRATE_CLAUDE_CODE, SUBSTRATE_CODEX), default=None)
-    # Marks the entry ``aeg install --mcp`` adds. Every call is judged the same
-    # way, so an MCP call arriving through either entry gets the MCP rules.
-    parser.add_argument("--mcp", action="store_true")
-    # Set by the plugin's hook entry, which has no ``aeg install`` step to make ``.aeg/``.
-    parser.add_argument("--ensure-state", action="store_true")
-    parsed = parser.parse_args(list(arguments))
-    return run_aeg_hook_run_from_process(substrate=parsed.substrate, ensure_state=parsed.ensure_state)
+    substrate, ensure_state = _parse_hook_arguments(list(arguments))
+    return run_aeg_hook_run_from_process(substrate=substrate, ensure_state=ensure_state)
 
 
 def run_aeg_hook_run_from_process(

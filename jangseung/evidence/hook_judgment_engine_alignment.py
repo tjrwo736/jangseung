@@ -28,7 +28,6 @@ from jangseung.classify import (
     is_host_resolved_path,
     is_protected_path,
     is_read_protected_path,
-    is_documentation_path,
     is_prose_path,
     is_secret_path,
     names_secret_file,
@@ -80,11 +79,24 @@ from jangseung.evidence.mediated_repo_boundary_write_path import resolve_repo_bo
 from jangseung.evidence.shell_command_risk import (
     GUARD_SELF_DISABLE_REASON,
     bash_words,
+    brace_expansions,
     command_name,
     git_subcommand,
+    nested_shell_payloads,
     scan_bash_command,
     secret_references,
     strip_assignments,
+)
+from jangseung.evidence.shell_glob_targets import (
+    GlobBudget,
+    expand_glob_word,
+    glob_forms,
+    has_glob,
+    names_something,
+    path_words,
+    project_roots,
+    reads_matched_files,
+    repository_relative_text,
 )
 from jangseung.evidence.shell_read_only import classify_shell_read, git_output_command
 from jangseung.evidence.shell_normal_work import (
@@ -433,7 +445,7 @@ def _judge_file_or_command_call(
     powershell_target_gate = _powershell_write_delete_target_gate(hook_input, repo_root, base_dir, policy)
     shell_read_gate = _shell_read_only_gate(hook_input, repo_root, base_dir, policy)
     shell_file_gate = _shell_file_operation_gate(hook_input, repo_root, base_dir, policy)
-    secret_reference_gate = _secret_reference_gate(hook_input, shell_read_gate, policy)
+    secret_reference_gate = _secret_reference_gate(hook_input, shell_read_gate, policy, repo_root, base_dir)
     approved_by_policy = _command_approved_by_policy(hook_input, action_candidate.reasons, policy, repo_root, base_dir)
     # An approved command runs project code. Once this session has written text that
     # names a secret file, that code may read it, so the approval goes back to a person.
@@ -506,6 +518,7 @@ def _judge_file_or_command_call(
         command_approved=command_approved,
         approval_held=approval_held,
         shell_file_gate=shell_file_gate,
+        action_reasons=action_candidate.reasons,
     )
     hook_decision = engine_decision
     if BASH_TRAILING_ESCAPE_REASON in action_candidate.reasons:
@@ -1600,6 +1613,8 @@ def _secret_reference_gate(
     hook_input: ClaudeCodePreToolUseInput,
     shell_read_gate: Mapping[str, Any],
     policy: HookPolicy,
+    repo_root: str | Path | None = None,
+    base_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Deny an unproven command that names a secret path as a literal argument.
 
@@ -1620,8 +1635,197 @@ def _secret_reference_gate(
         if hook_input.tool_name == "PowerShell"
         else tuple(bash_words(scan_bash_command(command)))
     )
+    if hook_input.tool_name != "PowerShell":
+        # ``cat .en{v,x}`` reaches the file without spelling its name.
+        braced = [word for word in dict.fromkeys(words) if "{" in word][:_MAX_BRACE_WORDS_EXPANDED]
+        words = (*words, *(expanded for word in braced for expanded in brace_expansions(word)))
     references = secret_references(words, policy=policy.paths)
-    return {"applicable": True, "deny": bool(references), "reference_count": len(references)}
+    glob_matches = 0
+    if not references and repo_root is not None and base_dir is not None:
+        glob_matches = _wildcards_reaching_secret_files(
+            _command_segments(command, hook_input.tool_name), words, repo_root, base_dir, policy,
+            windows_style=hook_input.tool_name == "PowerShell",
+            include_hidden=hook_input.tool_name == "PowerShell" or "dotglob" in words,
+            substitutes="$" in command or "`" in command,
+        )
+    return {
+        "applicable": True,
+        "deny": bool(references) or glob_matches > 0,
+        "reference_count": len(references) + glob_matches,
+    }
+
+
+_MAX_GLOB_WORDS_CHECKED = 32
+_MAX_GLOB_FULL_JUDGMENTS = 48
+_MAX_BRACE_WORDS_EXPANDED = 32
+_MAX_GLOB_FOLDERS = 5
+_MAX_GLOB_SEGMENTS = 64
+_MAX_GLOB_ASSIGNMENTS = 16
+_DIRECTORY_CHANGE_COMMANDS = frozenset({"cd", "pushd", "chdir", "set-location", "push-location", "sl"})
+_ASSIGNMENT_WORD = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.+)", re.DOTALL)
+_ASSIGNING_COMMANDS = frozenset({"export", "declare", "typeset", "local", "readonly"})
+_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "("})
+_NAME_PASSING_PROGRAMS = frozenset({"xargs", "parallel"})
+_POWERSHELL_FILE_LISTERS = frozenset(
+    {"get-item", "gi", "get-childitem", "gci", "ls", "dir", "resolve-path", "rvpa", "get-itemproperty"}
+)
+_FILE_SUBSTITUTION = re.compile(r"\$\(<[ \t]*([^\s()]{1,512})\)")
+_MAX_SUBSTITUTION_WORD = 4096
+
+
+def _command_segments(command: str, tool_name: str, depth: int = 0) -> list[tuple[str, ...]]:
+    """Each simple command of ``command`` as its own word list, nested shells included."""
+
+    argvs = powershell_argvs(command) if tool_name == "PowerShell" else scan_bash_command(command).argvs()
+    segments: list[tuple[str, ...]] = []
+    for argv in argvs:
+        if len(segments) >= _MAX_GLOB_SEGMENTS:
+            break
+        segments.append(tuple(argv))
+        if depth < 4:
+            for payload in nested_shell_payloads(argv):
+                segments.extend(_command_segments(payload, tool_name, depth + 1))
+    return segments[:_MAX_GLOB_SEGMENTS]
+
+
+def _wildcards_reaching_secret_files(
+    segments: Sequence[Sequence[str]],
+    words: Sequence[str],
+    repo_root: str | Path,
+    base_dir: str | Path,
+    policy: HookPolicy,
+    *,
+    windows_style: bool,
+    include_hidden: bool,
+    substitutes: bool = True,
+) -> int:
+    """How many wildcard words hand a command a secret file that exists now.
+
+    ``cat .en?`` names no secret file as text, but the shell hands ``cat`` the file.
+    Each pattern is matched against the real folder, so ``wc -l *.py`` beside a
+    ``.env`` is not caught. Three limits keep this from stopping ordinary work or
+    being turned against the hook:
+
+    * Only folders inside the project are listed, and the listing has a fixed
+      budget for the whole call.
+    * A bare ``*`` or ``.*`` is not matched: it is also arithmetic and a regular
+      expression.
+    * Commands that only use the names (``ls``, ``find`` without an action,
+      ``git status``) are skipped, as are PowerShell commands that are not file
+      commands, since PowerShell hands the pattern to the command unexpanded.
+
+    Whatever is skipped or cut short stays where it was, with the person asked.
+    """
+
+    # ``cd certs && cat *.pem`` expands in ``certs``. The folder a command moves into
+    # is known only when it is written out, so each one named is tried as well.
+    folders: list[Path] = [Path(base_dir)]
+    forms: list[str] = []
+    assignments = 0
+
+    def assignment(word: str) -> bool:
+        nonlocal assignments
+        match = _ASSIGNMENT_WORD.fullmatch(word)
+        if match is None:
+            return False
+        name, value = match.groups()
+        assignments += 1
+        # ``f=.en?; cat $f``: the pattern is expanded where the variable is used.
+        if assignments <= _MAX_GLOB_ASSIGNMENTS and has_glob(value) and any(
+            f"${name}" in other or f"${{{name}}}" in other for other in words
+        ):
+            forms.append(value)
+        return True
+
+    reading: list[tuple[Sequence[str], str]] = []
+    naming: list[tuple[Sequence[str], str]] = []
+    hands_names_on = False
+    for segment in segments:
+        for word in segment:
+            if not assignment(word):
+                break
+        argv = strip_assignments(segment)
+        while argv and argv[0] in _SHELL_KEYWORDS:
+            argv = argv[1:]  # ``if [ -f x ]``, ``do cat $f``: the command is what follows.
+        if not argv:
+            continue
+        program = command_name(argv[0])
+        if program in _ASSIGNING_COMMANDS:
+            for word in argv[1:]:
+                assignment(word)
+            continue
+        if program in _DIRECTORY_CHANGE_COMMANDS:
+            target = next((item for item in argv[1:4] if not item.startswith("-")), None)
+            if target and not has_glob(target) and len(folders) < _MAX_GLOB_FOLDERS:
+                folders.append(Path(base_dir, target))
+            continue
+        if windows_style:
+            if reads_matched_files(argv, program, None, windows_style=True):
+                reading.append((argv, program))
+            elif any(word.lower() in _POWERSHELL_FILE_LISTERS for word in argv):
+                naming.append((argv, program))  # ``Get-Item .en? | Get-Content``: the pipeline carries the file.
+            continue
+        if program in {"for", "select"}:
+            naming.append((argv, program))  # The names go into the loop variable.
+            continue
+        hands_names_on = hands_names_on or program in _NAME_PASSING_PROGRAMS
+        git_verb = git_subcommand(argv[1:])[0] if program == "git" else None
+        if reads_matched_files(argv, program, git_verb, windows_style=False):
+            reading.append((argv, program))
+        else:
+            naming.append((argv, program))
+
+    def collect(argv: Sequence[str], program: str) -> None:
+        for word in path_words(argv, program, windows_style=windows_style):
+            for form in glob_forms(word, windows_style=windows_style):
+                forms.append(form)
+                if not windows_style and "{" in form and len(forms) < 4 * _MAX_GLOB_WORDS_CHECKED:
+                    forms.extend(brace_expansions(form))
+
+    for argv, program in reading:
+        collect(argv, program)
+    # ``ls .en?`` only shows a name. The name reaches a reading command through
+    # ``xargs``, a substitution or a variable (``cat $(ls .en?)``, ``for f in .en?;
+    # do cat $f; done``); a plain pipe carries text (``ls certs/* | wc -l``). In
+    # PowerShell a pipeline carries the file itself. So the names-only commands
+    # are checked only when the line has a reading command and such a route.
+    if reading and (windows_style or hands_names_on or substitutes):
+        for argv, program in naming:
+            collect(argv, program)
+    # ``echo "$(<.en?)"`` reads the file with no program at all.
+    for word in words:
+        if "$(<" in word and len(word) <= _MAX_SUBSTITUTION_WORD:
+            forms.extend(match.group(1) for match in _FILE_SUBSTITUTION.finditer(word))
+
+    budget = GlobBudget(project_roots(repo_root, base_dir))
+    matched = 0
+    checked = 0
+    judged = 0
+    for form in dict.fromkeys(forms):
+        if not has_glob(form) or not names_something(form):
+            continue
+        checked += 1
+        if checked > _MAX_GLOB_WORDS_CHECKED:
+            break
+        reached = False
+        for folder in folders:
+            for candidate in expand_glob_word(
+                form, folder, windows_style=windows_style, include_hidden=include_hidden, budget=budget
+            ):
+                judged += 1
+                if judged <= _MAX_GLOB_FULL_JUDGMENTS:
+                    reached = _classify_command_target(candidate, repo_root, folder, policy) == "secret_path"
+                else:
+                    # The full judgment resolves links and costs about a millisecond a
+                    # path; past the first few, the name alone is checked.
+                    reached = is_secret_path(repository_relative_text(candidate, folder, repo_root), policy.paths)
+                if reached:
+                    break
+            if reached:
+                break
+        if reached:
+            matched += 1
+    return matched
 
 
 def _blank_quoted_text(command: str) -> str | None:
@@ -1744,6 +1948,26 @@ def _command_approved_by_policy(
         return False
 
 
+DANGEROUS_COMMAND_KIND_PREFIX = "dangerous_command_kind:"
+_DANGEROUS_COMMAND_KINDS = frozenset(
+    {"publish", "deploy", "remote_destroy", "database_destroy", "system_destroy", "rm_recursive_force", "token"}
+)
+
+
+def _dangerous_command_kind(action_reasons: Sequence[str]) -> str | None:
+    """Which family of risk the command gate found, so the stop can say what it is.
+
+    Only a fixed family name is passed on, never a word taken from the command.
+    """
+
+    for reason in action_reasons:
+        if isinstance(reason, str) and reason.startswith("dangerous_bash_"):
+            kind = reason[len("dangerous_bash_") :].split(":", 1)[0]
+            if kind in _DANGEROUS_COMMAND_KINDS:
+                return kind
+    return None
+
+
 def _collapse_engine_decision(
     *,
     candidate_action_type: str,
@@ -1762,6 +1986,7 @@ def _collapse_engine_decision(
     command_approved: bool,
     approval_held: bool = False,
     shell_file_gate: Mapping[str, Any] | None = None,
+    action_reasons: Sequence[str] = (),
 ) -> tuple[str, tuple[str, ...]]:
     reasons: list[str] = []
     if any(record.get("target_outside_repo") is True for record in repo_boundary_records):
@@ -1776,6 +2001,10 @@ def _collapse_engine_decision(
         reasons.append("dangerous_bash_gate_denies_command")
     if action_risk_status == POWERSHELL_DANGEROUS and not command_approved:
         reasons.append("dangerous_powershell_gate_denies_command")
+    if action_risk_status in {BASH_DANGEROUS, POWERSHELL_DANGEROUS} and not command_approved:
+        kind = _dangerous_command_kind(action_reasons)
+        if kind is not None:
+            reasons.append(f"{DANGEROUS_COMMAND_KIND_PREFIX}{kind}")
     if protected_path_gate.get("protected_path_detected") is True:
         reasons.append("protected_path_gate_denies_target")
     if shell_read_gate.get("deny") is True:

@@ -7,6 +7,7 @@ a positive read/file-operation grammar or the separate project approval policy.
 
 from __future__ import annotations
 
+import binascii
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 import re
@@ -62,6 +63,100 @@ _PUBLISH_SEQUENCES = {
     ),
     "dotnet": (("nuget", "push"),),
 }
+# Destruction no project file can undo: it lands on an account, a database or the
+# machine. A person who needs one of these runs it, or approves its prefix with
+# ``aeg policy add --command``. Finding nothing here leaves the command where it
+# was, with the person asked, so each rule prefers missing to stopping ordinary work.
+_REMOTE_RESOURCE_CLIS = frozenset(
+    {
+        "aws", "gcloud", "gsutil", "bq", "az", "doctl", "flyctl", "fly", "heroku", "vercel", "netlify",
+        "firebase", "supabase", "railway", "wrangler", "oci", "ibmcloud", "linode-cli", "scw", "hcloud",
+    }
+)
+# How many leading words name the command (``aws <service> <operation>``). Words
+# after them are resource names, which may be spelled ``delete-me``.
+_REMOTE_COMMAND_WORDS = {"aws": 2, "gsutil": 2, "bq": 2, "gcloud": 5, "az": 5}
+_REMOTE_DEFAULT_COMMAND_WORDS = 3
+_REMOTE_DESTROY_WORDS = frozenset(
+    {"delete", "destroy", "terminate", "remove", "rm", "rb", "purge", "drop", "del", "erase", "nuke"}
+)
+# ``aws`` and a few others spell an operation as one hyphenated word.
+_HYPHEN_OPERATION_CLIS = frozenset({"aws", "az", "doctl", "oci"})
+_DESTROY_OPERATION_PREFIXES = (
+    "delete-", "destroy-", "terminate-", "remove-", "purge-", "deregister-", "batch-delete-",
+)
+_REMOTE_DESTROY_NAMESPACED = (":delete", ":destroy", ":remove", ":purge")
+_REMOTE_DESTROY_FLAGS = frozenset({"--delete", "--delete-all", "--force-delete", "--purge", "--delete-destination"})
+# Options known to take no value. Any other option is taken to have one, so the
+# word after it is not read as a command word: ``aws s3 ls --profile rm`` is a
+# listing, and ``aws ec2 --region r terminate-instances`` still names its operation.
+_REMOTE_FLAGS_WITHOUT_VALUE = frozenset(
+    {
+        "--debug", "--no-verify-ssl", "--no-paginate", "--no-sign-request", "--no-cli-pager", "--no-color",
+        "--quiet", "-q", "--verbose", "-v", "--yes", "-y", "--force", "-f", "-m", "--json", "--trace",
+        "--only-show-errors", "--no-wait", "--recursive", "-r", "--headless", "--non-interactive", "--no-prompt",
+    }
+)
+_DATABASE_CLIENTS = frozenset(
+    {
+        "psql", "mysql", "mariadb", "sqlcmd", "mongosh", "mongo", "redis-cli", "valkey-cli",
+        "cqlsh", "clickhouse-client", "influx", "cockroach",
+    }
+)
+_KEY_VALUE_CLIENTS = frozenset({"redis-cli", "valkey-cli"})
+_DATABASE_DROP_COMMANDS = frozenset({"dropdb", "dropuser"})
+# Searched after quoted text is taken out, so a statement that only mentions one of
+# these words (``comment on table t is 'do not truncate me'``) is not caught, while
+# ``/* x */ drop table t`` and ``explain analyze delete from t`` are.
+_SQL_DESTROY = re.compile(
+    r"\bdrop\s+(?:database|schema|table|index|view|user|role|keyspace|collection|materialized|function|trigger)\b"
+    r"|\btruncate\s+(?:table\s+)?[\w\"`\[]"
+    r"|\bdelete\s+from\s+[\w.\"`\[\]]+\s*(?:;|$)",
+    re.IGNORECASE,
+)
+_SQL_QUOTED_TEXT = re.compile(r"'[^']*'")
+_PG_RESTORE_VALUE_OPTIONS = frozenset("dfFIjLnNPStTUhp")
+_EXT_FILESYSTEM_MAKERS = frozenset({"mke2fs", "mkfs.ext2", "mkfs.ext3", "mkfs.ext4"})
+_PARTED_SHOW_WORDS = frozenset(
+    {"print", "unit", "free", "list", "all", "devices", "s", "b", "kb", "mb", "gb", "tb", "kib", "mib", "gib",
+     "tib", "%", "cyl", "chs", "compact"}
+)
+_DOCUMENT_STORE_DESTROY = re.compile(r"\bdropdatabase\s*\(|\.drop\s*\(|\bdeletemany\s*\(\s*\{\s*\}", re.IGNORECASE)
+_SYSTEM_DESTROY_COMMANDS = frozenset(
+    {"mkswap", "blkdiscard", "diskpart", "reboot", "halt", "poweroff"}
+)
+_POWERSHELL_SYSTEM_DESTROY = frozenset(
+    {"format-volume", "clear-disk", "remove-partition", "initialize-disk", "stop-computer", "restart-computer"}
+)
+# For each partition tool, the options that only show. A call is a listing when
+# it has at least one of them and no other option.
+_PARTITION_SHOW_OPTIONS = {
+    "fdisk": frozenset({"-l", "--list", "-s", "--getsz", "-x", "--list-details", "-v", "--version", "-h", "--help"}),
+    "sfdisk": frozenset(
+        {"-l", "--list", "-d", "--dump", "-j", "--json", "-s", "--show-size", "-g", "--show-geometry",
+         "-v", "--verify", "-f", "--list-free"}
+    ),
+    "gdisk": frozenset({"-l"}),
+    "sgdisk": frozenset({"-p", "--print", "-i", "--info", "-v", "--verify", "-d", "--display-alignment"}),
+    "parted": frozenset({"-l", "--list", "-v", "--version", "-h", "--help"}),
+}
+# Read with the case kept: ``sgdisk -d`` deletes and ``-D`` displays, ``sfdisk -d`` dumps.
+_PARTITION_CASE_SENSITIVE_SHOW = {
+    "sgdisk": frozenset(
+        {"-p", "--print", "-i", "--info", "-v", "--verify", "-D", "--display-alignment", "-L", "--list-types",
+         "-V", "--version", "-?", "--help"}
+    ),
+    "sfdisk": frozenset(
+        {"-l", "--list", "-d", "--dump", "-J", "--json", "-s", "--show-size", "-g", "--show-geometry",
+         "-V", "--verify", "-F", "--list-free", "-v", "--version", "-h", "--help"}
+    ),
+}
+_PARTED_SCRIPT_OPTIONS = frozenset({"-s", "--script", "-m", "--machine"})
+_WIPEFS_ERASE_OPTIONS = frozenset({"-a", "--all", "-o", "--offset"})
+_DISKUTIL_DESTROY_PREFIXES = ("erase", "partition", "reformat", "zero", "random", "secureerase", "delete")
+_SYSTEMCTL_POWER = frozenset({"poweroff", "reboot", "halt", "kexec"})
+_DRIVE_LETTER = re.compile(r"[A-Za-z]:\\?")
+_KILL_EVERYTHING_TARGETS = frozenset({"-1", "1"})
 # Commands that only ever treat ``deploy`` as a path or as text.
 _DEPLOY_INERT_COMMANDS = frozenset(
     {
@@ -97,6 +192,8 @@ _INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "-r", "-pe", "-ne", "--eval", 
 _INLINE_CODE_SEPARATORS = re.compile(r"[\s'\"`(),;=+\[\]{}<>|&]+")
 # Words that only count as a secret reference inside a path, never as bare text.
 _BARE_SECRET_WORDS = frozenset({"secret", "secrets", "credentials"})
+_BASE64_LITERAL = re.compile(r"[A-Za-z0-9+/_-]{4,512}={0,2}")
+_HEX_LITERAL = re.compile(r"(?:[0-9A-Fa-f]{2}){2,256}")
 
 
 @dataclass(frozen=True)
@@ -365,7 +462,11 @@ def dangerous_argv_reason(argv: Sequence[str], *, depth: int = 0) -> str | None:
         return "dangerous_bash_rm_recursive_force"
     if name == "git":
         return _git_reason(args)
-    return _publish_reason(name, args) or _deploy_reason(name, args)
+    return (
+        _publish_reason(name, args)
+        or _destroy_reason(name, args)
+        or _deploy_reason(name, args)
+    )
 
 
 def guard_self_disable(argv: Sequence[str]) -> bool:
@@ -482,10 +583,83 @@ def secret_references(tokens: Iterable[str], *, policy: PathPolicy | None = None
         for candidate in _reference_candidates(token):
             if candidate.casefold() in _BARE_SECRET_WORDS:
                 continue
-            if is_secret_path(candidate, policy):
+            if is_secret_path(candidate, policy) or any(
+                is_secret_path(decoded, policy) for decoded in _decoded_literals(candidate)
+            ):
                 found.append(candidate)
                 break
     return tuple(dict.fromkeys(found))
+
+
+_MAX_BRACE_EXPANSIONS = 64
+_MAX_BRACE_WORD_LENGTH = 2048
+
+
+def brace_expansions(word: str) -> tuple[str, ...]:
+    """What a POSIX shell makes of ``.en{v,x}``: each comma alternative, in place.
+
+    Empty when the word has no comma list. Sequences such as ``{a..z}`` are not
+    expanded, and past the limits the list is cut or left out: both leave the
+    command to the person asked, as before.
+    """
+
+    if len(word) > _MAX_BRACE_WORD_LENGTH or "," not in word:
+        return ()
+    results: list[str] = []
+    pending = [word]
+    while pending and len(results) + len(pending) <= _MAX_BRACE_EXPANSIONS:
+        current = pending.pop()
+        span = _first_comma_brace(current)
+        if span is None:
+            results.append(current)
+            continue
+        start, end, alternatives = span
+        pending.extend(current[:start] + alternative + current[end + 1 :] for alternative in alternatives)
+    return tuple(dict.fromkeys(results)) if results != [word] else ()
+
+
+def _first_comma_brace(word: str) -> tuple[int, int, list[str]] | None:
+    """The first brace group to close that holds a comma, found in one pass."""
+
+    open_groups: list[tuple[int, list[int]]] = []
+    for index, char in enumerate(word):
+        if char == "{":
+            open_groups.append((index, []))
+        elif char == "," and open_groups:
+            open_groups[-1][1].append(index)
+        elif char == "}" and open_groups:
+            start, commas = open_groups.pop()
+            if commas:
+                bounds = [start, *commas, index]
+                return start, index, [word[left + 1 : right] for left, right in zip(bounds, bounds[1:])]
+    return None
+
+
+def _decoded_literals(token: str) -> Iterator[str]:
+    """A whole word that is base64 or hex for a file name, as ``$(echo LmVudg== | base64 -d)`` hides one.
+
+    Only a complete literal is decoded. A name put together while the command runs
+    (``chr(46) + 'env'``, split fragments) cannot be read from the text and is left
+    to the person asked about the command.
+    """
+
+    raw: list[bytes] = []
+    if _HEX_LITERAL.fullmatch(token):
+        raw.append(bytes.fromhex(token))
+    if _BASE64_LITERAL.fullmatch(token):
+        body = token.rstrip("=").replace("-", "+").replace("_", "/")
+        if len(body) % 4 != 1:
+            try:
+                raw.append(binascii.a2b_base64(body + "=" * (-len(body) % 4)))
+            except (binascii.Error, ValueError):
+                pass
+    for data in raw:
+        try:
+            text = data.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            continue
+        if text and text.isprintable() and not any(char.isspace() for char in text):
+            yield text
 
 
 def inline_code_words(argv: Sequence[str]) -> tuple[str, ...]:
@@ -651,6 +825,156 @@ def _publish_reason(name: str, args: Sequence[str]) -> str | None:
     return None
 
 
+def _destroy_reason(name: str, args: Sequence[str]) -> str | None:
+    """Deletion of remote resources, database contents or the machine's own disks."""
+
+    lowered = [arg.lower() for arg in args]
+    if name in _REMOTE_RESOURCE_CLIS:
+        return f"dangerous_bash_remote_destroy:{name}" if _remote_destroy(name, lowered) else None
+    if _database_destroy(name, args, lowered):
+        return f"dangerous_bash_database_destroy:{name}"
+    if _system_destroy(name, args, lowered):
+        return f"dangerous_bash_system_destroy:{name.split('.', 1)[0]}"
+    return None
+
+
+def _only_asks_for_help(lowered: Sequence[str]) -> bool:
+    """A lone ``--help`` or ``--version``. With anything else the program may act first."""
+
+    return len(lowered) == 1 and lowered[0] in {"--help", "--version"}
+
+
+def _remote_destroy(name: str, lowered: Sequence[str]) -> bool:
+    if lowered[-1:] == ["--help"] or (name == "aws" and lowered[-1:] == ["help"]):
+        return False
+    if any(arg.split("=", 1)[0] in _REMOTE_DESTROY_FLAGS for arg in lowered):
+        return True
+    words = _command_words(lowered, _REMOTE_COMMAND_WORDS.get(name, _REMOTE_DEFAULT_COMMAND_WORDS))
+    if any(word in _REMOTE_DESTROY_WORDS or word.endswith(_REMOTE_DESTROY_NAMESPACED) for word in words):
+        return True
+    # A word with a dot is a file or resource name (``delete-users.sql``), not an operation.
+    return name in _HYPHEN_OPERATION_CLIS and any(
+        word.startswith(_DESTROY_OPERATION_PREFIXES) and "." not in word for word in words[1:]
+    )
+
+
+def _command_words(lowered: Sequence[str], limit: int) -> list[str]:
+    """The leading words that name the command, without options or their values."""
+
+    words: list[str] = []
+    index = 0
+    while index < len(lowered) and len(words) < limit:
+        arg = lowered[index]
+        if not arg.startswith("-"):
+            words.append(arg)
+        elif "=" not in arg and arg not in _REMOTE_FLAGS_WITHOUT_VALUE:
+            index += 1  # Taken to have a value: the next word is not a command word.
+        index += 1
+    return words
+
+
+def _database_destroy(name: str, args: Sequence[str], lowered: Sequence[str]) -> bool:
+    if name in _DATABASE_DROP_COMMANDS:
+        return not _only_asks_for_help(lowered)
+    if name == "mysqladmin":
+        return "drop" in lowered
+    if name == "pg_restore":
+        return "--clean" in lowered or any(_pg_restore_cleans(arg) for arg in args)
+    if name == "mongorestore":
+        return "--drop" in lowered
+    if name not in _DATABASE_CLIENTS:
+        return False
+    if name in _KEY_VALUE_CLIENTS:
+        return any(arg in {"flushall", "flushdb"} for arg in lowered)
+    # ``-c'drop table t'`` reaches the program as one word with the option letter
+    # attached, and ``--command='drop table t'`` with the option name attached.
+    texts = [
+        *args,
+        *(arg[2:] for arg in args if arg.startswith("-") and not arg.startswith("--")),
+        *(arg.split("=", 1)[1] for arg in args if arg.startswith("--") and "=" in arg),
+    ]
+    return any(
+        _SQL_DESTROY.search(_SQL_QUOTED_TEXT.sub("''", text)) or _DOCUMENT_STORE_DESTROY.search(text)
+        for text in texts
+    )
+
+
+def _pg_restore_cleans(arg: str) -> bool:
+    """``-c`` alone or in a bundle (``-cC``, ``-cd app``); not the ``c`` of ``-Fc``."""
+
+    if not arg.startswith("-") or arg.startswith("--"):
+        return False
+    for letter in arg[1:]:
+        if letter == "c":
+            return True
+        if letter in _PG_RESTORE_VALUE_OPTIONS:
+            return False
+    return False
+
+
+def _system_destroy(name: str, args: Sequence[str], lowered: Sequence[str]) -> bool:
+    if _only_asks_for_help(lowered):
+        return False
+    options = [arg for arg in lowered if arg.startswith("-")]
+    positional = [arg for arg in lowered if not arg.startswith(("-", "/"))]
+    if name in _SYSTEM_DESTROY_COMMANDS:
+        return True
+    if name in _POWERSHELL_SYSTEM_DESTROY:
+        return "-whatif" not in lowered
+    if name in {"mkfs", "mke2fs"} or name.startswith(("mkfs.", "mkfs-")):
+        # ``-n`` only shows what would be done, for ext file systems. For FAT it is a label.
+        return not (name in _EXT_FILESYSTEM_MAKERS and "-n" in args)
+    if name == "wipefs":
+        return any(
+            option.split("=", 1)[0] in _WIPEFS_ERASE_OPTIONS
+            or (not option.startswith("--") and set(option[1:]) & {"a", "o"})
+            for option in options
+        )
+    if name in _PARTITION_SHOW_OPTIONS:
+        if (
+            name == "parted"
+            and "print" in positional
+            and all(word in _PARTED_SHOW_WORDS for word in positional)
+            and all(option in _PARTED_SCRIPT_OPTIONS for option in options)
+        ):
+            return False
+        exact = _PARTITION_CASE_SENSITIVE_SHOW.get(name)
+        if exact is not None:
+            shown = [arg.split("=", 1)[0] for arg in args if arg.startswith("-")]
+            return not (shown and all(option in exact for option in shown))
+        allowed = _PARTITION_SHOW_OPTIONS[name]
+        return not (options and all(option.split("=", 1)[0] in allowed for option in options))
+    if name == "diskutil":
+        verbs = positional[1:2] if positional[:1] in (["apfs"], ["cs"], ["corestorage"]) else positional[:1]
+        return any(verb.startswith(_DISKUTIL_DESTROY_PREFIXES) for verb in verbs)
+    if name == "vssadmin":
+        return "delete" in lowered
+    if name == "bcdedit":
+        return any(arg.startswith("/delete") for arg in lowered)
+    if name == "shutdown":
+        # ``/a`` aborts on Windows and ``-c`` cancels on Linux, each as the only word.
+        # With other words ``-c`` is a Windows comment and the shutdown goes ahead.
+        return not (len(lowered) == 1 and lowered[0] in {"/a", "-a", "-c", "/?"})
+    if name == "systemctl":
+        return any(arg in _SYSTEMCTL_POWER for arg in positional[:1])
+    if name in {"init", "telinit"}:
+        return tuple(args[:1]) in {("0",), ("6",)}
+    if name == "format":
+        return any(_DRIVE_LETTER.fullmatch(arg) for arg in args)
+    if name == "kill":
+        if args[:1] and args[0] in {"-l", "-L", "--list", "--table", "-0"}:
+            return False  # A listing, or signal 0, which only asks whether the process exists.
+        targets = list(args)
+        if targets[:1] in (["-s"], ["-n"]):
+            if targets[1:2] == ["0"]:
+                return False
+            targets = targets[2:]
+        elif targets and targets[0].startswith("-") and targets[0] != "--":
+            targets = targets[1:]  # The first dash word is the signal, not a process.
+        return any(target in _KILL_EVERYTHING_TARGETS for target in targets)
+    return False
+
+
 def _deploy_reason(name: str, args: Sequence[str]) -> str | None:
     if name.split(".", 1)[0] == "deploy" or name.startswith(("deploy-", "deploy_")):
         return "dangerous_bash_deploy"
@@ -670,6 +994,7 @@ __all__ = [
     "BashWord",
     "bash_dangerous_reasons",
     "bash_words",
+    "brace_expansions",
     "command_name",
     "dangerous_argv_reason",
     "git_subcommand",

@@ -35,7 +35,9 @@ A shield blocks what is in front of it; it does not block people passing by. Jan
 Blocked (does not run without user approval):
 
 - Risk of secret exposure: reading and modifying `.env` and `.env.*`, private keys (`id_rsa`, `*.pem`, `*.key`, etc.), and credential files (`.ssh/`, `.aws/`, `.npmrc`, `credentials.json`, etc.). This applies regardless of folder depth and letter case. Templates such as `.env.example` are not treated as secrets. However, a folder-wide `Grep` skips them as well.
+- Commands that reach a secret file without spelling its name (since 0.2.2): a wildcard that matches a secret file that exists now (`cat .en?`, `cat .env*`, `cat certs/*`), a brace list (`cat .en{v,x}`), and a name written whole in base64 or hex (`$(echo LmVudg== | base64 -d)`). A wildcard that reaches no secret file (`wc -l *.py`) is not affected. Matching happens inside the project only. A pattern with no letter or digit (`cat *`) or one outside the project (`cat ~/.ss?/id_*`) is not matched and asks for confirmation.
 - Irreversible destruction: `rm -rf`, `git reset --hard`, `git clean -f`, `git checkout -- .`
+- Destruction outside the project (since 0.2.2): deleting cloud or hosting resources (`aws s3 rb`, `aws ec2 terminate-instances`, `gcloud ... delete`, `az ... delete`, `vercel rm`, etc.), deleting database contents (`psql -c 'DROP TABLE ...'`, `redis-cli FLUSHALL`, `dropdb`, etc.), and disks and the system (`mkfs`, `shutdown`, `kill -9 -1`, etc.). Read commands (`aws s3 ls`, `psql -c 'select ...'`) and deletion of local development resources (`docker compose down -v`) ask for confirmation.
 - Outbound transfer and deployment: `git push`, `npm publish`, `gh release create`, `kubectl apply`, `terraform apply`, `curl`
 - Disabling Jangseung: modifying `.claude/settings*.json`, `.codex/`, `.mcp.json`, `.git/`, and running `aeg uninstall`, `aeg policy`
 - Files that git executes: modifying paths inside the project that git settings such as `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` point to (since 0.1.7)
@@ -68,6 +70,8 @@ Execution commands and unclear work (since 0.2.0):
 ## What we cannot block
 
 Jangseung does not say it is "perfectly safe". It states exactly the line it holds.
+
+The full list of what is knowingly accepted, and of what counts as a defect if it gets through, is in the [residual risk register](docs/residual_risk.md) (Korean, since 0.2.2).
 
 Jangseung steps in and decides at the moment the AI tries to use a tool, such as writing a file or running a command. So things that do not go through a tool — file contents the AI reads in directly by reference, and other programs that an already allowed command runs internally — are outside this line.
 
@@ -165,7 +169,7 @@ pip install jangseung
 
 After installation the `aeg` command is available. You must activate this virtual environment each time you use the `aeg` command afterward. Now move to the project where you want to attach the hook and register it.
 
-Existing users: activate the virtual environment where Jangseung was installed, then update. 0.1.2 includes limited shell document reads and the Codex hook removal fix. 0.1.3 includes settings preservation on install/uninstall and record stability fixes. 0.1.5 includes security bypass fixes. 0.1.6 includes the fix for upgrading old-style hooks. 0.1.7 includes fixes for defects where secret values were printed through search and shell read commands and programs were run through `git` commands. 0.1.8 includes fixes for the defect where `git` commands in folders outside the project were auto-allowed and for over-blocking of `apply_patch` absolute paths. 0.1.9 includes [MCP protection](#mcp-protection-since-019-opt-in), which you turn on by choice. 0.2.0 changes build file decisions, the approval policy command, and record contents, and removes the `aeg run`, `aeg verify`, `aeg init` commands. What changed and what to check when upgrading are in the [0.2.0 release notes](docs/release_0.2.0.md). **0.2.1 is a security fix for a secret-exposure defect introduced in 0.2.0** ([0.2.1 release notes](docs/release_0.2.1.md)).
+Existing users: activate the virtual environment where Jangseung was installed, then update. 0.1.2 includes limited shell document reads and the Codex hook removal fix. 0.1.3 includes settings preservation on install/uninstall and record stability fixes. 0.1.5 includes security bypass fixes. 0.1.6 includes the fix for upgrading old-style hooks. 0.1.7 includes fixes for defects where secret values were printed through search and shell read commands and programs were run through `git` commands. 0.1.8 includes fixes for the defect where `git` commands in folders outside the project were auto-allowed and for over-blocking of `apply_patch` absolute paths. 0.1.9 includes [MCP protection](#mcp-protection-since-019-opt-in), which you turn on by choice. 0.2.0 changes build file decisions, the approval policy command, and record contents, and removes the `aeg run`, `aeg verify`, `aeg init` commands. What changed and what to check when upgrading are in the [0.2.0 release notes](docs/release_0.2.0.md). **0.2.1 is a security fix for a secret-exposure defect introduced in 0.2.0** ([0.2.1 release notes](docs/release_0.2.1.md)). 0.2.2 blocks commands that reach a secret file through a wildcard, brace list or encoded name, blocks destruction outside the project, names the kind of danger in a stop, shortens the hook call and adds `aeg evidence summary` ([release notes, Korean](docs/release_0.2.2.md)).
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -408,12 +412,15 @@ Note: exit code 0 from `explain` means **the explanation completed**, not permis
 ```bash
 aeg evidence list --limit 20
 aeg evidence list --json
+aeg evidence summary --days 7
 aeg evidence show <hook-record-hash-prefix>
 aeg evidence verify-hooks
 aeg evidence repair-hooks
 ```
 
 `list` shows time, decision, tool and target, newest first. `show` is divided into summary, decision, call and integrity sections. View results pass through a credential-shape filter and do not modify `.aeg`. Corrupted rows are shown as `UNREADABLE`.
+
+`summary` (since 0.2.2) shows the count of each decision and the programs and files stopped most often. Use it to decide which commands to open with `aeg policy add --command`. Records hold no command lines, so only program names appear.
 
 One record contains the following.
 
