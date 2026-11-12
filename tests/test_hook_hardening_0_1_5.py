@@ -187,10 +187,15 @@ class GuardSelfProtectionTests(_Fixture):
             "deny",
         )
 
-    def test_agent_authored_claude_content_stays_editable(self):
+    def test_agent_authored_claude_content_is_not_guard_state(self):
+        # Since 0.3.0 these are agent instructions in the review tier: a person is asked
+        # (deny where no person is asked), and a project policy can open them.
+        # They are still not guard paths, which no policy can open.
         for path in (".claude/commands/x.md", ".claude/agents/y.md", ".claude/skills/z/SKILL.md"):
             with self.subTest(path=path):
-                self.assertEqual(self.judge("Write", file_path=path, content="x").permission_decision, "allow")
+                self.assertIn(self.judge("Write", file_path=path, content="x").permission_decision, {"ask", "deny"})
+        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [".claude/commands"]}), encoding="utf-8")
+        self.assertEqual(self.judge("Write", file_path=".claude/commands/x.md", content="x").permission_decision, "allow")
 
     def test_guard_commands_cannot_disable_it(self):
         self.assertDecisions("deny", "Bash", (

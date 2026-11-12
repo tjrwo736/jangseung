@@ -29,6 +29,14 @@ def _load_hook_main() -> Callable[[Sequence[str]], int]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["session-check"]:
+        # A SessionStart hook: it must never stop a session from starting.
+        try:
+            from jangseung.cli.session_check import main as session_check_main
+
+            return session_check_main(arguments[1:])
+        except Exception:  # noqa: BLE001
+            return 0
     if arguments[:1] != ["hook-run"]:
         return _load_cli_main()(arguments)
     try:

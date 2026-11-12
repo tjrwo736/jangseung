@@ -64,7 +64,7 @@ and the host permission rules, including existing allow rules, decide execution.
     if not words or not re.fullmatch(r"[a-z][a-z0-9]*", words[0]):
         return False
     name, *arguments = words
-    if any(word.lower() in {"install", "uninstall", "policy", "repair-hooks"} for word in arguments):
+    if any(word.lower() in {"install", "uninstall", "policy", "repair-hooks", "allow-once", "archive-hooks"} for word in arguments):
         guard_names = {"aeg", "aeg.py", "aeg.exe", "aeg.cmd"}
         if any(
             word.rsplit("/", 1)[-1].lower().rstrip(".") in guard_names

@@ -18,7 +18,8 @@ from jangseung.cli.install import (
     cmd_install,
     cmd_uninstall,
 )
-from jangseung.cli.policy import PRESETS, cmd_policy_add, cmd_policy_show
+from jangseung.cli.allow_once import cmd_allow_once
+from jangseung.cli.policy import PRESETS, cmd_policy_add, cmd_policy_add_shared, cmd_policy_show, cmd_policy_suggest
 from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, doctor_status, run_doctor
 from jangseung.state.evidence_query import (
@@ -26,9 +27,15 @@ from jangseung.state.evidence_query import (
     hook_human_sections,
     list_hook_evidence,
     load_hook_evidence,
+    summarize_hook_evidence,
     sanitize_for_display,
 )
-from jangseung.state.hook_ledger import hook_ledger_needs_repair, repair_hook_ledger, verify_hook_ledger
+from jangseung.state.hook_ledger import (
+    archive_hook_ledger,
+    hook_ledger_needs_repair,
+    repair_hook_ledger,
+    verify_hook_ledger,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,6 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     evidence_list_parser.add_argument("--limit", type=_positive_int, default=20)
     evidence_list_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_summary_parser = evidence_subparsers.add_parser(
+        "summary",
+        help="count decisions and show what was stopped most often",
+    )
+    evidence_summary_parser.add_argument("--days", type=_positive_int, default=None,
+                                         help="only records from the last N days (default: all)")
+    evidence_summary_parser.add_argument("--json", action="store_true", dest="as_json")
     evidence_show_parser = evidence_subparsers.add_parser(
         "show",
         help="show structured details for one hook record",
@@ -76,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         help="verify the dedicated hook decision ledger hash chain",
     )
     evidence_verify_hooks_parser.add_argument("--json", action="store_true", dest="as_json")
+    evidence_archive_hooks_parser = evidence_subparsers.add_parser(
+        "archive-hooks",
+        help="move an intact hook ledger to .aeg/archive/ and start a new chain that names it (run by a person)",
+    )
+    evidence_archive_hooks_parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     evidence_repair_hooks_parser = evidence_subparsers.add_parser(
         "repair-hooks",
         help="move damaged hook ledger lines into a quarantine file and continue the chain",
@@ -170,6 +189,17 @@ def main(argv: list[str] | None = None) -> int:
         "--scope", choices=SETTINGS_SCOPES, default=SCOPE_PROJECT,
         help="claude-code only: which settings file to remove the hook from (default: project)",
     )
+    allow_once_parser = subparsers.add_parser(
+        "allow-once",
+        help="let an agent run one exact command once, within minutes (run by a person; mainly for Codex)",
+    )
+    allow_once_parser.add_argument("allowed_command", nargs="?", default=None, help="the exact command text, quoted")
+    allow_once_parser.add_argument("--minutes", type=int, default=10, help="minutes until it expires (1-60, default 10)")
+    allow_once_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
+    allow_once_parser.add_argument("--clear", action="store_true", help="remove every pending approval")
+    allow_once_parser.add_argument("--status", action="store_true", help="show how many approvals are pending")
+    allow_once_parser.add_argument("--tool", choices=("Bash", "PowerShell"), default="Bash",
+                                   help="the shell tool the agent will use (default: Bash; Codex always uses Bash)")
     policy_parser = subparsers.add_parser(
         "policy",
         help="show or extend the project approval policy in .aeg/policy.json (run by a person, not an agent)",
@@ -187,8 +217,17 @@ def main(argv: list[str] | None = None) -> int:
                                    help="extra path agents must not change")
     policy_add_parser.add_argument("--mcp-tool", dest="policy_mcp_tools", action="append", default=[],
                                    help="exact MCP tool name, such as mcp__server__tool")
+    policy_suggest_parser = policy_subparsers.add_parser(
+        "suggest", help="name the commands you were asked about most often (prints only)",
+    )
+    policy_suggest_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
+    policy_suggest_parser.add_argument("--days", type=_positive_int, default=14, help="look back this many days (default 14)")
+    policy_suggest_parser.add_argument("--min", dest="minimum", type=_positive_int, default=3,
+                                       help="only programs asked about at least this often (default 3)")
     policy_preset_parser = policy_subparsers.add_parser("preset", help="add a starting set of commands")
     policy_preset_parser.add_argument("preset", choices=sorted(PRESETS))
+    policy_add_parser.add_argument("--shared", action="store_true",
+                                   help="write --protect paths to .jangseung/policy.json, the committed team file")
     for policy_writer in (policy_add_parser, policy_preset_parser):
         policy_writer.add_argument("--project", default=None, help="project directory (default: cwd)")
         policy_writer.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -210,20 +249,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "evidence":
         if args.evidence_command == "list":
             return _cmd_evidence_list(Path.cwd(), limit=args.limit, as_json=args.as_json)
+        if args.evidence_command == "summary":
+            return _cmd_evidence_summary(Path.cwd(), days=args.days, as_json=args.as_json)
         if args.evidence_command == "show":
             return _cmd_evidence_show(Path.cwd(), args.evidence_id, as_json=args.as_json)
         if args.evidence_command == "verify-hooks":
             return _cmd_evidence_verify_hooks(Path.cwd(), as_json=args.as_json)
         if args.evidence_command == "repair-hooks":
             return _cmd_evidence_repair_hooks(Path.cwd(), assume_yes=args.yes)
+        if args.evidence_command == "archive-hooks":
+            return _cmd_evidence_archive_hooks(Path.cwd(), assume_yes=args.yes)
     if args.command == "hook-run":
         return run_aeg_hook_run_from_process(substrate=args.substrate, ensure_state=args.ensure_state)
+    if args.command == "allow-once":
+        return cmd_allow_once(Path(args.project) if args.project else Path.cwd(), args.allowed_command,
+                              minutes=args.minutes, clear=args.clear, status=args.status, tool=args.tool)
     if args.command == "policy":
         project = Path(args.project) if args.project else Path.cwd()
         if args.policy_command == "show":
             return cmd_policy_show(project, as_json=args.as_json)
+        if args.policy_command == "suggest":
+            return cmd_policy_suggest(project, days=args.days, minimum=args.minimum)
         if args.policy_command == "preset":
             return cmd_policy_add(project, preset=args.preset, assume_yes=args.yes)
+        if args.shared:
+            if args.policy_commands or args.policy_allow_paths or args.policy_mcp_tools:
+                parser.error("--shared takes --protect only: the committed team file can only add protection")
+            return cmd_policy_add_shared(project, protect_paths=args.policy_protect_paths, assume_yes=args.yes)
         return cmd_policy_add(
             project,
             commands=args.policy_commands,
@@ -324,6 +376,61 @@ def _cmd_evidence_list(cwd: Path, *, limit: int = 20, as_json: bool = False) -> 
     return 0
 
 
+_SUMMARY_HINTS = {
+    "unclassified": (
+        "Unclassified commands a person trusts for this project can be allowed with: "
+        'aeg policy add --command "<command>" (or: aeg policy preset python|node|git)'
+    ),
+    "dangerous_command": (
+        'A dangerous command a person wants agents to run here can be allowed by prefix with: aeg policy add --command "<command>"'
+    ),
+    "build_file_review": "A build or dependency file a person no longer wants to be asked about: aeg policy add --path <path>",
+    "secret_or_outside_read": "A path wrongly treated as secret can be opened with: aeg policy add --path <path>",
+}
+
+
+def _cmd_evidence_summary(cwd: Path, *, days: int | None = None, as_json: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        summary = sanitize_for_display(summarize_hook_evidence(repo, days=days))
+    except Exception as exc:  # noqa: BLE001 - inspection errors must be reported, not crash.
+        if as_json:
+            print(json.dumps({"status": "FAIL", "error": str(exc)}, sort_keys=True))
+        else:
+            _print_card("Aegis evidence summary", "FAIL", [("error", str(exc))])
+        return 1
+    status = "EMPTY" if not summary["records"] else ("DEGRADED" if summary["unreadable"] else "OK")
+    if as_json:
+        print(json.dumps({"status": status, **summary}, ensure_ascii=True, sort_keys=True))
+        return 0
+    print("Aegis evidence summary")
+    print(f"status: {status}")
+    span = "all records" if days is None else f"last {days} day(s)"
+    print(f"records: {summary['records']} ({span})")
+    if summary["unreadable"]:
+        print(f"unreadable lines: {summary['unreadable']} (see: aeg evidence verify-hooks)")
+    if not summary["records"]:
+        print("No persisted hook records found.")
+        return 0
+    counts = summary["decisions"]
+    print("decisions: " + ", ".join(f"{name} {counts[name]}" for name in ("allow", "host", "ask", "deny")))
+    if not summary["stopped"]:
+        print("Nothing was stopped.")
+        return 0
+    print("stopped most often (program or file, not the command line):")
+    _print_table(
+        ("COUNT", "DECISION", "TOOL", "WHAT", "WHY"),
+        [
+            (str(row["count"]), str(row["decision"]).upper(), str(row["tool_name"]), str(row["what"]), str(row["category"]))
+            for row in summary["stopped"]
+        ],
+    )
+    for category in dict.fromkeys(str(row["category"]) for row in summary["stopped"]):
+        if category in _SUMMARY_HINTS:
+            print(f"hint: {_SUMMARY_HINTS[category]}")
+    return 0
+
+
 def _cmd_evidence_show(cwd: Path, evidence_id: str, *, as_json: bool = False) -> int:
     try:
         repo = git.repo_root(cwd)
@@ -363,6 +470,29 @@ def _cmd_evidence_show(cwd: Path, evidence_id: str, *, as_json: bool = False) ->
         print(f"[{section}]")
         for key, value in rows:
             print(f"{key}: {_display_value(value)}")
+    return 0
+
+
+def _cmd_evidence_archive_hooks(cwd: Path, *, assume_yes: bool = False) -> int:
+    try:
+        repo = git.repo_root(cwd)
+        ledger = repo / ".aeg" / "hook_ledger.jsonl"
+        size = ledger.stat().st_size if ledger.is_file() else 0
+        if size == 0:
+            print("aeg evidence archive-hooks: no hook records; nothing to archive.")
+            return 0
+        print(f"aeg evidence archive-hooks: will move {ledger} ({size} bytes) to .aeg/archive/ and start a new chain.")
+        if not assume_yes:
+            answer = input("Proceed? [y/N] ").strip().lower()
+            if answer not in {"y", "yes"}:
+                print("aeg evidence archive-hooks: cancelled; no changes written.")
+                return 0
+        result = archive_hook_ledger(repo)
+    except Exception as exc:  # noqa: BLE001 - report, do not crash.
+        print(f"aeg evidence archive-hooks: failed: {exc}")
+        return 1
+    print(f"aeg evidence archive-hooks: archived {result.archived_records} record(s) to {result.archive_path}.")
+    print("The new ledger starts with a record naming the archive's last hash and SHA-256.")
     return 0
 
 

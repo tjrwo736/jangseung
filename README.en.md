@@ -35,7 +35,9 @@ A shield blocks what is in front of it; it does not block people passing by. Jan
 Blocked (does not run without user approval):
 
 - Risk of secret exposure: reading and modifying `.env` and `.env.*`, private keys (`id_rsa`, `*.pem`, `*.key`, etc.), and credential files (`.ssh/`, `.aws/`, `.npmrc`, `credentials.json`, etc.). This applies regardless of folder depth and letter case. Templates such as `.env.example` are not treated as secrets. However, a folder-wide `Grep` skips them as well.
+- Commands that reach a secret file without spelling its name (since 0.2.2): a wildcard that matches a secret file that exists now (`cat .en?`, `cat .env*`, `cat certs/*`), a brace list (`cat .en{v,x}`), and a name written whole in base64 or hex (`$(echo LmVudg== | base64 -d)`). A wildcard that reaches no secret file (`wc -l *.py`) is not affected. Matching happens inside the project only. A pattern with no letter or digit (`cat *`) or one outside the project (`cat ~/.ss?/id_*`) is not matched and asks for confirmation.
 - Irreversible destruction: `rm -rf`, `git reset --hard`, `git clean -f`, `git checkout -- .`
+- Destruction outside the project (since 0.2.2): deleting cloud or hosting resources (`aws s3 rb`, `aws ec2 terminate-instances`, `gcloud ... delete`, `az ... delete`, `vercel rm`, etc.), deleting database contents (`psql -c 'DROP TABLE ...'`, `redis-cli FLUSHALL`, `dropdb`, etc.), and disks and the system (`mkfs`, `shutdown`, `kill -9 -1`, etc.). Read commands (`aws s3 ls`, `psql -c 'select ...'`) and deletion of local development resources (`docker compose down -v`) ask for confirmation.
 - Outbound transfer and deployment: `git push`, `npm publish`, `gh release create`, `kubectl apply`, `terraform apply`, `curl`
 - Disabling Jangseung: modifying `.claude/settings*.json`, `.codex/`, `.mcp.json`, `.git/`, and running `aeg uninstall`, `aeg policy`
 - Files that git executes: modifying paths inside the project that git settings such as `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` point to (since 0.1.7)
@@ -53,13 +55,15 @@ Not blocked (simply passes):
 Changes a person must look at (it asks, since 0.2.0):
 
 - Modifying build, CI and dependency files: CI configuration such as `.github/workflows` and `.gitlab-ci.yml`, `Dockerfile`, `pyproject.toml`, `setup.py`, `requirements*.txt`, `package.json`, `Makefile`, `conftest.py`, `.pre-commit-config.yaml`, deployment scripts. The same applies when they are in a subfolder. These files run code at the next install, build, test or commit, so a person confirms the change. Reading is allowed.
+- Since 0.3.0 the tier is wider: task runners and test settings (`justfile`, `Taskfile.yml`, `tox.ini`, `noxfile.py`, `pytest.ini`, `lefthook.yml`), build files of other languages (`Cargo.toml`, `build.rs`, `go.mod`, `build.gradle`, `pom.xml`, `Gemfile`, `composer.json`, `CMakeLists.txt`, ...), JavaScript configuration that runs (`*.config.js`, `*.config.ts`, `.eslintrc.js`, `gulpfile.*`, ...), editor and container settings that run commands when a folder opens (`.vscode/tasks.json`, `.vscode/settings.json`, `.devcontainer/`), `compose.yaml` and `sitecustomize.py`.
+- Agent instruction files ask too (since 0.3.0): `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/commands/`, `.claude/agents/`, `.claude/skills/`, `.cursor/rules/`, `.github/copilot-instructions.md`, ... An agent that edits them steers the next session's agent.
 - It asks only when the host obtains approval from a person. It answers `ask` only when `permission_mode` in the hook input is `default` (manual approval) or `acceptEdits`. In the other modes (`auto`, `dontAsk`, `bypassPermissions`, `plan`) and in Codex it returns deny, as it did through 0.1.9.
 - Basis: On Claude Code 2.1.316 `claude -p` (Windows), we checked once per mode with a hook that answers `ask` to every `Edit`. In `default`, `acceptEdits` and `auto`, the edit did not run in any of them. `auto` was excluded because a classifier can answer in place of a person, and `dontAsk` and `bypassPermissions` were not verified. Whether an approval prompt appears in an interactive session was also not verified.
 - `package.json`, `Makefile`, `conftest.py`, `.pre-commit-config.yaml`, and files such as `pyproject.toml` in subfolders, which were not blocked through 0.1.9, are newly included. To keep letting them be modified automatically, a person allows them with `aeg policy add --path <file>`.
 
 Execution commands and unclear work (since 0.2.0):
 
-- In Claude Code's `default` mode, a limited set of execution commands such as `pytest`, `npm test`, and `python src/app.py` use **the host's normal permission policy**. This is not a Jangseung safety `allow`. An existing host allow rule may let the command run without another question. Under a broad rule such as `Bash(python -m:*)` or `Bash(uv run:*)`, commands that print secrets, such as `python -m dotenv list` or `uv run printenv`, also run without a question. Jangseung does not override the user's host rules.
+- In Claude Code's `default` mode and, since 0.3.0, `acceptEdits` mode, a limited set of execution commands such as `pytest`, `npm test`, and `python src/app.py` use **the host's normal permission policy**. This is not a Jangseung safety `allow`. An existing host allow rule may let the command run without another question. Under a broad rule such as `Bash(python -m:*)` or `Bash(uv run:*)`, commands that print secrets, such as `python -m dotenv list` or `uv run printenv`, also run without a question. Jangseung does not override the user's host rules.
 - This requires one simple command, an in-project working folder and literal non-protected arguments, and all existing deny gates to pass. Other or missing modes keep `ask`; Codex keeps `deny`. Invalid policy/session state and a secret-name session mark also prevent delegation.
 - Since 0.2.1, git forms that print content are not left to the host: `git stash show`, `git stash list -p`, and git commands with `-p`, `-v` or `-i` (bundled short flags included) or `--patch`, `--verbose`, `--dry-run`, `--show-current-patch`, `--interactive`, `--long`, `--short`, `--porcelain` (abbreviations included). Claude Code ran such read commands without approval, so in 0.2.0 a stashed change to a secret file was printed.
 - Unsupported programs, content searches, complex shell syntax, and other unclassified work still request confirmation. Separately trusted commands can be registered in the [project approval policy](#project-approval-policy-since-015).
@@ -68,6 +72,8 @@ Execution commands and unclear work (since 0.2.0):
 ## What we cannot block
 
 Jangseung does not say it is "perfectly safe". It states exactly the line it holds.
+
+The full list of what is knowingly accepted, and of what counts as a defect if it gets through, is in the [residual risk register](docs/residual_risk.en.md) (since 0.2.2; [Korean](docs/residual_risk.md)).
 
 Jangseung steps in and decides at the moment the AI tries to use a tool, such as writing a file or running a command. So things that do not go through a tool — file contents the AI reads in directly by reference, and other programs that an already allowed command runs internally — are outside this line.
 
@@ -165,7 +171,7 @@ pip install jangseung
 
 After installation the `aeg` command is available. You must activate this virtual environment each time you use the `aeg` command afterward. Now move to the project where you want to attach the hook and register it.
 
-Existing users: activate the virtual environment where Jangseung was installed, then update. 0.1.2 includes limited shell document reads and the Codex hook removal fix. 0.1.3 includes settings preservation on install/uninstall and record stability fixes. 0.1.5 includes security bypass fixes. 0.1.6 includes the fix for upgrading old-style hooks. 0.1.7 includes fixes for defects where secret values were printed through search and shell read commands and programs were run through `git` commands. 0.1.8 includes fixes for the defect where `git` commands in folders outside the project were auto-allowed and for over-blocking of `apply_patch` absolute paths. 0.1.9 includes [MCP protection](#mcp-protection-since-019-opt-in), which you turn on by choice. 0.2.0 changes build file decisions, the approval policy command, and record contents, and removes the `aeg run`, `aeg verify`, `aeg init` commands. What changed and what to check when upgrading are in the [0.2.0 release notes](docs/release_0.2.0.md). **0.2.1 is a security fix for a secret-exposure defect introduced in 0.2.0** ([0.2.1 release notes](docs/release_0.2.1.md)).
+Existing users: activate the virtual environment where Jangseung was installed, then update. 0.1.2 includes limited shell document reads and the Codex hook removal fix. 0.1.3 includes settings preservation on install/uninstall and record stability fixes. 0.1.5 includes security bypass fixes. 0.1.6 includes the fix for upgrading old-style hooks. 0.1.7 includes fixes for defects where secret values were printed through search and shell read commands and programs were run through `git` commands. 0.1.8 includes fixes for the defect where `git` commands in folders outside the project were auto-allowed and for over-blocking of `apply_patch` absolute paths. 0.1.9 includes [MCP protection](#mcp-protection-since-019-opt-in), which you turn on by choice. 0.2.0 changes build file decisions, the approval policy command, and record contents, and removes the `aeg run`, `aeg verify`, `aeg init` commands. What changed and what to check when upgrading are in the [0.2.0 release notes](docs/release_0.2.0.md). **0.2.1 is a security fix for a secret-exposure defect introduced in 0.2.0** ([0.2.1 release notes](docs/release_0.2.1.md)). 0.2.2 blocks commands that reach a secret file through a wildcard, brace list or encoded name, blocks destruction outside the project, names the kind of danger in a stop, shortens the hook call and adds `aeg evidence summary` ([release notes](docs/release_0.2.2.en.md)). 0.3.0 allows command sequences and status commands, delegates in `acceptEdits`, adds `aeg allow-once`, a session-start check, a shared team protection file, `aeg policy suggest` and ledger archives, and widens the review tier ([release notes](docs/release_0.3.0.en.md)). Run `aeg install` again after upgrading to register the session-start check.
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -204,6 +210,8 @@ aeg uninstall --scope local
 It registers in `.claude/settings.local.json`. If git does not ignore this file, add it to `.gitignore`. If it is registered in both files, every call is judged twice, and `aeg doctor --hooks` reports this. `--scope` exists only for the Claude Code target. Whether the hook in this file applies to a session started in a subfolder was not verified.
 
 ### Install as a Claude Code plugin (since 0.2.0)
+
+Session-start check (since 0.3.0): `aeg install` and the plugin also register a `SessionStart` hook. When a session starts, it says in one line if Jangseung's PreToolUse hook is missing, the registered program is gone, or the policy file cannot be read. When all is well it prints nothing, and it never blocks a session. If the whole hook configuration is deleted, this check goes with it and cannot say so.
 
 You can also use it as a Claude Code plugin, without `pip` and `aeg install`.
 
@@ -302,6 +310,35 @@ In PowerShell, `Get-Content` (`gc`, `cat`, `type`), `Get-ChildItem` (`gci`, `dir
 
 Reading the contents of secret files, `.aeg`, or paths outside the project is deny. When the working folder is outside the project, commands such as `git status` and `ls` with no path written are also deny (since 0.1.8). The following are excluded from this read grammar's auto-allow: wildcard and directory content searches; unquoted `*`, `?`, `[`, including in the search-term position; file searches that pipe `Get-ChildItem` into `Select-String`; Unicode whitespace or curly quotes; paths where the file does not exist; variable/command substitution; nested shells; redirects; unsupported options. `git` is not auto-allowed when `-c`, `-C`, `--output`, or `--ext-diff` is used. `sed` supports only `p` output of a numeric line range, and `rg` requires `--no-config` so that environment configuration cannot insert options that run external programs. Except for the limited execution commands delegated in `default` mode, unclassified operations request confirmation in Claude Code and are blocked in Codex. This assumes the standard tool that corresponds to the command name; it does not verify the internal behavior of replaced executables or shell functions.
 
+### Command sequences and status commands (since 0.3.0)
+
+Commands joined with `;`, `&&` or `||` are allowed when every part is in the read grammar above. Examples: `ls -la; pwd`, `cat README.md && pwd`, `git status && git diff`, `cd src && ls`. Each part is judged in the folder where it runs.
+
+- A `cd` is followed only when the whole line is joined with `&&`. `cd src; cat x` and `cd src && ls || cat x` would read from another folder if the `cd` failed, so they ask.
+- A git part that prints file content is rewritten without secret files, as for a single command.
+- If any part reads a secret file the line is denied; if any part is outside the read grammar it asks. File operations (`mkdir -p a && touch a/b`) and PowerShell sequences are not allowed as a sequence yet.
+
+Commands that only print a status are allowed too: `date`, `true`, `false`, `sleep 1`, `whoami`, `uname -a`, `which python`, `command -v git`, `cd src`, and the fixed version form of known programs such as `python --version`, `node --version`, `java -version` (only when the program PATH finds is outside the project). Forms that run code, such as `pytest -v` or `python version`, are not. Forms that change state, such as `date -s`, are not.
+
+This applies to Codex and to every Claude Code mode. Up to 0.2.2 Codex denied all of these.
+
+A line of host-delegated execution commands (`git add -A && git commit -m wip`, `npm install && npm test`) is also left to the host, when every part is such a command or a command in the read grammar. A line with a `cd` or git content output is not, because the host runs such reads on its own.
+
+### Allow once (since 0.3.0)
+
+Codex gives a hook no way to ask a person, so Jangseung denies there what it cannot prove safe. To let the agent run one such command once, a person runs this in an ordinary terminal:
+
+```bash
+aeg allow-once "docker compose up -d"
+aeg allow-once --status
+aeg allow-once --clear
+```
+
+- Only the exact text given, run in the project folder itself with the same shell tool (`--tool PowerShell`, default `Bash`), once. It expires after 10 minutes (up to `--minutes 60`) or on first use.
+- It lifts what an `allow_commands` entry lifts and nothing more. Secret files, the guard's settings and targets outside the project stay blocked, and a session that wrote text naming a secret file is asked again.
+- Agents cannot run `aeg allow-once`. The file holds hashes of commands only.
+- It works in Claude Code too (for example for a command denied in `auto` mode).
+
 ### Simple file operations (since 0.2.0)
 
 A narrow grammar for ordinary non-protected files inside the project is auto-allowed. Examples: `mkdir -p docs/new`, `touch notes.txt`, `cp README.md copy.md`, `mv notes.txt moved.txt`, `rm notes.txt`, `echo hello > notes.txt`. PowerShell also supports `Copy-Item -LiteralPath README.md -Destination copy.md`, `Move-Item -LiteralPath notes.txt -Destination moved.txt`, `Remove-Item -LiteralPath notes.txt`, and `Write-Output hello > notes.txt`.
@@ -344,6 +381,16 @@ aeg policy preset python   # one of python, node, git
 - `allow_mcp_tools` (since 0.1.9): the exact names of MCP tools to pass without approval in projects where [MCP protection](#mcp-protection-since-019-opt-in) is turned on. If even one name does not match the format, the whole file is ignored.
 
 If the file is corrupted or has an unknown entry, the whole file is ignored and only the built-in rules apply. `aeg doctor --hooks` reports this state. 0.1.8 and earlier treat `allow_mcp_tools` as an unknown entry, so a file containing this entry is ignored in full.
+
+Protection a team shares can go in `.jangseung/policy.json` (since 0.3.0). This file is meant to be committed and may hold `protect_paths` only. With any other key, or a damaged file, which paths were meant cannot be known, so every path is protected until a person fixes it. Agents cannot write `.jangseung/`.
+
+```bash
+aeg policy add --shared --protect infra/ --protect "*.tfstate"
+```
+
+`aeg policy suggest` (since 0.3.0) lists the commands you were asked about most often, as `aeg policy add --command` lines with counts. It writes nothing. It never suggests interpreters, shells, network tools, or programs with dangerous subcommands (`terraform`, `docker`, `git`, `aws`, ...): records hold program names only, so `terraform plan` shows as `terraform`, and approving that prefix would also approve `terraform destroy`.
+
+New presets: `rust`, `go`, `jvm`, `dotnet` (since 0.3.0).
 
 ### Install from source (for development/contribution)
 
@@ -408,12 +455,18 @@ Note: exit code 0 from `explain` means **the explanation completed**, not permis
 ```bash
 aeg evidence list --limit 20
 aeg evidence list --json
+aeg evidence summary --days 7
+aeg evidence archive-hooks
 aeg evidence show <hook-record-hash-prefix>
 aeg evidence verify-hooks
 aeg evidence repair-hooks
 ```
 
 `list` shows time, decision, tool and target, newest first. `show` is divided into summary, decision, call and integrity sections. View results pass through a credential-shape filter and do not modify `.aeg`. Corrupted rows are shown as `UNREADABLE`.
+
+`summary` (since 0.2.2) shows the count of each decision and the programs and files stopped most often. Use it to decide which commands to open with `aeg policy add --command`. Records hold no command lines, so only program names appear.
+
+`archive-hooks` (since 0.3.0) moves an intact ledger to `.aeg/archive/` and starts a new chain whose first record names the archived file's record count, last hash and SHA-256. A person runs it; agents cannot.
 
 One record contains the following.
 

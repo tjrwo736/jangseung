@@ -15,6 +15,7 @@ from jangseung.evidence.mcp_tool_gate import (
 
 # Kept as literals so this module stays light; the engine defines the same codes.
 REVIEW_TIER_REASON = "build_or_dependency_file_change_needs_user_review"
+AGENT_INSTRUCTION_REASON = "agent_instruction_file_change_needs_user_review"
 APPROVAL_HELD_REASON = "approved_command_held_after_write_naming_secret_file"
 
 
@@ -39,6 +40,11 @@ def explain_decision(
                 "Jangseung makes no permission decision for this execution request in Claude Code default mode.",
                 "The host's existing allow, ask and deny rules decide. This is not a claim that the command is safe "
                 "or that the host asked a person; existing approvals may run it without another prompt.")
+    if AGENT_INSTRUCTION_REASON in codes:
+        return ("build_file_review",
+                "This changes instructions that coding agents load in later sessions (CLAUDE.md, AGENTS.md, commands, skills).",
+                "Approve the prompt if the change is expected. A person can stop the question with: "
+                "aeg policy add --path <path> (a bare file name applies in every folder)")
     if REVIEW_TIER_REASON in codes:
         return ("build_file_review",
                 "This changes a build, CI or dependency file, which runs code on the next install, build, test or commit.",
@@ -56,7 +62,9 @@ def explain_decision(
         return ("ambiguous_shell_syntax", "Bash versions disagree on an unquoted trailing escape; the command is denied.",
                 "Remove the dangling escape or use an explicitly quoted literal, then check the command again.")
     if codes & {"dangerous_bash_gate_denies_command", "dangerous_powershell_gate_denies_command"}:
-        return ("dangerous_command", "The existing command-risk gate identified a dangerous command.",
+        kinds = [code.split(":", 1)[1] for code in sorted(codes) if code.startswith("dangerous_command_kind:")]
+        summary = _DANGEROUS_KIND_SUMMARIES.get(kinds[0] if kinds else "", "")
+        return ("dangerous_command", summary or "The existing command-risk gate identified a dangerous command.",
                 "Review the intended operation and narrow its scope; this diagnostic does not authorize execution.")
     if "repo_boundary_gate_denies_outside_repo_target" in codes:
         return ("outside_repository", "The target resolves outside the repository boundary.",
@@ -91,10 +99,23 @@ def explain_decision(
             "Use the reason codes when reporting the issue; do not include raw secrets.")
 
 
+# What the command gate found, in words. The family comes from a fixed list.
+_DANGEROUS_KIND_SUMMARIES = {
+    "publish": "This command publishes, releases or changes something outside this machine (a package, an image, a cluster or a repository).",
+    "deploy": "This command deploys.",
+    "remote_destroy": "This command deletes resources in a cloud or hosting account, which no project file can restore.",
+    "database_destroy": "This command drops or empties database contents.",
+    "system_destroy": "This command formats a disk, shuts the machine down or kills every process.",
+    "rm_recursive_force": "This command deletes a folder and everything in it without asking.",
+    "token": "This program can send data off this machine, print environment variables or change privileges and permissions.",
+}
+
+
 # What a person can do about a stop, said to whoever reads the host's message.
 _HOOK_NEXT_STEPS = {
     "unclassified": (
-        "A person can approve it in the prompt, run it themselves, or allow the command for this project with: "
+        "A person can approve it in the prompt, run it themselves, allow it one time with: "
+        "aeg allow-once \"<command>\", or allow the command for this project with: "
         "aeg policy add --command \"<command>\""
     ),
     "secret_or_outside_read": (
@@ -110,8 +131,8 @@ _HOOK_NEXT_STEPS = {
         "aeg policy add --path <path> (a bare file name applies in every folder)"
     ),
     "dangerous_command": (
-        "A person can run it themselves, or allow this exact command prefix for the project with: "
-        "aeg policy add --command \"<command>\""
+        "A person can run it themselves, allow it one time with: aeg allow-once \"<command>\", "
+        "or allow this exact command prefix for the project with: aeg policy add --command \"<command>\""
     ),
 }
 
@@ -147,4 +168,10 @@ def hook_reason_sentence(
     return f"Jangseung: {summary} {_HOOK_NEXT_STEPS.get(category, next_step)}"
 
 
-__all__ = ["APPROVAL_HELD_REASON", "REVIEW_TIER_REASON", "explain_decision", "hook_reason_sentence"]
+__all__ = [
+    "AGENT_INSTRUCTION_REASON",
+    "APPROVAL_HELD_REASON",
+    "REVIEW_TIER_REASON",
+    "explain_decision",
+    "hook_reason_sentence",
+]

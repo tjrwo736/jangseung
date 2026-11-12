@@ -19,7 +19,14 @@ import tempfile
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from jangseung.classify.hook_policy import HOOK_POLICY_FILE, MAX_POLICY_BYTES, parse_policy
+from jangseung.classify.hook_policy import (
+    HOOK_POLICY_FILE,
+    MAX_POLICY_BYTES,
+    SHARED_POLICY_DIR,
+    SHARED_POLICY_FILE,
+    parse_policy,
+    read_shared_protect_paths,
+)
 from jangseung.contracts import STATE_DIR
 
 POLICY_KEYS = ("allow_paths", "protect_paths", "allow_commands", "allow_mcp_tools")
@@ -57,6 +64,41 @@ PRESETS: dict[str, dict[str, tuple[str, ...]]] = {
             "git switch -c",
         ),
     },
+    "rust": {
+        "allow_commands": (
+            "cargo build",
+            "cargo check",
+            "cargo test",
+            "cargo clippy",
+            "cargo fmt",
+        ),
+    },
+    "go": {
+        "allow_commands": (
+            "go build",
+            "go test",
+            "go vet",
+            "gofmt",
+        ),
+    },
+    "jvm": {
+        "allow_commands": (
+            "mvn test",
+            "mvn compile",
+            "mvn verify",
+            "gradle test",
+            "gradle build",
+            "./gradlew test",
+            "./gradlew build",
+        ),
+    },
+    "dotnet": {
+        "allow_commands": (
+            "dotnet build",
+            "dotnet test",
+            "dotnet format",
+        ),
+    },
 }
 
 _RUNS_PROJECT_CODE_NOTE = (
@@ -67,6 +109,60 @@ _RUNS_PROJECT_CODE_NOTE = (
 
 def policy_path(base_dir: str | Path) -> Path:
     return Path(base_dir) / STATE_DIR / HOOK_POLICY_FILE
+
+
+def shared_policy_path(base_dir: str | Path) -> Path:
+    return Path(base_dir) / SHARED_POLICY_DIR / SHARED_POLICY_FILE
+
+
+def cmd_policy_add_shared(
+    base_dir: str | Path,
+    *,
+    protect_paths: Sequence[str],
+    assume_yes: bool = False,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
+    """Add paths to the committed team policy, which can only protect."""
+
+    out = output_stream if output_stream is not None else sys.stdout
+    additions = [str(path).strip() for path in protect_paths if str(path).strip()]
+    if not additions:
+        print("aeg policy: --shared takes --protect paths only; the team file can only add protection.", file=out)
+        return 2
+    path = shared_policy_path(base_dir)
+    current, error = read_shared_protect_paths(base_dir)
+    if error is not None:
+        print(f"aeg policy: aborted — {path} cannot be used ({error}). Fix or remove it yourself, then retry.", file=out)
+        return 1
+    merged = list(current) + [item for item in dict.fromkeys(additions) if item not in current]
+    before = json.dumps({"protect_paths": list(current)}, ensure_ascii=False, indent=2) + "\n" if path.exists() else ""
+    after = json.dumps({"protect_paths": merged}, ensure_ascii=False, indent=2) + "\n"
+    if before == after:
+        print("aeg policy: already in the shared policy; no changes.", file=out)
+        return 0
+    print(f"aeg policy: will write {path} (meant to be committed; it can only add protection)", file=out)
+    out.write("".join(difflib.unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile=f"{path} (current)", tofile=f"{path} (proposed)",
+    )))
+    if not assume_yes:
+        stream = input_stream if input_stream is not None else sys.stdin
+        print("Write these changes? [y/N] ", end="", file=out)
+        out.flush()
+        if stream.readline().strip().lower() not in {"y", "yes"}:
+            print("aeg policy: cancelled; no changes written.", file=out)
+            return 0
+    root = path.parent
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        print(f"aeg policy: aborted — {root} must be a local directory.", file=out)
+        return 1
+    root.mkdir(parents=True, exist_ok=True)
+    temporary = root / f".policy-{os.getpid()}.tmp"
+    temporary.write_text(after, encoding="utf-8", newline="\n")
+    os.replace(temporary, path)
+    print(f"aeg policy: wrote {path}. Commit it so every clone gets the same protection.", file=out)
+    return 0
 
 
 def _load(path: Path) -> tuple[dict[str, list[str]] | None, str | None]:
@@ -118,6 +214,66 @@ def _write_atomically(path: Path, text: str) -> None:
     os.replace(temporary, path)
 
 
+# Never suggested: approving these lets any code or any network call through.
+_NEVER_SUGGESTED = frozenset(
+    {
+        "python", "python3", "py", "pythonw", "node", "deno", "bun", "ruby", "perl", "php", "lua", "bash", "sh", "zsh",
+        "fish", "dash", "ksh", "pwsh", "powershell", "cmd", "env", "sudo", "xargs", "eval", "exec", "curl", "wget",
+        "ssh", "scp", "rsync", "nc", "aeg", "<other>", "npx", "uvx", "pipx", "docker", "kubectl", "rm", "git push",
+    }
+)
+
+
+def _suggestable(program: str) -> bool:
+    """A program name whose bare prefix approves nothing the danger rules stop.
+
+    Records hold program names only, so ``terraform plan`` is seen as ``terraform``,
+    and approving that prefix would also approve ``terraform destroy``. Programs with
+    any subcommand the danger rules know are left out for that reason.
+    """
+
+    from jangseung.evidence.shell_command_risk import programs_with_dangerous_subcommands
+
+    first = program.split(" ", 1)[0]
+    return (
+        program not in _NEVER_SUGGESTED
+        and first not in _NEVER_SUGGESTED
+        and first not in programs_with_dangerous_subcommands()
+    )
+
+
+def cmd_policy_suggest(
+    base_dir: str | Path,
+    *,
+    days: int | None = 14,
+    minimum: int = 3,
+    output_stream: TextIO | None = None,
+) -> int:
+    """Name the programs a person was asked about most often. Prints only; writes nothing."""
+
+    from jangseung.state.evidence_query import summarize_hook_evidence
+
+    out = output_stream if output_stream is not None else sys.stdout
+    summary = summarize_hook_evidence(base_dir, days=days)
+    current = {" ".join(prefix) for prefix in (parse_policy(_load(policy_path(base_dir))[0] or {}).allow_commands)}
+    rows = [
+        row for row in summary["stopped"]
+        if row["decision"] == "ask" and row["category"] == "unclassified" and row["tool_name"] in {"Bash", "PowerShell"}
+        and row["count"] >= minimum and _suggestable(row["what"]) and row["what"] not in current
+    ]
+    span = "all records" if days is None else f"the last {days} day(s)"
+    if not rows:
+        print(f"aeg policy suggest: nothing was asked {minimum} or more times in {span}.", file=out)
+        return 0
+    print(f"aeg policy suggest: asked {minimum} or more times in {span} (program names only; nothing was written):", file=out)
+    for row in rows:
+        print(f"  {row['count']:4d}x  aeg policy add --command \"{row['what']}\"", file=out)
+    print("Each runs the project's own code once approved. Interpreters, shells and network tools are never suggested.",
+          file=out)
+    print("Review the full command lines you were asked about before approving a prefix.", file=out)
+    return 0
+
+
 def cmd_policy_show(
     base_dir: str | Path,
     *,
@@ -133,18 +289,25 @@ def cmd_policy_show(
         print(json.dumps(payload, ensure_ascii=True, sort_keys=True), file=out)
         return 0 if error is None else 1
     print(f"aeg policy: {path}", file=out)
+    shared, shared_error = read_shared_protect_paths(base_dir)
+    if shared or shared_error:
+        print(f"shared (committed) {shared_policy_path(base_dir)}: "
+              + (f"error: {shared_error}; the hook treats the policy as failed" if shared_error
+                 else f"protect_paths: {len(shared)}"), file=out)
+        for value in shared:
+            print(f"  - {value}", file=out)
     if error is not None:
         print(f"error: {error}", file=out)
         return 1
     if not path.exists():
         print("No policy file yet; the built-in rules apply.", file=out)
-        return 0
+        return 0 if shared_error is None else 1
     for key in POLICY_KEYS:
         values = current.get(key, []) if current else []
         print(f"{key}: {len(values)}", file=out)
         for value in values:
             print(f"  - {value}", file=out)
-    return 0
+    return 0 if shared_error is None else 1
 
 
 def cmd_policy_add(

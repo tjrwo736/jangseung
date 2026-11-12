@@ -35,7 +35,9 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 막습니다 (사용자 승인 없이는 실행 안 됨):
 
 - 비밀 노출 위험: `.env`와 `.env.*`, 비밀키(`id_rsa`, `*.pem`, `*.key` 등), 인증 파일(`.ssh/`, `.aws/`, `.npmrc`, `credentials.json` 등)의 읽기와 수정. 폴더 깊이와 대소문자 표기에 관계없이 적용합니다. `.env.example` 같은 템플릿은 비밀로 보지 않습니다. 다만 폴더 전체 `Grep`에서는 함께 건너뜁니다.
+- 이름을 적지 않고 비밀 파일에 닿는 명령 (0.2.2부터): `cat .en?`, `cat .env*`, `cat certs/*` 같은 와일드카드가 지금 있는 비밀 파일에 닿는 경우, `cat .en{v,x}` 같은 나열, `$(echo LmVudg== | base64 -d)`처럼 통째로 base64·hex로 적은 이름. 비밀 파일에 닿지 않는 와일드카드(`wc -l *.py`)는 해당하지 않습니다. 대조는 프로젝트 안에서만 합니다. 글자나 숫자가 없는 패턴(`cat *`)과 프로젝트 밖의 패턴(`cat ~/.ss?/id_*`)은 대조하지 않고 확인을 요청합니다.
 - 되돌릴 수 없는 파괴: `rm -rf`, `git reset --hard`, `git clean -f`, `git checkout -- .`
+- 프로젝트 밖의 파괴 (0.2.2부터): 클라우드·호스팅 리소스 삭제(`aws s3 rb`, `aws ec2 terminate-instances`, `gcloud ... delete`, `az ... delete`, `vercel rm` 등), DB 내용 삭제(`psql -c 'DROP TABLE ...'`, `redis-cli FLUSHALL`, `dropdb` 등), 디스크·시스템(`mkfs`, `shutdown`, `kill -9 -1` 등). 조회 명령(`aws s3 ls`, `psql -c 'select ...'`)과 로컬 개발 자원 삭제(`docker compose down -v`)는 확인을 요청합니다.
 - 외부 반출과 배포: `git push`, `npm publish`, `gh release create`, `kubectl apply`, `terraform apply`, `curl`
 - 장승 무력화: `.claude/settings*.json`, `.codex/`, `.mcp.json`, `.git/` 수정과 `aeg uninstall`, `aeg policy` 실행
 - git이 실행하는 파일: `core.hooksPath`, `include.path`, `core.fsmonitor`, `gpg.program` 등 git 설정이 가리키는 프로젝트 안 경로의 수정 (0.1.7부터)
@@ -56,10 +58,12 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 - 묻는 것은 호스트가 사람에게 승인을 받는 경우뿐입니다. hook 입력의 `permission_mode`가 `default`(수동 승인) 또는 `acceptEdits`일 때만 `ask`로 답하고, 그 밖의 모드(`auto`, `dontAsk`, `bypassPermissions`, `plan`)와 Codex에서는 0.1.9까지와 같이 deny합니다.
 - 근거: Claude Code 2.1.316 `claude -p`(Windows)에서 모드마다 한 번씩, 모든 `Edit`에 `ask`로 답하는 hook을 걸어 확인했습니다. `default`, `acceptEdits`, `auto` 모두 편집이 실행되지 않았습니다. `auto`는 분류기가 사람 대신 답할 수 있어 제외했고, `dontAsk`와 `bypassPermissions`는 확인하지 않았습니다. 대화형 세션에서 승인 창이 뜨는지도 확인하지 않았습니다.
 - 0.1.9까지 막지 않던 `package.json`, `Makefile`, `conftest.py`, `.pre-commit-config.yaml`과 하위 폴더의 `pyproject.toml` 등이 새로 포함되었습니다. 계속 자동으로 수정하게 하려면 사람이 `aeg policy add --path <파일>`로 허용합니다.
+- 0.3.0부터 대상이 넓어졌습니다. 작업 실행기와 테스트 설정(`justfile`, `Taskfile.yml`, `tox.ini`, `noxfile.py`, `pytest.ini`, `lefthook.yml`), 다른 언어의 빌드 파일(`Cargo.toml`, `build.rs`, `go.mod`, `build.gradle`, `pom.xml`, `Gemfile`, `composer.json`, `CMakeLists.txt` 등), 실행되는 JavaScript 설정(`*.config.js`, `*.config.ts`, `.eslintrc.js`, `gulpfile.*` 등), 폴더를 열 때 명령을 실행하는 편집기·컨테이너 설정(`.vscode/tasks.json`, `.vscode/settings.json`, `.devcontainer/`), `compose.yaml`, `sitecustomize.py`입니다.
+- 에이전트 지시 파일도 같이 묻습니다 (0.3.0부터): `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/commands/`, `.claude/agents/`, `.claude/skills/`, `.cursor/rules/`, `.github/copilot-instructions.md` 등. 에이전트가 이 파일을 고치면 다음 세션의 에이전트가 그 지시를 따릅니다.
 
 실행 명령과 애매한 작업 (0.2.0부터):
 
-- Claude Code의 `default` 모드에서는 `pytest`, `npm test`, `python src/app.py` 같은 제한된 실행 명령을 **호스트의 원래 승인 정책에 맡깁니다**. 장승이 안전하다고 `allow`하는 것이 아닙니다. 기존 호스트 허용 규칙이 있으면 추가 질문 없이 실행될 수 있습니다. `Bash(python -m:*)`, `Bash(uv run:*)`처럼 넓은 규칙 아래에서는 `python -m dotenv list`, `uv run printenv` 같은 비밀 출력 명령도 묻지 않고 실행됩니다. 장승은 사용자의 호스트 규칙을 덮어쓰지 않습니다.
+- Claude Code의 `default` 모드와 `acceptEdits` 모드(0.3.0부터)에서는 `pytest`, `npm test`, `python src/app.py` 같은 제한된 실행 명령을 **호스트의 원래 승인 정책에 맡깁니다**. 장승이 안전하다고 `allow`하는 것이 아닙니다. 기존 호스트 허용 규칙이 있으면 추가 질문 없이 실행될 수 있습니다. `Bash(python -m:*)`, `Bash(uv run:*)`처럼 넓은 규칙 아래에서는 `python -m dotenv list`, `uv run printenv` 같은 비밀 출력 명령도 묻지 않고 실행됩니다. 장승은 사용자의 호스트 규칙을 덮어쓰지 않습니다.
 - 0.2.1부터 내용을 출력하는 git 형태는 맡기지 않습니다: `git stash show`, `git stash list -p`, 그리고 `-p`·`-v`·`-i`(묶은 짧은 옵션 포함)나 `--patch`·`--verbose`·`--dry-run`·`--show-current-patch`·`--interactive`·`--long`·`--short`·`--porcelain`(축약 포함)이 붙은 git 명령. Claude Code가 이런 읽기 명령을 승인 없이 실행해, 0.2.0에서는 stash에 든 비밀 파일 변경이 그대로 출력되었습니다.
 - 이 예외는 단순한 한 명령이며, 작업 폴더와 명시된 인자가 프로젝트 안의 비보호 경로이고 기존 차단 관문을 모두 통과할 때만 적용합니다. 다른 모드와 모드가 없는 입력은 기존대로 `ask`, Codex는 `deny`입니다. 정책/세션 표시를 읽지 못하거나 세션에 비밀 이름 작성 표시가 있어도 위임하지 않습니다.
 - 미지원 프로그램, 내용 검색, 복잡한 셸 문법 등 나머지 미분류 작업은 계속 확인을 요청합니다. 별도로 신뢰할 명령은 [프로젝트 승인 정책](#프로젝트-승인-정책-015부터)에 등록할 수 있습니다.
@@ -68,6 +72,8 @@ Claude Code에게 코드를 맡기되, 위험한 것이 실행되기 전에 막�
 ## 우리가 못 막는 것
 
 장승(Jangseung)은 "완벽하게 안전하다"고 말하지 않습니다. 지키는 선을 정확히 말합니다.
+
+막지 못한다고 알고 받아들인 것과, 통과하면 결함으로 다루는 것의 전체 목록은 [잔여 위험 등록부](docs/residual_risk.md)에 있습니다 (0.2.2부터).
 
 장승(Jangseung)은 AI가 파일을 쓰거나 명령을 실행하는 등 도구를 사용하려는 순간에 끼어들어 판단합니다. 그래서 도구를 거치지 않는 것들 — AI가 참조로 직접 읽어 들이는 파일 내용, 이미 허용된 명령이 내부에서 실행하는 다른 프로그램 — 은 이 선 바깥에 있습니다.
 
@@ -165,7 +171,7 @@ pip install jangseung
 
 설치가 끝나면 `aeg` 명령을 사용할 수 있습니다. 이후 `aeg` 명령을 쓸 때마다 이 가상환경을 활성화해야 합니다. 이제 hook을 걸고 싶은 프로젝트로 이동해서 등록합니다.
 
-기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이, 0.1.9에는 선택해서 켜는 [MCP 보호](#mcp-보호-019부터-선택)가 포함됩니다. **0.2.1은 0.2.0에서 생긴 비밀 노출 결함을 고친 보안 수정입니다**([0.2.1 릴리스 노트](docs/release_0.2.1.md)). 0.2.0은 빌드 파일 판정, 승인 정책 명령, 기록 내용을 바꾸고 `aeg run`, `aeg verify`, `aeg init` 명령을 제거합니다. 바뀐 점과 올릴 때 확인할 것은 [0.2.0 릴리스 노트](docs/release_0.2.0.md)에 있습니다.
+기존 사용자는 장승을 설치했던 가상환경을 활성화한 뒤 업데이트하세요. 0.1.2에는 제한된 셸 문서 읽기와 Codex hook 제거 수정이, 0.1.3에는 설치·제거 시 설정 보존과 기록 안정성 수정이, 0.1.5에는 보안 우회 수정이, 0.1.6에는 구형 hook 업그레이드 수정이, 0.1.7에는 검색과 셸 읽기 명령으로 비밀 값이 출력되고 `git` 명령으로 프로그램이 실행되던 결함 수정이, 0.1.8에는 프로젝트 밖 폴더의 `git` 명령이 자동 허용되던 결함과 `apply_patch` 절대 경로 과차단 수정이, 0.1.9에는 선택해서 켜는 [MCP 보호](#mcp-보호-019부터-선택)가 포함됩니다. **0.2.1은 0.2.0에서 생긴 비밀 노출 결함을 고친 보안 수정입니다**([0.2.1 릴리스 노트](docs/release_0.2.1.md)). 0.2.0은 빌드 파일 판정, 승인 정책 명령, 기록 내용을 바꾸고 `aeg run`, `aeg verify`, `aeg init` 명령을 제거합니다. 바뀐 점과 올릴 때 확인할 것은 [0.2.0 릴리스 노트](docs/release_0.2.0.md)에 있습니다. 0.2.2에는 와일드카드·나열·인코딩으로 비밀 파일에 닿는 명령과 프로젝트 밖을 파괴하는 명령의 차단, 종류별 차단 사유, hook 호출 시간 단축, `aeg evidence summary`가 들어 있습니다([릴리스 노트](docs/release_0.2.2.md)). 0.3.0에는 여러 명령·상태 명령 허용, `acceptEdits` 위임, `aeg allow-once`, 세션 시작 점검, 팀 공유 보호 정책, `aeg policy suggest`, ledger 보관, 넓어진 검토 대상이 들어 있습니다([릴리스 노트](docs/release_0.3.0.md)). 0.3.0으로 올린 뒤 `aeg install`을 다시 실행하면 세션 시작 점검이 등록됩니다.
 
 ```bash
 python -m pip install --upgrade jangseung
@@ -204,6 +210,8 @@ aeg uninstall --scope local
 `.claude/settings.local.json`에 등록합니다. 이 파일을 git이 무시하지 않으면 `.gitignore`에 추가하세요. 두 파일에 모두 등록하면 호출마다 두 번 판정하며, `aeg doctor --hooks`가 알려 줍니다. `--scope`는 Claude Code 대상에만 있습니다. 하위 폴더에서 시작한 세션에 이 파일의 hook이 적용되는지는 확인하지 않았습니다.
 
 ### Claude Code 플러그인으로 설치 (0.2.0부터)
+
+세션 시작 점검 (0.3.0부터): `aeg install`과 플러그인은 `SessionStart` hook도 등록합니다. 세션을 시작할 때 장승의 PreToolUse hook이 빠졌거나, 등록된 프로그램이 없어졌거나, 정책 파일을 읽지 못하면 한 줄로 알립니다. 아무 문제가 없으면 아무것도 출력하지 않고, 세션을 막지 않습니다. hook 설정 전체가 지워지면 이 점검도 함께 사라지므로 그 경우는 알리지 못합니다.
 
 `pip`과 `aeg install` 없이 Claude Code 플러그인으로도 쓸 수 있습니다.
 
@@ -302,6 +310,35 @@ PowerShell에서는 `Get-Content`(`gc`, `cat`, `type`), `Get-ChildItem`(`gci`, `
 
 비밀 파일, `.aeg`, 프로젝트 밖 경로의 내용을 읽으면 deny합니다. 작업 폴더가 프로젝트 밖이면 경로를 적지 않은 `git status`, `ls` 같은 명령도 deny합니다 (0.1.8부터). wildcard·디렉터리 내용 검색, 검색어 자리까지 포함한 따옴표 없는 `*`, `?`, `[`, `Get-ChildItem`에서 `Select-String`으로 넘기는 파일 검색, 유니코드 공백이나 기울어진 따옴표, 파일이 없는 경로, 변수/명령 치환, 중첩 셸, 리다이렉트, 미지원 옵션은 이 읽기 문법의 자동 허용 대상에서 제외합니다. `git`은 `-c`, `-C`, `--output`, `--ext-diff`를 쓰면 자동 허용하지 않습니다. `sed`는 숫자 행 범위의 `p` 출력만 지원하고, `rg`는 환경 설정이 외부 프로그램 실행 옵션을 끼워 넣지 않도록 `--no-config`를 요구합니다. 제한된 실행 명령의 `default` 모드 호스트 위임 외에 미분류 작업은 Claude Code에서 확인 요청, Codex에서 차단됩니다. 명령 이름에 해당하는 표준 도구를 전제로 하며, 임의로 바꾼 실행 파일이나 셸 함수의 내부 동작까지 검증하지는 않습니다.
 
+### 여러 명령과 상태 명령 (0.3.0부터)
+
+`;`, `&&`, `||`로 이은 명령도 각 부분이 위의 읽기 문법에 들면 허용합니다. 예: `ls -la; pwd`, `cat README.md && pwd`, `git status && git diff`, `cd src && ls`. 각 부분은 실제로 실행될 폴더에서 판정합니다.
+
+- `cd`는 줄 전체가 `&&`로만 이어질 때만 따라갑니다. `cd src; cat x`나 `cd src && ls || cat x`는 `cd`가 실패하면 다른 폴더에서 읽게 되므로 확인을 요청합니다.
+- `git diff`처럼 파일 내용을 출력하는 git 부분은 한 명령일 때와 같이 비밀 파일을 뺀 형태로 고쳐서 실행합니다.
+- 부분 하나라도 비밀 파일을 읽으면 deny, 읽기 문법에 없으면 확인을 요청합니다. 파일 조작(`mkdir -p a && touch a/b`)과 PowerShell의 여러 명령은 아직 묶어서 허용하지 않습니다.
+
+상태만 출력하는 명령도 허용합니다: `date`, `true`, `false`, `sleep 1`, `whoami`, `uname -a`, `which python`, `command -v git`, `cd src`, 그리고 `python --version`, `node --version`, `java -version`처럼 알려진 프로그램의 정해진 버전 확인 형태(PATH에서 찾은 프로그램이 프로젝트 밖에 있을 때만). `pytest -v`, `python version`처럼 코드를 실행하는 형태는 해당하지 않습니다. `date -s`처럼 상태를 바꾸는 형태는 해당하지 않습니다.
+
+이 허용은 Codex와 모든 Claude Code 모드에 적용됩니다. 0.2.2까지 Codex는 이런 명령을 모두 deny했습니다.
+
+호스트에 맡기는 실행 명령을 이은 줄(`git add -A && git commit -m wip`, `npm install && npm test`)도 호스트에 맡깁니다. 각 부분이 호스트에 맡길 실행 명령이거나 위 읽기 문법의 명령이어야 합니다. `cd`나 git 내용 출력이 들어 있으면 맡기지 않습니다. 호스트는 그런 읽기를 스스로 실행하기 때문입니다.
+
+### 한 번만 허용 (0.3.0부터)
+
+Codex는 hook이 사람에게 물을 수 없어서, 장승이 안전하다고 증명하지 못한 명령은 deny합니다. 사람이 그 명령을 한 번 실행하게 하려면 일반 터미널에서 다음을 실행합니다.
+
+```bash
+aeg allow-once "docker compose up -d"
+aeg allow-once --status
+aeg allow-once --clear
+```
+
+- 적은 글자와 정확히 같은 명령을, 프로젝트 폴더 자체에서, 같은 셸 도구로(`--tool PowerShell`, 기본 `Bash`) 한 번만 허용합니다. 10분 뒤(최대 `--minutes 60`)나 한 번 쓰이면 사라집니다.
+- `allow_commands`에 올린 명령과 같은 것만 풀립니다. 비밀 파일, 장승 설정, 프로젝트 밖 대상은 그대로 막고, 비밀 파일 이름이 든 내용을 쓴 세션에서는 다시 묻습니다.
+- 에이전트는 `aeg allow-once`를 실행할 수 없습니다. 파일에는 명령의 해시만 저장합니다.
+- Claude Code에서도 쓸 수 있습니다(예: `auto` 모드에서 deny된 명령).
+
 ### 단순 파일 조작 (0.2.0부터)
 
 프로젝트 안의 비보호 일반 파일만 다루는 좁은 문법은 자동 허용합니다. 예: `mkdir -p docs/new`, `touch notes.txt`, `cp README.md copy.md`, `mv notes.txt moved.txt`, `rm notes.txt`, `echo hello > notes.txt`. PowerShell은 `Copy-Item -LiteralPath README.md -Destination copy.md`, `Move-Item -LiteralPath notes.txt -Destination moved.txt`, `Remove-Item -LiteralPath notes.txt`, `Write-Output hello > notes.txt`도 지원합니다.
@@ -344,6 +381,16 @@ aeg policy preset python   # python, node, git 가운데 하나
 - `allow_mcp_tools` (0.1.9부터): [MCP 보호](#mcp-보호-019부터-선택)를 켠 프로젝트에서 승인 없이 통과시킬 MCP 도구의 정확한 이름입니다. 형식이 맞지 않는 이름이 하나라도 있으면 파일 전체를 무시합니다.
 
 파일이 손상되었거나 모르는 항목이 있으면 전체를 무시하고 내장 규칙만 적용합니다. `aeg doctor --hooks`가 이 상태를 알려 줍니다. 0.1.8 이하는 `allow_mcp_tools`를 모르는 항목으로 보므로, 이 항목을 넣은 파일은 전체가 무시됩니다.
+
+팀이 함께 쓰는 보호 규칙은 `.jangseung/policy.json`에 둘 수 있습니다 (0.3.0부터). 이 파일은 Git에 커밋하는 용도이며 `protect_paths`만 담을 수 있습니다. 다른 항목이 있거나 파일이 손상되면 어떤 경로를 보호하려 했는지 알 수 없으므로 모든 경로를 보호합니다(사람이 고칠 때까지 에이전트의 파일 수정이 막힙니다). 에이전트는 `.jangseung/`에 쓸 수 없습니다.
+
+```bash
+aeg policy add --shared --protect infra/ --protect "*.tfstate"
+```
+
+자주 물어본 명령은 `aeg policy suggest`로 볼 수 있습니다 (0.3.0부터). 기록을 읽어 횟수와 함께 `aeg policy add --command` 줄을 보여 줄 뿐 쓰지 않습니다. 인터프리터, 셸, 네트워크 도구와, 위험한 하위 명령이 있는 프로그램(`terraform`, `docker`, `git`, `aws` 등)은 제안하지 않습니다. 기록에는 프로그램 이름만 있어서 `terraform plan`도 `terraform`으로 보이고, 그 접두사를 승인하면 `terraform destroy`까지 풀리기 때문입니다.
+
+`preset`에 `rust`, `go`, `jvm`, `dotnet`이 추가되었습니다 (0.3.0부터).
 
 ### 소스에서 설치 (개발/기여용)
 
@@ -408,12 +455,18 @@ aeg doctor --hooks --json  # 두 대상 모두 확인
 ```bash
 aeg evidence list --limit 20
 aeg evidence list --json
+aeg evidence summary --days 7
+aeg evidence archive-hooks
 aeg evidence show <hook-record-hash-prefix>
 aeg evidence verify-hooks
 aeg evidence repair-hooks
 ```
 
 `list`는 최신순으로 시각, 판정, 도구, 대상을 보여 줍니다. `show`는 summary, decision, call, integrity 섹션으로 나눕니다. 조회 결과는 credential 형태 필터를 거치며 `.aeg`를 수정하지 않습니다. 손상된 행은 `UNREADABLE`로 표시합니다.
+
+`summary`(0.2.2부터)는 판정별 건수와, 자주 멈춘 프로그램·파일을 횟수순으로 보여 줍니다. 어떤 명령을 `aeg policy add --command`로 풀어 줄지 정할 때 씁니다. 기록에 명령 원문이 없으므로 프로그램 이름까지만 나옵니다.
+
+`archive-hooks`(0.3.0부터)는 손상되지 않은 ledger를 `.aeg/archive/`로 옮기고 새 chain을 시작합니다. 새 chain의 첫 기록에 옮긴 파일의 기록 수, 마지막 해시, SHA-256을 적어 두 파일을 잇습니다. 사람이 실행하는 명령이며 에이전트는 실행할 수 없습니다.
 
 기록 한 건에 들어가는 것은 다음과 같습니다.
 

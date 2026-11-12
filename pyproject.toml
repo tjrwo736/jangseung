@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jangseung"
-version = "0.2.1"
+version = "0.3.0"
 description = "Guard hook for Claude Code and Codex: stops secret reads, destructive commands and changes to the guard itself before a tool call runs"
 readme = "README.md"
 requires-python = ">=3.10"
