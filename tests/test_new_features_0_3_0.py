@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from unittest import mock
@@ -371,8 +372,13 @@ def test_session_check_speaks_about_a_broken_policy_and_a_missing_program(projec
     data = json.loads(settings.read_text(encoding="utf-8"))
     for entry in data["hooks"]["PreToolUse"]:
         for hook in entry["hooks"]:
-            hook["command"] = str(project / "gone" / ("aeg.exe" if os.name == "nt" else "aeg"))
-            hook.pop("args", None) if os.name != "nt" else hook.update(args=["hook-run"])
+            # Same program name in a folder that does not exist, same arguments.
+            if isinstance(hook.get("args"), list):
+                hook["command"] = str(project / "gone" / Path(hook["command"]).name)
+            else:
+                # POSIX installs one shell line.
+                argv = shlex.split(hook["command"])
+                hook["command"] = shlex.join([str(project / "gone" / Path(argv[0]).name), *argv[1:]])
     settings.write_text(json.dumps(data), encoding="utf-8")
     assert "executable" in _session_check(project)["systemMessage"]
 
