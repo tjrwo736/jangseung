@@ -71,7 +71,7 @@ class BuildMergeLogicTests(unittest.TestCase):
         with mock.patch("jangseung.cli.install._installed_console_script", return_value=None), mock.patch(
             "jangseung.cli.install.sys.executable",
             python_path,
-        ):
+        ), mock.patch("jangseung.cli.install._direct_hook_program", return_value=None):
             command, args = resolve_claude_code_hook_command(platform="win32")
 
         self.assertEqual(command, python_path)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jangseung"
-version = "0.3.0"
+version = "0.3.1"
 description = "Guard hook for Claude Code and Codex: stops secret reads, destructive commands and changes to the guard itself before a tool call runs"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ Repository = "https://github.com/tjrwo736/jangseung"
 Issues = "https://github.com/tjrwo736/jangseung/issues"
 
 [project.scripts]
-aeg = "jangseung.cli.entry:main"
+aeg = "jangseung.cli.entry:run"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -160,6 +160,31 @@ If any of the following passes in any form, it is a defect. It is fixed, not add
 - **Why accepted:** a team needs a committed file to share the same protection. Being blocked is less dangerous than being open.
 - **Evidence:** test (`tests/test_new_features_0_3_0.py`).
 
+### RR-16. The end of the ledger is taken from a marker name (0.3.1)
+
+- **What:** the hook continues the chain from the previous record on every write. From 0.3.1 it no longer reads that record back; it trusts the name `.aeg/hook_ledger.head.<number>.<size>.<modification time>.<hash>` left after the last write, and only when the ledger's size and modification time still match the name. An edit that changes bytes, keeps the size and puts the modification time back is not caught at recording time.
+- **Current behavior:** the next record after such an edit continues from the hash the marker names, and `aeg evidence verify-hooks` reports a broken chain. If the size or time differs (another version wrote, a repair, an archive, a torn record), the end is read and checked as before, and a damaged end refuses the write.
+- **Why accepted:** the agent cannot write to `.aeg/`. Tampering that recomputed hashes was not caught at recording time before either; full verification is the job of `verify-hooks`. Reading a file that had just changed cost about 4 ms per call on Windows because of virus scanning.
+- **Evidence:** test (`test_an_edit_that_restores_size_and_time_is_left_to_verify_hooks` in `tests/test_hook_speed_0_3_1.py`).
+
+### RR-17. Same-user code can impersonate the resident judging process (0.3.1, Windows)
+
+- **What:** hook calls started by `jangseung/_hook.py` or the `aeg` launcher ask a resident judging process over a named pipe. The key that process proves itself with is in `%LOCALAPPDATA%\jangseung\resident\<identity>.key`. Code running with the same user's rights can read or replace that file and run a pipe server that answers "allow".
+- **Current behavior:**
+  - The pipe can be opened only by the current user and SYSTEM, and takes no remote clients.
+  - A hook first sends a challenge, and sends its call only after the server proves it holds the key; otherwise it judges the call itself and starts a new resident process.
+  - Answers are signed with the key and bound to the call they answer.
+  - The key file is outside the project, so agent tool calls that read or write it are denied or asked.
+- **Why accepted:** running arbitrary code with the user's rights already lets the agent change Jangseung's code, settings or hook registration (see "write it, then run it" in the README). `JANGSEUNG_RESIDENT=off` judges every call in its own process.
+- **Evidence:** tests in `tests/test_resident.py` (`test_a_pipe_without_the_key_gets_nothing_and_is_replaced`, `test_only_well_formed_pipe_names_are_used`), and an independent review that tried key reads and writes through Read, Write, Grep, Glob, Bash and PowerShell (none allowed).
+
+### RR-18. A slow resident answer can leave two records (0.3.1, Windows)
+
+- **What:** once the resident process has proved itself, a hook waits up to 10 seconds for its answer, then judges the call itself. If the resident process finishes that judgment later, the call has two ledger records, and an `aeg allow-once` grant could be used by the first.
+- **Current behavior:** a judgment waits at most 1 second for the ledger lock, so normal judgments finish in milliseconds. A call whose hook has already stopped waiting is not judged at all. Both records carry the same decision inputs.
+- **Why accepted:** it needs a judgment more than ten times slower than the lock limit, and errs toward stopping a call, not allowing one.
+- **Evidence:** reasoning and the hung-process test (`test_a_hung_resident_process_costs_one_second_and_is_replaced`); the over-10-second case itself was not reproduced.
+
 ## Not yet decided
 
 Items not yet decided between accepting and fixing. Once decided, they move to the list above or get fixed.

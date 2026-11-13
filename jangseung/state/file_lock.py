@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import stat
 import time
-from typing import Iterator
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Iterator
 
 
 def _check_regular(path: Path) -> None:

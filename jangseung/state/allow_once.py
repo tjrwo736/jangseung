@@ -12,12 +12,14 @@ every tool is denied ``.aeg/``. The file holds hashes, never command text.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-import hashlib
+from jangseung._sha256 import sha256
 import json
 import os
 from pathlib import Path
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from datetime import datetime
+    from typing import Any
 
 from jangseung.contracts import STATE_DIR
 from jangseung.state.file_lock import exclusive_hook_lock
@@ -41,7 +43,7 @@ def command_key(command: str, tool: str = DEFAULT_TOOL) -> str:
     command runs in the project's own folder.
     """
 
-    return hashlib.sha256(f"{tool}\x00{command}".encode("utf-8", "surrogatepass")).hexdigest()
+    return sha256(f"{tool}\x00{command}".encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _path(repo_root: str | Path) -> Path:
@@ -49,6 +51,9 @@ def _path(repo_root: str | Path) -> Path:
 
 
 def _now() -> datetime:
+    # Imported here: a hook call without approvals on file never needs it (about 0.5 ms).
+    from datetime import datetime, timezone
+
     return datetime.now(timezone.utc)
 
 
@@ -71,6 +76,8 @@ def _read(repo_root: str | Path) -> dict[str, str] | None:
 
 
 def _live(entries: dict[str, str], now: datetime) -> dict[str, str]:
+    from datetime import datetime, timedelta
+
     kept: dict[str, str] = {}
     for key, expires in entries.items():
         try:
@@ -108,6 +115,8 @@ def _write(repo_root: str | Path, entries: dict[str, str]) -> None:
 
 def grant_once(command: str, repo_root: str | Path, minutes: int = DEFAULT_MINUTES, tool: str = DEFAULT_TOOL) -> datetime:
     """Store a one-time approval; returns when it expires. Run by a person."""
+
+    from datetime import timedelta
 
     minutes = max(1, min(int(minutes), MAX_MINUTES))
     root = Path(repo_root) / STATE_DIR

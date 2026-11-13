@@ -6,7 +6,7 @@ must subsequently pass the hook's existing repository/protected-path gates.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from jangseung.records import dataclass, field
 import re
 import shlex
 

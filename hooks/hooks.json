@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then exec python3 -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; else exec python -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; fi",
+            "command": "set -f; p=; IFS=:; for d in $PATH; do case \"$d\" in */WindowsApps|*/WindowsApps/) ;; /*) if [ -x \"$d/python3\" ]; then p=$d/python3; break; fi ;; esac; done; unset IFS; if [ -z \"$p\" ]; then if command -v python >/dev/null 2>&1; then p=python; else p=python3; fi; fi; \"$p\" -I -S \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; s=$?; if [ \"$s\" = 97 ]; then export JANGSEUNG_PYTHON_FALLBACK=1; exec python -I -S \"${CLAUDE_PLUGIN_ROOT}/aeg\" hook-run --ensure-state; fi; exit \"$s\"",
             "onFailure": "block",
             "timeout": 30
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then exec python3 -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" session-check --plugin; else exec python -I \"${CLAUDE_PLUGIN_ROOT}/aeg\" session-check --plugin; fi",
+            "command": "set -f; p=; IFS=:; for d in $PATH; do case \"$d\" in */WindowsApps|*/WindowsApps/) ;; /*) if [ -x \"$d/python3\" ]; then p=$d/python3; break; fi ;; esac; done; unset IFS; if [ -z \"$p\" ]; then if command -v python >/dev/null 2>&1; then p=python; else p=python3; fi; fi; \"$p\" -I -S \"${CLAUDE_PLUGIN_ROOT}/aeg\" session-check --plugin; s=$?; if [ \"$s\" = 97 ]; then export JANGSEUNG_PYTHON_FALLBACK=1; exec python -I -S \"${CLAUDE_PLUGIN_ROOT}/aeg\" session-check --plugin; fi; exit \"$s\"",
             "timeout": 15
           }
         ]

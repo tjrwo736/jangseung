@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import binascii
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from jangseung.records import dataclass
 import re
 
 from jangseung.classify import PathPolicy, is_secret_path

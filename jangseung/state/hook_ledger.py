@@ -8,15 +8,19 @@ content and command text are never stored.
 
 from __future__ import annotations
 
-import hashlib
+from jangseung._sha256 import sha256
 import json
 import os
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from jangseung.records import dataclass
 import re
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
+
+from jangseung._clock import utc_timestamp
 from jangseung.contracts import STATE_DIR
 from jangseung.evidence.ledger_integrity import is_sha256_hex
 from jangseung.state.file_lock import exclusive_hook_lock as _exclusive_lock
@@ -31,6 +35,9 @@ HOOK_LEDGER_REPAIR_TOOL_NAME = "aeg-evidence-repair-hooks"
 HOOK_LEDGER_ARCHIVED_REASON = "hook_ledger_archived"
 HOOK_LEDGER_ARCHIVE_TOOL_NAME = "aeg-evidence-archive-hooks"
 HOOK_LEDGER_ARCHIVE_DIR = "archive"
+# The tail this module last appended, kept in the name of an empty file:
+# ``hook_ledger.head.<sequence>.<ledger size>.<ledger mtime ns>.<record hash>``.
+HOOK_LEDGER_HEAD_PREFIX = "hook_ledger.head."
 _TAIL_CHUNK_BYTES = 64 * 1024
 
 _REQUIRED_FIELDS = (
@@ -141,6 +148,13 @@ def append_hook_decision_record(
 
     Only the last record is checked so a hook call stays fast however long the
     ledger grows. ``aeg evidence verify-hooks`` verifies the whole chain.
+
+    When the ledger's size and modification time are still what the previous
+    append left, the tail is taken from the head marker's name instead of being
+    read back: opening a file that just changed for reading makes Windows virus
+    scanning check it first, about 4 ms on every tool call. Any other state of the
+    file (another writer, a repair, an archive, a torn write) does not match, and
+    the tail is read and checked as before.
     """
 
     root = state_root(repo_root)
@@ -153,8 +167,11 @@ def append_hook_decision_record(
     if lock_path.is_symlink():
         raise ValueError("hook ledger lock must not be a symbolic link")
     with _exclusive_lock(lock_path):
-        tail = _verified_tail_record(ledger_path)
-        return _append_record(
+        markers = _head_markers(root)
+        tail = _unchanged_tail(markers, ledger_path)
+        if tail is None:
+            tail = _verified_tail_record(ledger_path)
+        record = _append_record(
             ledger_path,
             previous_hash=tail["record_hash"] if tail is not None else HOOK_RECORD_HASH_GENESIS,
             sequence_number=(tail["sequence_number"] + 1) if tail is not None else 1,
@@ -171,6 +188,57 @@ def append_hook_decision_record(
             commands=commands,
             input_hash=input_hash,
         )
+        _set_head_marker(root, ledger_path, markers, record)
+        return record
+
+
+def _head_markers(root: Path) -> list[str]:
+    try:
+        return [name for name in os.listdir(root) if name.startswith(HOOK_LEDGER_HEAD_PREFIX)]
+    except OSError:
+        return []
+
+
+def _unchanged_tail(markers: list[str], ledger_path: Path) -> dict[str, Any] | None:
+    """The tail named by the head marker, only if the ledger is exactly as it left it."""
+
+    if len(markers) != 1:
+        return None
+    fields = markers[0][len(HOOK_LEDGER_HEAD_PREFIX):].split(".")
+    if len(fields) != 4 or not all(field.isdigit() for field in fields[:3]) or not is_sha256_hex(fields[3]):
+        return None
+    sequence, size, mtime_ns = (int(field) for field in fields[:3])
+    try:
+        info = os.lstat(ledger_path)
+    except OSError:
+        return None
+    if sequence < 1 or info.st_size != size or info.st_mtime_ns != mtime_ns or size == 0:
+        return None
+    return {"record_hash": fields[3], "sequence_number": sequence}
+
+
+def _set_head_marker(root: Path, ledger_path: Path, markers: list[str], record: Mapping[str, Any]) -> None:
+    """Name the tail just written. A failure only costs the next call a tail read."""
+
+    try:
+        info = os.lstat(ledger_path)
+        name = f"{HOOK_LEDGER_HEAD_PREFIX}{int(record['sequence_number'])}.{info.st_size}.{info.st_mtime_ns}.{record['record_hash']}"
+        if len(markers) == 1:
+            os.replace(root / markers[0], root / name)
+            return
+        for stale in markers:
+            (root / stale).unlink(missing_ok=True)
+        os.close(os.open(root / name, os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600))
+    except (OSError, KeyError, TypeError, ValueError):
+        _clear_head_markers(root)
+
+
+def _clear_head_markers(root: Path) -> None:
+    for stale in _head_markers(root):
+        try:
+            (root / stale).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def hook_ledger_needs_repair(repo_root: str | Path) -> bool:
@@ -224,6 +292,7 @@ def archive_hook_ledger(repo_root: str | Path) -> HookLedgerArchive:
         archive.write_bytes(raw)
         if archive.read_bytes() != raw:
             raise OSError("the archive copy does not match the ledger")
+        _clear_head_markers(root)
         temporary = root / f"{HOOK_LEDGER_FILE}.archive-{stamp}"
         temporary.write_bytes(b"")
         os.replace(temporary, ledger_path)
@@ -242,7 +311,7 @@ def archive_hook_ledger(repo_root: str | Path) -> HookLedgerArchive:
                 f"archived_file:{archive.name}",
                 f"archived_records:{len(items)}",
                 f"archived_last_record_hash:{tail['record_hash'] if tail else ''}",
-                f"archived_sha256:{hashlib.sha256(raw).hexdigest()}",
+                f"archived_sha256:{sha256(raw).hexdigest()}",
             ),
             exit_code=0,
         )
@@ -291,6 +360,7 @@ def repair_hook_ledger(repo_root: str | Path) -> HookLedgerRepair:
             quarantine = root / f"{HOOK_LEDGER_FILE}.quarantine-{stamp}-{counter}"
             counter += 1
         quarantine.write_bytes(damaged)
+        _clear_head_markers(root)
         temporary = root / f"{HOOK_LEDGER_FILE}.repair-{stamp}"
         temporary.write_bytes(kept)
         os.replace(temporary, ledger_path)
@@ -310,7 +380,7 @@ def repair_hook_ledger(repo_root: str | Path) -> HookLedgerRepair:
             reason_codes=(
                 HOOK_LEDGER_REPAIRED_REASON,
                 f"quarantined_lines:{quarantined_lines}",
-                f"quarantined_sha256:{hashlib.sha256(damaged).hexdigest()}",
+                f"quarantined_sha256:{sha256(damaged).hexdigest()}",
             ),
             exit_code=0,
         )
@@ -537,7 +607,7 @@ def compute_hook_record_hash(record: Mapping[str, Any]) -> str:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return sha256(encoded).hexdigest()
 
 
 def _validate_record(
@@ -615,7 +685,7 @@ def _contains_forbidden_key(value: Any) -> bool:
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return utc_timestamp()
 
 
 __all__ = [

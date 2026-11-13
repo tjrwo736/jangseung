@@ -110,7 +110,8 @@ def test_missing_executable_fails_without_running_commands(repo):
 
 
 def test_python_module_fallback_is_explicitly_unverified(repo):
-    with patch("jangseung.cli.install._installed_console_script", return_value=None):
+    with patch("jangseung.cli.install._installed_console_script", return_value=None), \
+            patch("jangseung.cli.install._direct_hook_program", return_value=None):
         assert cmd_install(repo, target="claude-code", assume_yes=True, output_stream=io.StringIO()) == 0
     check = checks_by_name(repo, "claude-code")["claude-code hook 1 executable"]
     assert check.status == "WARN"
