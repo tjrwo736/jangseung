@@ -55,7 +55,11 @@
 | `jangseung/law/` | 위험도별 판정 규칙 |
 | `jangseung/evidence/` | hook 판정 엔진. 입력 계약, 도구 호출 매핑, 판정 정렬(`hook_judgment_engine_alignment`), 명령 위험도와 읽기 문법, MCP 관문(`mcp_tool_gate`), `.aeg` 보호(`b1_aeg_integrity_guard`), 프로젝트 경계(`mediated_repo_boundary_write_path`), 구조화된 동작과 권한(`structured_actions`, `structured_action_capabilities`) |
 | `jangseung/state/` | hook ledger(`hook_ledger`)와 잠금(`file_lock`), 세션 표시(`session_marks`), 기록 조회(`evidence_query`), 기본 진단(`doctor`), Git 도우미(`git`) |
-| `.claude-plugin/`, `hooks/hooks.json` | Claude Code 플러그인 포장. hook 명령은 저장소의 `aeg` 실행 파일을 `python -I`로 실행하며 `pip` 설치가 필요 없습니다 |
+| `.claude-plugin/`, `hooks/hooks.json` | Claude Code 플러그인 포장. hook 명령은 저장소의 `aeg` 실행 파일을 `python -I -S`로 실행하며 `pip` 설치가 필요 없습니다 |
+| `jangseung/_hook.py` | Windows `aeg install`이 Claude Code hook으로 등록하는 실행기(`python.exe -I -S <파일> hook-run`). `aeg.exe`와 가상환경 `python.exe`를 거치지 않고, 가상환경이면 `sys.prefix`를 그 환경으로 둡니다 (0.3.1) |
+| `jangseung/records.py`, `_sha256.py`, `_clock.py`, `_resolve.py` | hook 프로세스를 가볍게 하는 도우미: `dataclasses` 대신 쓰는 레코드, 내장 SHA-256, `datetime` 없는 시각, 판정 하나 안에서만 기억하는 경로 풀이 (0.3.1) |
+| `jangseung/_import_cache.py` | hook 명령으로 시작한 프로세스가 불러온 모듈의 컴파일된 형태를 `__pycache__/<명령>-imports.<버전>.bin` 파일 하나에서 읽게 하는 캐시. 모듈을 찾는 순서와 소스 대조는 Python 그대로이고, `jangseung.cli.entry.run`만 켜고 Windows에서만 씁니다 (0.3.1) |
+| `jangseung/_resident.py`, `_resident_server.py` | Windows 상주 판정: hook 호출이 이름 있는 파이프로 판정 코드를 불러 둔 프로세스에 묻습니다. 도전값으로 키를 증명한 상대에게만 호출을 보내고, 서명된 답을 그대로 씁니다. 실패하면 직접 판정합니다 (0.3.1) |
 | `jangseung/contracts.py` | 판정과 기록에 쓰는 공용 상수 |
 | `src/cli/__main__.py` | 0.1.4 이하가 등록한 `python -m src.cli hook-run`을 진입점으로 넘기는 호환 모듈. `__init__.py`를 두지 않아 프로젝트의 `src`를 가리지 않습니다 |
 

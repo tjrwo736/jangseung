@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from jangseung.records import dataclass
 
 from jangseung.contracts import (
     CLEAN_CORE,

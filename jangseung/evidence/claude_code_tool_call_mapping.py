@@ -10,9 +10,11 @@ from __future__ import annotations
 import posixpath
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from jangseung.records import dataclass
 from types import MappingProxyType
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify import PathPolicy, is_host_resolved_path, is_protected_path, is_read_protected_path, is_secret_path
 from jangseung.contracts import HIGH, LOW, NOT_CHECKED, SAFE_DEFAULT, STATE_DIR

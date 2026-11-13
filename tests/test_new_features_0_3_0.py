@@ -282,9 +282,9 @@ def test_allow_once_is_held_after_a_secret_naming_write(project):
 
 def test_an_approval_that_cannot_be_spent_is_not_used(project):
     _grant(project, "docker ps")
-    with mock.patch("jangseung.cli.hook_run.consume_once", return_value=False):
+    with mock.patch("jangseung.state.allow_once.consume_once", return_value=False):
         assert run(project, "Bash", {"command": "docker ps"}, substrate="codex")[1]["permissionDecision"] == "deny"
-    with mock.patch("jangseung.cli.hook_run.consume_once", side_effect=OSError("disk")):
+    with mock.patch("jangseung.state.allow_once.consume_once", side_effect=OSError("disk")):
         assert run(project, "Bash", {"command": "docker ps"}, substrate="codex")[1]["permissionDecision"] == "deny"
 
 

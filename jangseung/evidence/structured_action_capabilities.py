@@ -8,9 +8,11 @@ read files, write files, spawn processes, call providers, or use the network.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from jangseung.records import dataclass
 from pathlib import Path
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify import is_secret_path
 from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, REPORTED_ONLY

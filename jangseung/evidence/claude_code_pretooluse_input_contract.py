@@ -8,10 +8,12 @@ runtime.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from jangseung.records import dataclass, field
 import re
 from types import MappingProxyType
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD, SAFE_DEFAULT
 

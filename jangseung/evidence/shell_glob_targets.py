@@ -21,6 +21,9 @@ import os
 from pathlib import Path
 import stat
 
+from jangseung._resolve import realpath_text as _realpath_text
+
+
 GLOB_CHARACTERS = frozenset("*?[")
 MAX_GLOB_WORD_LENGTH = 512
 MAX_GLOB_PARTS = 40
@@ -78,13 +81,13 @@ def project_roots(repo_root: str | Path, base_dir: str | Path) -> tuple[str, ...
 
     roots = [_as_text(repo_root)]
     try:
-        real_root = os.path.normcase(os.path.realpath(str(repo_root)))
-        real_base = os.path.normcase(os.path.realpath(str(base_dir)))
+        real_root = os.path.normcase(_realpath_text(str(repo_root)))
+        real_base = os.path.normcase(_realpath_text(str(base_dir)))
         roots.append(real_root)
         if os.path.commonpath([real_base, real_root]) == real_root:
             depth = 0 if real_base == real_root else len(os.path.relpath(real_base, real_root).split(os.sep))
             alias = _as_text(os.path.join(str(base_dir), *([".."] * depth)))
-            if os.path.normcase(os.path.realpath(alias)) == real_root:
+            if os.path.normcase(_realpath_text(alias)) == real_root:
                 roots.append(alias)
     except (OSError, ValueError):
         pass

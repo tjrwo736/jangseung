@@ -52,6 +52,12 @@ ISOLATED_MODULE_ARGS = ("-I", "-m", "jangseung.cli")
 # They no longer start, so they are only recognized to be upgraded or removed.
 LEGACY_MODULE_ARGS = ("-m", "src.cli")
 MANAGED_MODULE_ARGS = (ISOLATED_MODULE_ARGS, ("-m", "jangseung.cli"), LEGACY_MODULE_ARGS)
+# The Windows Claude Code hook starts Python directly on the package's own
+# launcher file (jangseung/_hook.py): ``<python.exe> -I -S <file> hook-run``.
+# aeg.exe and a virtual environment's python.exe each start one more process,
+# about 8 to 10 ms on every tool call.
+DIRECT_HOOK_FLAGS = ("-I", "-S")
+DIRECT_HOOK_SCRIPT = "_hook.py"
 # A hook that cannot start or crashes must stop the tool call, not wave it through.
 CLAUDE_HOOK_ON_FAILURE = "block"
 HOOK_EVENT_NAME = "PreToolUse"
@@ -148,8 +154,53 @@ def resolve_claude_code_hook_command(
 
     effective_platform = sys.platform if platform is None else platform
     if effective_platform == "win32":
+        direct = _direct_hook_program()
+        if direct is not None:
+            python, script = direct
+            return (python, (*DIRECT_HOOK_FLAGS, script, "hook-run", *((MCP_HOOK_FLAG,) if mcp else ())))
         return resolve_windows_hook_command_parts(mcp=mcp)
     return (resolve_hook_command(mcp=mcp), None)
+
+
+def _direct_hook_program() -> tuple[str, str] | None:
+    """The interpreter and launcher file for the direct Windows form, or None.
+
+    The interpreter is the one a virtual environment's ``python.exe`` would
+    start (``sys._base_executable``), so each call starts one process. A
+    Microsoft Store alias, a name the managed-hook check does not know, or a
+    missing launcher file keeps the ``aeg.exe`` form.
+    """
+
+    script = Path(__file__).resolve().parent.parent / DIRECT_HOOK_SCRIPT
+    if not script.is_file():
+        return None
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        # In a virtual environment the launcher names it as sys.prefix only when the
+        # package sits in its Lib\site-packages, which the guard protects as its own
+        # runtime. Any other layout (an editable install, for one) keeps aeg.exe.
+        environment = Path(sys.prefix).resolve()
+        expected = environment / "Lib" / "site-packages" / "jangseung" / DIRECT_HOOK_SCRIPT
+        if os.path.normcase(str(expected)) != os.path.normcase(str(script)) or not (environment / "pyvenv.cfg").is_file():
+            return None
+    for candidate in (getattr(sys, "_base_executable", None), sys.executable):
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        if "/windowsapps/" in candidate.replace("\\", "/").lower():
+            return None
+        path = Path(candidate)
+        name = path.name.lower()
+        if path.is_absolute() and path.is_file() and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?\.exe", name):
+            return (str(path), str(script))
+    return None
+
+
+def _is_direct_hook_script(path: str) -> bool:
+    """An absolute path to the package's launcher file, by its text alone."""
+
+    text = path.replace("\\", "/")
+    return (text.startswith("/") or re.match(r"^[A-Za-z]:/", text) is not None) and text.endswith(
+        f"/jangseung/{DIRECT_HOOK_SCRIPT}"
+    )
 
 
 def claude_code_hook_matcher(*, platform: str | None = None) -> str:
@@ -352,6 +403,8 @@ def is_session_check_hook(hook: Any) -> bool:
     program = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
     if middle == []:
         return program in {"aeg", "aeg.exe"}
+    if len(middle) == 3 and tuple(middle[:2]) == DIRECT_HOOK_FLAGS:
+        return _is_direct_hook_script(middle[2]) and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", program) is not None
     return middle in (list(ISOLATED_MODULE_ARGS), ["-m", "jangseung.cli"])
 
 
@@ -822,6 +875,8 @@ def _managed_argv_kind(argv: Sequence[str], substrates: tuple[str | None, ...]) 
         prefixes: tuple[tuple[str, ...], ...] = ((),)
     elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
         prefixes = MANAGED_MODULE_ARGS
+        if tuple(argv[1:3]) == DIRECT_HOOK_FLAGS and len(argv) > 3 and _is_direct_hook_script(argv[3]):
+            prefixes = ((*DIRECT_HOOK_FLAGS, argv[3]),)
     else:
         return None
     tail = tuple(argv[1:])

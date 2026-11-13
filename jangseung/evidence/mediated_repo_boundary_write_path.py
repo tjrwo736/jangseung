@@ -8,12 +8,17 @@ OS, filesystem, or external enforcement and raw/direct writes remain bypassable.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-import hashlib
+from jangseung.records import asdict, dataclass
+from jangseung._sha256 import sha256
 import json
 import os
 from pathlib import Path, PureWindowsPath
-from typing import Any
+
+from jangseung._resolve import resolved as _resolved
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 
 
@@ -44,10 +49,10 @@ def resolve_repo_boundary_path(
     if windows_resolution is not None:
         return windows_resolution
 
-    repo_root_path = Path(repo_root).resolve(strict=False)
+    repo_root_path = _resolved(repo_root)
     submitted_path = Path(submitted_target)
     absolute_target = submitted_path if submitted_path.is_absolute() else repo_root_path / submitted_path
-    canonical_target = absolute_target.resolve(strict=False)
+    canonical_target = _resolved(absolute_target)
     target_under_repo = _is_relative_to_or_same(canonical_target, repo_root_path)
     return RepoBoundaryPathResolution(
         repo_root=str(repo_root_path),
@@ -87,7 +92,7 @@ def _resolve_windows_repo_boundary_path(
         canonical_target = _normalize_absolute_windows_path(submitted_path)
         target = canonical_target if canonical_target is not None else submitted_path
         return RepoBoundaryPathResolution(
-            repo_root=str(Path(repo_root).resolve(strict=False)),
+            repo_root=str(_resolved(repo_root)),
             submitted_target=submitted_value,
             absolute_target=str(target),
             canonical_target=str(target),
@@ -174,7 +179,7 @@ def _is_relative_to_or_same(path: Path, root: Path) -> bool:
 
 def _sha256_json(payload: Any) -> str:
     canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 __all__ = [

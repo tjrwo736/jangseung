@@ -8,13 +8,16 @@ mediate, or apply any action.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from jangseung.records import dataclass
 from pathlib import Path
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify import is_secret_path
 from jangseung.contracts import LIVE_EXECUTOR_AUTHORITY_ON_HOLD
 from jangseung.evidence.b3_capability_policy_contract import CAPABILITY_FIELDS
+from jangseung._resolve import resolved as _resolved
 
 
 PROPOSE_PATCH = "PROPOSE_PATCH"
@@ -475,13 +478,13 @@ def realpath_scope_rejection_reasons(
     """Return fail-closed realpath scope rejection reasons for one path value."""
 
     try:
-        repo_path = Path(repo_root).resolve(strict=False)
+        repo_path = _resolved(repo_root)
         candidate = Path(value)
         if not candidate.is_absolute():
             candidate = repo_path / candidate
-        resolved_candidate = candidate.resolve(strict=False)
-        aeg_root = (repo_path / ".aeg").resolve(strict=False)
-        env_target = (repo_path / ".env").resolve(strict=False)
+        resolved_candidate = _resolved(candidate)
+        aeg_root = _resolved(repo_path / ".aeg")
+        env_target = _resolved(repo_path / ".env")
     except (OSError, RuntimeError) as exc:
         return (f"realpath resolution failed closed: {location}: {exc.__class__.__name__}",)
 

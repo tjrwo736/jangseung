@@ -6,7 +6,7 @@ permission flow, never a hook allow. Unknown programs and shell syntax stay out.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from jangseung.records import dataclass
 import re
 import shlex
 

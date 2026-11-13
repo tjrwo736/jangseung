@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from jangseung.records import dataclass, replace
 from fnmatch import fnmatchcase
 import re
 
@@ -551,6 +551,70 @@ def is_host_resolved_path(path: str) -> bool:
     return text == "~" or text.startswith("~/") or bool(re.match(r"^[A-Za-z]:(?!/)", text))
 
 
+class GlobSet:
+    """``any(fnmatchcase(name, p) for p in patterns)`` without a regular expression.
+
+    ``fnmatchcase`` compiles each pattern to a regular expression the first time a
+    process uses it. The hook is a new process on every call, so the built-in lists
+    cost about 90 compilations per call. Their patterns are plain shapes, matched
+    here with string tests that give the same answer: a name, ``*suffix``,
+    ``prefix*``, ``*infix*`` and ``head*tail``. Any other pattern is left to
+    ``fnmatchcase``.
+    """
+
+    __slots__ = ("_exact", "_suffixes", "_prefixes", "_infixes", "_ends", "_others")
+
+    def __init__(self, patterns: Iterable[str]) -> None:
+        exact: set[str] = set()
+        suffixes: list[str] = []
+        prefixes: list[str] = []
+        infixes: list[str] = []
+        ends: list[tuple[str, str]] = []
+        others: list[str] = []
+        for pattern in patterns:
+            stars = pattern.count("*")
+            if "?" in pattern or "[" in pattern:
+                others.append(pattern)
+            elif stars == 0:
+                exact.add(pattern)
+            elif stars == 1 and pattern.startswith("*"):
+                suffixes.append(pattern[1:])
+            elif stars == 1 and pattern.endswith("*"):
+                prefixes.append(pattern[:-1])
+            elif stars == 1:
+                head, _, tail = pattern.partition("*")
+                ends.append((head, tail))
+            elif stars == 2 and len(pattern) > 2 and pattern.startswith("*") and pattern.endswith("*"):
+                infixes.append(pattern[1:-1])
+            else:
+                others.append(pattern)
+        self._exact = frozenset(exact)
+        self._suffixes = tuple(suffixes)
+        self._prefixes = tuple(prefixes)
+        self._infixes = tuple(infixes)
+        self._ends = tuple(ends)
+        self._others = tuple(others)
+
+    def __call__(self, name: str) -> bool:
+        return (
+            name in self._exact
+            or name.endswith(self._suffixes)
+            or name.startswith(self._prefixes)
+            or any(infix in name for infix in self._infixes)
+            or any(
+                len(name) >= len(head) + len(tail) and name.startswith(head) and name.endswith(tail)
+                for head, tail in self._ends
+            )
+            or any(fnmatchcase(name, pattern) for pattern in self._others)
+        )
+
+
+_SECRET_FILE_GLOB_SET = GlobSet(SECRET_FILE_GLOBS)
+_PROTECTED_FILE_NAME_GLOB_SET = GlobSet(PROTECTED_FILE_NAME_GLOBS)
+_PROTECTED_GLOB_SET = GlobSet(PROTECTED_GLOBS)
+_AGENT_INSTRUCTION_GLOB_SET = GlobSet(AGENT_INSTRUCTION_GLOBS)
+
+
 def _policy_parts(path: str) -> tuple[str, ...]:
     """Case-folded path components with no spelling aliases left."""
 
@@ -604,7 +668,7 @@ def _is_builtin_secret(parts: tuple[str, ...]) -> bool:
         return True
     if name.startswith(".env.") and name.rsplit(".", 1)[-1] not in ENV_TEMPLATE_SUFFIXES:
         return True
-    return any(fnmatchcase(name, pattern) for pattern in SECRET_FILE_GLOBS)
+    return _SECRET_FILE_GLOB_SET(name)
 
 
 def is_secret_path(path: str, policy: PathPolicy | None = None) -> bool:
@@ -640,7 +704,7 @@ def is_protected_path(path: str, policy: PathPolicy | None = None) -> bool:
 
 
 def _is_review_tier(parts: tuple[str, ...]) -> bool:
-    if any(fnmatchcase(parts[-1], pattern) for pattern in PROTECTED_FILE_NAME_GLOBS):
+    if _PROTECTED_FILE_NAME_GLOB_SET(parts[-1]):
         return True
     if _is_agent_instruction(parts):
         return True
@@ -649,7 +713,7 @@ def _is_review_tier(parts: tuple[str, ...]) -> bool:
         return True
     if any(item.startswith(prefix) for prefix in PROTECTED_PREFIXES):
         return True
-    return any(fnmatchcase(item, pattern) for pattern in PROTECTED_GLOBS)
+    return _PROTECTED_GLOB_SET(item)
 
 
 def _is_agent_instruction(parts: tuple[str, ...]) -> bool:
@@ -659,7 +723,7 @@ def _is_agent_instruction(parts: tuple[str, ...]) -> bool:
     if parts[-1] in AGENT_INSTRUCTION_FILE_NAMES:
         return True
     item = "/".join(parts)
-    return any(fnmatchcase(item, pattern) for pattern in AGENT_INSTRUCTION_GLOBS)
+    return _AGENT_INSTRUCTION_GLOB_SET(item)
 
 
 def is_agent_instruction_path(path: str) -> bool:
@@ -684,6 +748,7 @@ def is_review_path(path: str, policy: PathPolicy | None = None) -> bool:
 # globs are left out except where a match is rarely anything else: ``event.key``
 # is ordinary code, ``server.pem`` is not.
 _CONTENT_SECRET_GLOBS = ("*.pem", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.ppk", "*.tfvars")
+_CONTENT_SECRET_GLOB_SET = GlobSet(_CONTENT_SECRET_GLOBS)
 _CONTENT_SECRET_DIRECTORIES = frozenset({".ssh", ".gnupg", ".aws", ".azure", ".gcloud", ".kube"})
 _CONTENT_SECRET_NAMES = SECRET_FILE_NAMES - {"credentials"}
 
@@ -699,7 +764,7 @@ def names_secret_file(token: str, policy: PathPolicy | None = None) -> bool:
         any(part in _CONTENT_SECRET_DIRECTORIES for part in parts[:-1])
         or name in _CONTENT_SECRET_NAMES
         or (name.startswith(".env.") and name.rsplit(".", 1)[-1] not in ENV_TEMPLATE_SUFFIXES)
-        or any(fnmatchcase(name, pattern) for pattern in _CONTENT_SECRET_GLOBS)
+        or _CONTENT_SECRET_GLOB_SET(name)
     )
     # The policy is consulted last: it is the slow part and rarely needed.
     return named and not (policy is not None and policy.allows(parts))

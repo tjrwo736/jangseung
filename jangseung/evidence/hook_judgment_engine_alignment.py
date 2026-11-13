@@ -8,8 +8,8 @@ output, execute tools, read secrets, write state, or grant authority.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-import hashlib
+from jangseung.records import dataclass, replace
+from jangseung._sha256 import sha256
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -18,7 +18,9 @@ import shlex
 import stat
 import sys
 from types import MappingProxyType
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify import (
     Classification,
@@ -54,7 +56,6 @@ from jangseung.evidence.claude_code_pretooluse_input_contract import (
     is_mcp_tool_name,
     validate_claude_code_pretooluse_input,
 )
-from jangseung.evidence.mcp_tool_gate import judge_mcp_tool_call
 from jangseung.evidence.claude_code_tool_call_mapping import (
     BASH_DANGEROUS,
     BASH_NOT_CHECKED,
@@ -122,8 +123,8 @@ from jangseung.evidence.structured_actions import (
     WRITE_FILE,
 )
 from jangseung.law import apply_law
-from jangseung.state.allow_once import approved_once as _approved_once_on_file
 from jangseung.state.session_marks import secret_naming_writes
+from jangseung._resolve import resolved as _resolved
 
 PHASE11C_8_HOOK_JUDGMENT_ENGINE_ALIGNMENT_VERSION = (
     "phase11c_8_hook_judgment_engine_alignment_v0"
@@ -828,6 +829,8 @@ def _judge_mcp_tool_call(
 
     base_dir = _effective_working_dir(hook_input, repo_root, working_dir)
     policy = load_hook_policy(repo_root, base_dir)
+    from jangseung.evidence.mcp_tool_gate import judge_mcp_tool_call
+
     gate = judge_mcp_tool_call(hook_input.tool_name, policy)
     basis = {
         "input_validation": _validation_record(validation),
@@ -1417,15 +1420,15 @@ def _classify_deleted_directory(
 def _guard_runtime_roots() -> tuple[Path, ...]:
     """Directories the running hook executes from, such as a venv in the project."""
 
-    return (Path(__file__).resolve().parents[1], Path(sys.prefix).resolve())
+    return (_resolved(__file__).parents[1], _resolved(sys.prefix))
 
 
 def _is_guard_runtime_target(target: str, repo_root: str | Path) -> bool:
     try:
-        resolved = (Path(repo_root) / target).resolve(strict=False)
+        resolved = _resolved(Path(repo_root) / target)
         return any(
             resolved == root or root in resolved.parents
-            for root in (Path(item).resolve(strict=False) for item in _guard_runtime_roots())
+            for root in (_resolved(item) for item in _guard_runtime_roots())
         )
     except (OSError, ValueError):
         return False
@@ -1638,7 +1641,7 @@ def _shell_file_operation_gate(
     if _classify_command_target(".", repo_root, base_dir, policy) != "safe_in_repo":
         return {"allow": False}
     targets = []
-    root = Path(repo_root).resolve()
+    root = _resolved(repo_root)
     # The trusted project root itself may have an OS alias (macOS /var ->
     # /private/var). Canonicalize that prefix only, not links below the root:
     # resolving the whole working directory would hide an in-project link.
@@ -1777,7 +1780,7 @@ def _git_uses_a_guarded_repository(start: str | Path) -> bool:
     """
 
     try:
-        current = Path(start).resolve()
+        current = _resolved(start)
         for directory in (current, *current.parents):
             if (directory / ".git").exists():
                 return True
@@ -2104,14 +2107,16 @@ def _command_approved_once(
         or not _is_project_root_folder(base_dir, repo_root)
     ):
         return False
-    return _approved_once_on_file(command, repo_root, hook_input.tool_name)
+    from jangseung.state.allow_once import approved_once
+
+    return approved_once(command, repo_root, hook_input.tool_name)
 
 
 def _is_project_root_folder(base_dir: str | Path, repo_root: str | Path) -> bool:
     """The approval names a command, and the same command runs other code in a subfolder."""
 
     try:
-        return Path(base_dir).resolve() == Path(repo_root).resolve()
+        return _resolved(base_dir) == _resolved(repo_root)
     except (OSError, ValueError):
         return False
 
@@ -2592,7 +2597,7 @@ def _sha256_json(payload: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 __all__ = [

@@ -8,12 +8,14 @@ stricter built-in rules in force.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from jangseung.records import dataclass, replace
 import json
 from pathlib import Path
 import re
 import shlex
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify.git_program_paths import git_program_paths
 from jangseung.classify.rules import PathPolicy

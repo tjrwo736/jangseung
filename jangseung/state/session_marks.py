@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Sequence
 
+from jangseung._clock import utc_timestamp
 from jangseung.contracts import STATE_DIR
 from jangseung.state.file_lock import exclusive_hook_lock
 
@@ -93,7 +95,7 @@ def mark_secret_naming_write(repo_root: str | Path, session_id: object, paths: S
         merged = list(dict.fromkeys([*(known if isinstance(known, list) else []), *paths]))
         sessions[key] = {
             "secret_naming_writes": [str(item)[:MAX_PATH_CHARACTERS] for item in merged][-MAX_PATHS_PER_SESSION:],
-            "updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "updated": utc_timestamp(),
         }
         newest = sorted(sessions.items(), key=lambda item: str(item[1].get("updated", "")))[-MAX_SESSIONS:]
         # ASCII output: a path may hold text UTF-8 cannot encode, such as a lone

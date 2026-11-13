@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import shlex
 
+from jangseung._resolve import resolved as _resolved
+
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_CONFIG_FILES = 32
 
@@ -24,8 +26,8 @@ def git_program_paths(repo_root: str | Path, working_dir: str | Path | None = No
     """Repo-relative paths the configuration of the repository in use points at."""
 
     try:
-        root = Path(repo_root).resolve()
-        found = _repository_configs(Path(root if working_dir is None else working_dir).resolve())
+        root = _resolved(repo_root)
+        found = _repository_configs(_resolved(root if working_dir is None else working_dir))
         if found is None:
             return ()
         top, configs, hooks = found
@@ -58,7 +60,7 @@ def _repository_configs(start: Path) -> tuple[Path, list[Path], Path] | None:
 def _linked_hooks(hooks: Path) -> list[Path]:
     """Where a hooks folder or its hooks really live, when linked out of ``.git``."""
 
-    if hooks.resolve() != hooks.parent.resolve() / hooks.name:
+    if _resolved(hooks) != _resolved(hooks.parent) / hooks.name:
         return [hooks]
     return [entry for entry in hooks.iterdir() if entry.is_symlink()] if hooks.is_dir() else []
 
@@ -263,7 +265,7 @@ def _inside_project(paths: list[Path], root: Path) -> tuple[str, ...]:
     inside: list[str] = []
     for path in paths:
         try:
-            relative = path.resolve().relative_to(root)
+            relative = _resolved(path).relative_to(root)
         except (OSError, ValueError, RuntimeError):
             continue
         if relative.parts:

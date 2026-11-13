@@ -11,8 +11,8 @@ from typing import Any
 from jangseung.classify.hook_policy import HOOK_POLICY_FILE, load_hook_policy
 from jangseung.cli.install import (
     CLAUDE_CODE_MCP_HOOK_MATCHER, CLAUDE_HOOK_ON_FAILURE, CODEX_AEGIS_HOOK_MATCHER, CODEX_MCP_HOOK_MATCHER,
-    HOOK_KIND_MAIN, HOOK_KIND_MCP, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
-    _is_managed_hook, _managed_hook_kind, _parse_managed_command, claude_code_hook_matcher,
+    DIRECT_HOOK_FLAGS, HOOK_KIND_MAIN, HOOK_KIND_MCP, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
+    _is_direct_hook_script, _is_managed_hook, _managed_hook_kind, _parse_managed_command, claude_code_hook_matcher,
 )
 from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, FAIL, PASS, WARN
@@ -193,6 +193,16 @@ def _executable_check(prefix: str, hook: dict[str, Any]) -> DoctorCheck:
     if "jangseung.cli" in argv[1:4]:
         return DoctorCheck(name, WARN, "Python executable exists; importing jangseung.cli in that interpreter was NOT_CHECKED (not executed).",
                            next_step="Check the intended package installation from a trusted terminal.")
+    if tuple(argv[1:3]) == DIRECT_HOOK_FLAGS and len(argv) > 3 and _is_direct_hook_script(argv[3]):
+        try:
+            script_present = Path(argv[3]).is_file()
+        except (OSError, ValueError):
+            script_present = False
+        if not script_present:
+            return DoctorCheck(name, FAIL, "The hook's launcher file is missing; the hook cannot start and every tool call is blocked.",
+                               fix_hint="Reinstall jangseung or rerun aeg install from a trusted terminal.")
+        return DoctorCheck(name, PASS, "Python executable and the hook's launcher file are present; they were not executed.",
+                           next_step="The host application's PATH/trust and actual hook execution remain NOT_CHECKED.")
     return DoctorCheck(name, PASS, "Executable is present in the current environment; it was not executed.",
                        next_step="The host application's PATH/trust and actual hook execution remain NOT_CHECKED.")
 

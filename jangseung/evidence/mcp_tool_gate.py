@@ -8,8 +8,10 @@ through the separate hook entry that ``aeg install --mcp`` adds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from jangseung.records import dataclass
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.classify.hook_policy import HookPolicy
 from jangseung.evidence.claude_code_pretooluse_input_contract import MCP_RESOURCE_READ_TOOL_NAMES

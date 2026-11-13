@@ -40,10 +40,13 @@ import os
 import sys
 from collections.abc import Sequence
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from jangseung.records import dataclass, replace
 from pathlib import Path
-from typing import Any, TextIO
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any, TextIO
 
+from jangseung._resolve import one_judgment
 from jangseung.cli.reason_text import hook_reason_sentence
 from jangseung.contracts import SAFE_DEFAULT, STATE_DIR
 from jangseung.evidence.claude_code_pretooluse_input_contract import (
@@ -54,7 +57,6 @@ from jangseung.evidence.hook_judgment_engine_alignment import (
     judge_pretooluse_with_aeg_engine,
 )
 from jangseung.state.hook_ledger import append_hook_decision_record
-from jangseung.state.allow_once import consume_once
 from jangseung.state.session_marks import mark_secret_naming_write, session_key
 
 
@@ -146,9 +148,23 @@ def render_hook_response(
 
     Side-effect free: performs no stream I/O or filesystem writes. Path gates
     inspect filesystem metadata; shell-read allow requires existing regular
-    files. Every failure mode returns a ``deny`` JSON.
+    files. Every failure mode returns a ``deny`` JSON. Each distinct path is
+    resolved once per judgment (see ``jangseung._resolve``).
     """
 
+    with one_judgment():
+        return _render_hook_response(
+            raw_stdin_text, repo_root=repo_root, substrate=substrate, working_dir=working_dir,
+        )
+
+
+def _render_hook_response(
+    raw_stdin_text: str,
+    *,
+    repo_root: str | Path,
+    substrate: str | None,
+    working_dir: str | Path | None,
+) -> HookRunResult:
     effective_substrate = _normalize_substrate(substrate)
 
     try:
@@ -301,16 +317,40 @@ def resolve_hook_project_root(
     return current
 
 
+def read_at_most(buffer, size: int) -> bytes:
+    """Read until the input ends or ``size`` bytes are in, in pieces of 64 KiB.
+
+    One ``buffer.read(size)`` asks Windows for a single read of ``size`` bytes,
+    and with the 16 MiB limit that alone took about 3 ms on every call. The
+    pieces stop at ``size``, so no more input is taken than one read took.
+    """
+
+    read = getattr(buffer, "read1", None) or buffer.read
+    parts: list[bytes] = []
+    total = 0
+    while total < size:
+        part = read(min(65536, size - total))
+        if not part:
+            break
+        parts.append(part)
+        total += len(part)
+    return b"".join(parts)
+
+
 def read_stdin_text(stdin: TextIO, *, limit: int = MAX_STDIN_BYTES) -> str:
     """Read stdin as UTF-8 bytes; the console's locale encoding is not the host's."""
 
     buffer = getattr(stdin, "buffer", None)
     if buffer is None:
         return stdin.read()
-    raw = buffer.read(limit + 1)
+    raw = read_at_most(buffer, limit + 1)
     if len(raw) > limit:
         raise ValueError("hook input exceeds the size limit")
-    return raw.decode("utf-8-sig")
+    # The same as decoding with "utf-8-sig", without loading that codec (about
+    # 1.7 ms on every call): one leading byte order mark is dropped.
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    return raw.decode("utf-8")
 
 
 def run_aeg_hook_run(
@@ -351,6 +391,8 @@ def run_aeg_hook_run(
         # The approval is spent before the answer leaves. If it cannot be spent, or
         # another call spent it first, the command is not allowed on its strength.
         try:
+            from jangseung.state.allow_once import consume_once
+
             spent = consume_once(result.allow_once_command, repo_root, result.allow_once_tool or "Bash")
         except Exception:  # noqa: BLE001
             spent = False

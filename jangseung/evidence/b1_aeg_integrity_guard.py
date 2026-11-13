@@ -7,11 +7,13 @@ executor authority.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-import hashlib
+from jangseung.records import asdict, dataclass
+from jangseung._sha256 import sha256
 import json
 from pathlib import Path
-from typing import Any
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
+    from typing import Any
 
 from jangseung.contracts import (
     B1_AEG_DIRECT_TARGET_DENIED,
@@ -33,6 +35,7 @@ from jangseung.contracts import (
     PHASE11A_NOT_STARTED,
     STATE_DIR,
 )
+from jangseung._resolve import resolved as _resolved
 
 
 @dataclass(frozen=True)
@@ -68,11 +71,11 @@ def decide_b1_aeg_integrity_guard(
 ) -> B1AegIntegrityGuardDecision:
     """Classify a submitted path under the B1-B deny-only guard component."""
 
-    repo_root_path = Path(repo_root).resolve(strict=False)
-    protected_root = (repo_root_path / STATE_DIR).resolve(strict=False)
+    repo_root_path = _resolved(repo_root)
+    protected_root = _resolved(repo_root_path / STATE_DIR)
     submitted = Path(submitted_path)
     absolute_path = submitted if submitted.is_absolute() else repo_root_path / submitted
-    resolved_path = absolute_path.resolve(strict=False)
+    resolved_path = _resolved(absolute_path)
     protected_target = _is_relative_to_or_same(resolved_path, protected_root)
 
     if protected_target:
@@ -185,7 +188,7 @@ def _decision_id(
         "wiring_status": NOT_WIRED_TO_EXECUTOR_WRITE_PATH,
     }
     canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return f"b1-aeg-integrity-guard:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+    return f"b1-aeg-integrity-guard:{sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
 __all__ = [

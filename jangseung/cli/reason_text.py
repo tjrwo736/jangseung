@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from jangseung.evidence.mcp_tool_gate import (
-    MCP_RESOURCE_READ_REQUIRES_APPROVAL,
-    MCP_TOOL_REQUIRES_APPROVAL,
-)
+# The same codes as jangseung.evidence.mcp_tool_gate, written out so the hook does
+# not load that module for calls that are not MCP calls (a test keeps them equal).
+MCP_TOOL_REQUIRES_APPROVAL = "mcp_tool_requires_user_approval"
+MCP_RESOURCE_READ_REQUIRES_APPROVAL = "mcp_resource_read_requires_user_approval"
 
 # Kept as literals so this module stays light; the engine defines the same codes.
 REVIEW_TIER_REASON = "build_or_dependency_file_change_needs_user_review"
