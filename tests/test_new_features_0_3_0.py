@@ -394,7 +394,7 @@ def test_session_check_never_fails_the_session(project):
 
     with mock.patch("jangseung.cli.session_check.run_session_check", side_effect=RuntimeError("x")):
         assert entry_main(["session-check"]) == 0
-    with mock.patch("jangseung.cli.session_check.session_problems", side_effect=RuntimeError("x")):
+    with mock.patch("jangseung.cli.session_check.session_report", side_effect=RuntimeError("x")):
         assert "could not run" in _session_check(project)["systemMessage"]
 
 

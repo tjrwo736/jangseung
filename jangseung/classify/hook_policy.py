@@ -14,10 +14,16 @@ if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
 
 from jangseung.classify.git_program_paths import git_program_paths
 from jangseung.classify.rules import PathPolicy
-from jangseung.state.approvals import approval_root, read_small_file
+from jangseung.state.approvals import ApprovalStorageUnavailable, approval_root, read_small_file
 from jangseung.state.paths import state_root
 
 HOOK_POLICY_FILE = "policy.json"
+# The user's profile folder cannot hold approvals (missing, a link, not theirs),
+# so this user has none; nothing else is affected.
+NOTICE_NO_PERSONAL_STORAGE = "personal_approvals_unavailable"
+# The checkout's .aeg/policy.json still lists grants that 0.3.2 and later ignore
+# and that the person has not adopted.
+NOTICE_LEGACY_GRANTS_IGNORED = "legacy_grants_ignored"
 MAX_POLICY_BYTES = 64 * 1024
 # A policy a team commits to git. It can only add protection: ``protect_paths`` is
 # its one key. Agents cannot write this folder (it is a guard path), so a
@@ -41,6 +47,8 @@ class HookPolicy:
     allow_mcp_tools: frozenset[str] = frozenset()
     present: bool = False
     error: str | None = None
+    # Things a person should know that do not weaken protection: see NOTICE_*.
+    notices: tuple[str, ...] = ()
 
     def approves_command(self, argv: tuple[str, ...]) -> bool:
         return any(argv[: len(prefix)] == prefix for prefix in self.allow_commands)
@@ -52,8 +60,14 @@ class HookPolicy:
 def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = None) -> HookPolicy:
     """The person's policy plus what git would run, which no policy can open to agents."""
 
+    notices: list[str] = []
     try:
         policy = _read_policy_file(approval_root(repo_root) / HOOK_POLICY_FILE, personal=True)
+    except ApprovalStorageUnavailable:
+        # No place a person could have stored an approval or a restriction: the
+        # built-in rules, the team file and the checkout's protect_paths apply.
+        policy = HookPolicy()
+        notices.append(NOTICE_NO_PERSONAL_STORAGE)
     except (OSError, ValueError, RuntimeError, KeyError):
         policy = HookPolicy(present=True, error="personal_approval_directory_unavailable")
     try:
@@ -62,11 +76,19 @@ def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = Non
         legacy = HookPolicy(present=True, error="unsafe_project_state_directory")
     shared, shared_error = read_shared_protect_paths(repo_root)
     error = policy.error or legacy.error or (f"shared_{shared_error}" if shared_error else None)
+    if not error and (
+        set(legacy.paths.allow_paths) - set(policy.paths.allow_paths)
+        or set(legacy.allow_commands) - set(policy.allow_commands)
+        or legacy.allow_mcp_tools - policy.allow_mcp_tools
+    ):
+        notices.append(NOTICE_LEGACY_GRANTS_IGNORED)
     if error:
         # Unknown restrictions cannot be silently dropped; no personal grant applies.
         policy = HookPolicy(paths=PathPolicy(protect_paths=("*",)), present=True, error=error)
     elif legacy.present:
         policy = replace(policy, present=True)
+    if notices:
+        policy = replace(policy, notices=tuple(notices))
     if working_dir is not None and (policy.paths.allow_paths or policy.allow_commands or policy.allow_mcp_tools):
         try:
             inside = resolved(working_dir, strict=True).is_relative_to(resolved(repo_root, strict=True))

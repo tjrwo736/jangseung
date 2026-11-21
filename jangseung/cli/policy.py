@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
@@ -196,8 +197,13 @@ def _merged(current: dict[str, list[str]], additions: dict[str, Sequence[str]]) 
 
 
 def _write_approved(base_dir: str | Path, reviewed_path: Path, current: dict[str, list[str]], text: str) -> None:
-    if approval_root(base_dir, create=True) != reviewed_path.parent:
-        raise ValueError("project identity changed during review; retry")
+    root = approval_root(base_dir, create=True)
+    if root != reviewed_path.parent:
+        if os.path.lexists(reviewed_path.parent):
+            raise ValueError("project identity changed during review; retry")
+        # The folder 0.3.2 created was just renamed to its version-independent name.
+        # The lock and the comparison below still check what was reviewed.
+        reviewed_path = root / reviewed_path.name
     with exclusive_hook_lock(reviewed_path.with_suffix(".lock")):
         latest, error = _load(reviewed_path)
         if error or latest != current:
