@@ -1,14 +1,9 @@
-"""Optional per-project hook policy read from ``.aeg/policy.json``.
-
-This is the approval path for what the built-in rules stop. Agents cannot write
-this file because ``.aeg/`` is denied for every tool, so only a person can widen
-the rules. A file that cannot be trusted is ignored as a whole, which keeps the
-stricter built-in rules in force.
-"""
+"""Personal approvals come only from user-owned storage; checkout files can only restrict."""
 
 from __future__ import annotations
 
 from jangseung.records import dataclass, replace
+from jangseung._resolve import resolved
 import json
 from pathlib import Path
 import re
@@ -19,13 +14,14 @@ if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
 
 from jangseung.classify.git_program_paths import git_program_paths
 from jangseung.classify.rules import PathPolicy
-from jangseung.contracts import STATE_DIR
+from jangseung.state.approvals import approval_root, read_small_file
+from jangseung.state.paths import state_root
 
 HOOK_POLICY_FILE = "policy.json"
 MAX_POLICY_BYTES = 64 * 1024
 # A policy a team commits to git. It can only add protection: ``protect_paths`` is
-# its one key. ``.aeg/`` stays each person's own and is not committed. Agents cannot
-# write this folder (it is a guard path), so a person edits it, by hand or with
+# its one key. Agents cannot write this folder (it is a guard path), so a
+# person edits it, by hand or with
 # ``aeg policy add --shared --protect <path>``.
 SHARED_POLICY_DIR = ".jangseung"
 SHARED_POLICY_FILE = "policy.json"
@@ -56,17 +52,33 @@ class HookPolicy:
 def load_hook_policy(repo_root: str | Path, working_dir: str | Path | None = None) -> HookPolicy:
     """The person's policy plus what git would run, which no policy can open to agents."""
 
-    policy = _read_policy_file(repo_root)
+    try:
+        policy = _read_policy_file(approval_root(repo_root) / HOOK_POLICY_FILE, personal=True)
+    except (OSError, ValueError, RuntimeError, KeyError):
+        policy = HookPolicy(present=True, error="personal_approval_directory_unavailable")
+    try:
+        legacy = _read_policy_file(state_root(repo_root) / HOOK_POLICY_FILE)
+    except (OSError, ValueError, RuntimeError):
+        legacy = HookPolicy(present=True, error="unsafe_project_state_directory")
     shared, shared_error = read_shared_protect_paths(repo_root)
-    if shared_error is not None:
-        # A broken team file must not quietly drop its protection. Which paths it meant
-        # cannot be known, so every path is protected until a person fixes the file,
-        # and the policy is marked as failed (no host delegation, no file-operation allows).
-        shared = (*shared, "*")
-        if policy.error is None:
-            policy = replace(policy, error=f"shared_{shared_error}")
+    error = policy.error or legacy.error or (f"shared_{shared_error}" if shared_error else None)
+    if error:
+        # Unknown restrictions cannot be silently dropped; no personal grant applies.
+        policy = HookPolicy(paths=PathPolicy(protect_paths=("*",)), present=True, error=error)
+    elif legacy.present:
+        policy = replace(policy, present=True)
+    if working_dir is not None and (policy.paths.allow_paths or policy.allow_commands or policy.allow_mcp_tools):
+        try:
+            inside = resolved(working_dir, strict=True).is_relative_to(resolved(repo_root, strict=True))
+        except (OSError, ValueError, RuntimeError):
+            inside = False
+        if not inside:
+            # The host may keep publishing its original project after a cd.
+            # In particular, a named MCP tool must not inherit that project's grants.
+            policy = replace(policy, paths=replace(policy.paths, allow_paths=()),
+                             allow_commands=(), allow_mcp_tools=frozenset())
     git_paths = git_program_paths(repo_root, working_dir)
-    extra = (*shared, *git_paths)
+    extra = (*legacy.paths.protect_paths, *shared, *git_paths)
     if not extra:
         return policy
     return replace(policy, paths=replace(policy.paths, protect_paths=(*policy.paths.protect_paths, *extra)))
@@ -77,13 +89,19 @@ def read_shared_protect_paths(repo_root: str | Path) -> tuple[tuple[str, ...], s
 
     path = Path(repo_root) / SHARED_POLICY_DIR / SHARED_POLICY_FILE
     try:
-        if path.parent.is_symlink() or path.is_symlink():
-            return (), "policy_file_is_a_link"
-        if not path.exists():
+        import stat
+
+        try:
+            parent = path.parent.lstat()
+        except FileNotFoundError:
             return (), None
-        if not path.is_file() or path.stat().st_size > MAX_POLICY_BYTES:
-            return (), "policy_file_not_a_small_regular_file"
-        data = json.loads(path.read_text(encoding="utf-8"))
+        if (not stat.S_ISDIR(parent.st_mode)
+                or getattr(parent, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            return (), "policy_file_is_a_link"
+        raw = read_small_file(path, MAX_POLICY_BYTES)
+        if raw is None:
+            return (), None
+        data = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return (), "policy_file_unreadable"
     if not isinstance(data, dict) or set(data) - _SHARED_KEYS:
@@ -94,16 +112,12 @@ def read_shared_protect_paths(repo_root: str | Path) -> tuple[tuple[str, ...], s
     return tuple(value), None
 
 
-def _read_policy_file(repo_root: str | Path) -> HookPolicy:
-    path = Path(repo_root) / STATE_DIR / HOOK_POLICY_FILE
+def _read_policy_file(path: Path, *, personal: bool = False) -> HookPolicy:
     try:
-        if path.is_symlink():
-            return HookPolicy(present=True, error="policy_file_is_a_link")
-        if not path.exists():
+        raw = read_small_file(path, MAX_POLICY_BYTES, personal=personal)
+        if raw is None:
             return HookPolicy()
-        if not path.is_file() or path.stat().st_size > MAX_POLICY_BYTES:
-            return HookPolicy(present=True, error="policy_file_not_a_small_regular_file")
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return HookPolicy(present=True, error="policy_file_unreadable")
     return parse_policy(data)

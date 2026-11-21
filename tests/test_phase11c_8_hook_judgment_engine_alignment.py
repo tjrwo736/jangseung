@@ -1,6 +1,8 @@
 import inspect
+from contextlib import contextmanager
+import os
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from jangseung.contracts import (
     CLEAN_CORE,
@@ -410,6 +412,23 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
     def _abs(self, rel: str) -> str:
         return str(self.repo_root / rel)
 
+    @contextmanager
+    def _windows_project(self):
+        # Authority is tied to an existing project directory. Use the real
+        # fixture on Windows; on POSIX give the lexical Windows model a real,
+        # temporary directory identity without accessing anyone's home.
+        if os.name == "nt":
+            yield PureWindowsPath(self.repo_root)
+            return
+        root = PureWindowsPath(r"C:\Users\test\repo")
+        previous = Path.cwd()
+        os.chdir(self.outside_root)
+        try:
+            Path(str(root)).mkdir()
+            yield root
+        finally:
+            os.chdir(previous)
+
     # --- repo-internal absolute normal: must NOT be scope-denied -----------
 
     def test_repo_internal_absolute_read_is_not_denied(self):
@@ -425,21 +444,15 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
         self.assertEqual(decision.hook_decision, ALLOW)
 
     def test_windows_repo_internal_absolute_write_is_allow_not_deny(self):
-        repo_root = r"C:\Users\test\repo"
-        for path in (
-            r"C:\Users\test\repo\src\app.py",
-            "C:/Users/test/repo/src/app.py",
-        ):
-            with self.subTest(path=path):
-                decision = self._judge_with_repo_root(
-                    "Write",
-                    {"file_path": path, "content": "x"},
-                    repo_root,
-                )
-                self.assertEqual(decision.hook_decision, ALLOW)
-                norm = decision.engine_decision_basis["path_normalization"][0]
-                self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
-                self.assertEqual(norm["normalized"], "src/app.py")
+        with self._windows_project() as root:
+            target = root / "src/app.py"
+            for path in (str(target), target.as_posix()):
+                with self.subTest(path=path):
+                    decision = self._judge_with_repo_root("Write", {"file_path": path, "content": "x"}, str(root))
+                    self.assertEqual(decision.hook_decision, ALLOW)
+                    norm = decision.engine_decision_basis["path_normalization"][0]
+                    self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
+                    self.assertEqual(norm["normalized"], "src/app.py")
 
     def test_repo_internal_absolute_edit_is_not_deny(self):
         decision = self._judge(
@@ -456,11 +469,8 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
                 self.assertEqual(decision.hook_decision, DENY)
 
     def test_windows_repo_internal_absolute_protected_path_still_denies(self):
-        decision = self._judge_with_repo_root(
-            "Write",
-            {"file_path": r"C:\Users\test\repo\.env", "content": "x"},
-            r"C:\Users\test\repo",
-        )
+        with self._windows_project() as root:
+            decision = self._judge_with_repo_root("Write", {"file_path": str(root / ".env"), "content": "x"}, str(root))
         self.assertEqual(decision.hook_decision, DENY)
         norm = decision.engine_decision_basis["path_normalization"][0]
         self.assertEqual(norm["action"], "repo_internal_absolute_normalized_to_relative")
@@ -476,22 +486,14 @@ class Phase11C8AbsolutePathNormalizationTests(unittest.TestCase):
                 self.assertNotIn(decision.hook_decision, (ALLOW, ASK))
 
     def test_windows_repo_external_absolute_paths_still_deny(self):
-        repo_root = r"C:\Users\test\repo"
-        for path in (
-            r"C:\Users\test\repo.env",
-            r"C:\Windows\System32\config",
-            r"D:\other\path\file.txt",
-        ):
-            with self.subTest(path=path):
-                decision = self._judge_with_repo_root(
-                    "Write",
-                    {"file_path": path, "content": "x"},
-                    repo_root,
-                )
-                self.assertEqual(decision.hook_decision, DENY)
-                norm = decision.engine_decision_basis["path_normalization"][0]
-                self.assertEqual(norm["action"], "outside_repo_kept_absolute_for_scope_rejection")
-                self.assertFalse(norm["in_repo"])
+        with self._windows_project() as root:
+            for path in (str(root.with_name(root.name + ".env")), r"C:\Windows\System32\config", r"D:\other\path\file.txt"):
+                with self.subTest(path=path):
+                    decision = self._judge_with_repo_root("Write", {"file_path": path, "content": "x"}, str(root))
+                    self.assertEqual(decision.hook_decision, DENY)
+                    norm = decision.engine_decision_basis["path_normalization"][0]
+                    self.assertEqual(norm["action"], "outside_repo_kept_absolute_for_scope_rejection")
+                    self.assertFalse(norm["in_repo"])
 
     def test_sibling_prefix_directory_is_not_treated_as_in_repo(self):
         # /tmp/x/repo-evil/secret.txt must NOT be considered under /tmp/x/repo.

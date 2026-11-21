@@ -2,11 +2,12 @@
 
 ``aeg install --mcp`` adds a second, separate hook entry. Through it, MCP tool
 calls and MCP resource reads need a person's approval (deny on Codex) unless
-``.aeg/policy.json`` lists the exact tool in ``allow_mcp_tools``. Arguments are
+the personal policy lists the exact tool in ``allow_mcp_tools``. Arguments are
 never inspected. A plain install stays exactly as before.
 """
 import io
 import json
+from tests.approval_helpers import approve
 import os
 import subprocess
 import sys
@@ -64,7 +65,7 @@ def judge(repo, tool_name, tool_input=None, substrate=None, **extra):
 
 
 def write_policy(repo, **lists):
-    (repo / ".aeg" / "policy.json").write_text(json.dumps(lists), encoding="utf-8")
+    approve(repo, **lists)
 
 
 def fake_aeg(repo, folder="virtual env"):
@@ -152,7 +153,7 @@ def test_listed_tool_is_allowed_on_both_hosts(repo):
     ["Read"], ["mcp__probe__read file"], ["mcp__probe__read_file;x"], [""], [" mcp__probe__echo"],
 ])
 def test_a_bad_entry_voids_the_whole_policy(repo, entries):
-    write_policy(repo, allow_mcp_tools=entries, allow_commands=["pytest"])
+    (repo / ".aeg/policy.json").write_text(json.dumps({"allow_mcp_tools": entries, "allow_commands": ["pytest"]}))
     policy = load_hook_policy(repo)
     assert policy.error is not None
     assert policy.allow_mcp_tools == frozenset()
@@ -163,7 +164,7 @@ def test_a_bad_entry_voids_the_whole_policy(repo, entries):
 
 @pytest.mark.parametrize("value", ["mcp__probe__echo", {"mcp__probe__echo": True}, [1], [None]])
 def test_allow_mcp_tools_must_be_a_list_of_strings(repo, value):
-    write_policy(repo, allow_mcp_tools=value)
+    (repo / ".aeg/policy.json").write_text(json.dumps({"allow_mcp_tools": value}))
     assert load_hook_policy(repo).error == "policy_allow_mcp_tools_must_be_a_list_of_strings"
 
 

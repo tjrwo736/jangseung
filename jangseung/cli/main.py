@@ -19,7 +19,9 @@ from jangseung.cli.install import (
     cmd_uninstall,
 )
 from jangseung.cli.allow_once import cmd_allow_once
-from jangseung.cli.policy import PRESETS, cmd_policy_add, cmd_policy_add_shared, cmd_policy_show, cmd_policy_suggest
+from jangseung.cli.policy import (
+    PRESETS, cmd_policy_add, cmd_policy_add_shared, cmd_policy_adopt, cmd_policy_show, cmd_policy_suggest,
+)
 from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, doctor_status, run_doctor
 from jangseung.state.evidence_query import (
@@ -33,6 +35,7 @@ from jangseung.state.evidence_query import (
 from jangseung.state.hook_ledger import (
     archive_hook_ledger,
     hook_ledger_needs_repair,
+    hook_ledger_size,
     repair_hook_ledger,
     verify_hook_ledger,
 )
@@ -165,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "also add a separate hook for MCP tool calls and MCP resource reads: they need "
-            "approval (denied on Codex) unless .aeg/policy.json lists the tool in allow_mcp_tools"
+            "approval (denied on Codex) unless approved with 'aeg policy add --mcp-tool'"
         ),
     )
     uninstall_parser = subparsers.add_parser(
@@ -192,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     allow_once_parser = subparsers.add_parser(
         "allow-once",
         help="let an agent run one exact command once, within minutes (run by a person; mainly for Codex)",
+        description="Store one approval for this project in your personal profile. Legacy checkout grants "
+                    "are ignored: approve the exact command again if you still want it to run.",
     )
     allow_once_parser.add_argument("allowed_command", nargs="?", default=None, help="the exact command text, quoted")
     allow_once_parser.add_argument("--minutes", type=int, default=10, help="minutes until it expires (1-60, default 10)")
@@ -202,12 +207,14 @@ def main(argv: list[str] | None = None) -> int:
                                    help="the shell tool the agent will use (default: Bash; Codex always uses Bash)")
     policy_parser = subparsers.add_parser(
         "policy",
-        help="show or extend the project approval policy in .aeg/policy.json (run by a person, not an agent)",
+        help="show or extend the user-owned approvals for this project (run by a person, not an agent)",
     )
     policy_subparsers = policy_parser.add_subparsers(dest="policy_command", required=True)
     policy_show_parser = policy_subparsers.add_parser("show", help="print the current policy")
     policy_show_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
     policy_show_parser.add_argument("--json", action="store_true", dest="as_json")
+    adopt_parser = policy_subparsers.add_parser("adopt", help="review and adopt a snapshot of legacy .aeg/policy.json")
+    adopt_parser.add_argument("--project", default=None, help="project directory (default: cwd)")
     policy_add_parser = policy_subparsers.add_parser("add", help="add entries after showing a diff")
     policy_add_parser.add_argument("--command", dest="policy_commands", action="append", default=[],
                                    help="command prefix agents may run without a question, such as \"pytest\"")
@@ -268,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         project = Path(args.project) if args.project else Path.cwd()
         if args.policy_command == "show":
             return cmd_policy_show(project, as_json=args.as_json)
+        if args.policy_command == "adopt":
+            return cmd_policy_adopt(project)
         if args.policy_command == "suggest":
             return cmd_policy_suggest(project, days=args.days, minimum=args.minimum)
         if args.policy_command == "preset":
@@ -399,7 +408,7 @@ def _cmd_evidence_summary(cwd: Path, *, days: int | None = None, as_json: bool =
         else:
             _print_card("Aegis evidence summary", "FAIL", [("error", str(exc))])
         return 1
-    status = "EMPTY" if not summary["records"] else ("DEGRADED" if summary["unreadable"] else "OK")
+    status = "DEGRADED" if summary["unreadable"] else ("OK" if summary["records"] else "EMPTY")
     if as_json:
         print(json.dumps({"status": status, **summary}, ensure_ascii=True, sort_keys=True))
         return 0
@@ -476,12 +485,11 @@ def _cmd_evidence_show(cwd: Path, evidence_id: str, *, as_json: bool = False) ->
 def _cmd_evidence_archive_hooks(cwd: Path, *, assume_yes: bool = False) -> int:
     try:
         repo = git.repo_root(cwd)
-        ledger = repo / ".aeg" / "hook_ledger.jsonl"
-        size = ledger.stat().st_size if ledger.is_file() else 0
+        size = hook_ledger_size(repo)
         if size == 0:
             print("aeg evidence archive-hooks: no hook records; nothing to archive.")
             return 0
-        print(f"aeg evidence archive-hooks: will move {ledger} ({size} bytes) to .aeg/archive/ and start a new chain.")
+        print(f"aeg evidence archive-hooks: will move .aeg/hook_ledger.jsonl ({size} bytes) to .aeg/archive/ and start a new chain.")
         if not assume_yes:
             answer = input("Proceed? [y/N] ").strip().lower()
             if answer not in {"y", "yes"}:

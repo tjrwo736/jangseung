@@ -137,12 +137,12 @@ MCP 보호를 켠 0.1.9로는 Claude Code 2.1.316 `claude -p`(Windows)에서 같
 | 지원됨 | 정상 파일 작업 allow: repo 내부의 명확히 안전한 읽기/쓰기/편집은 방해하지 않음 |
 | 지원됨 | Codex `apply_patch` tool call의 target-aware 판정: 보호 경로 deny, 정상 경로 allow (Windows 네이티브 hook exit code 처리 포함 실측). 프로젝트 안 파일은 0.1.8부터 절대 경로로 적어도 같은 판정 (Codex CLI 0.166.0, Windows 실제 세션에서 확인) |
 | 지원됨 | 프로젝트 로컬 Codex 설치: `aeg install --target codex` |
-| 지원됨 (0.1.9부터, 선택) | MCP 보호: `aeg install --mcp`가 별도 hook 항목을 추가. MCP 도구 호출과 MCP 리소스 읽기를 Claude Code에서는 승인 요구, Codex에서는 deny. `.aeg/policy.json`의 `allow_mcp_tools`에 적은 도구만 통과. 인자는 검사하지 않음 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex는 자동 테스트와 hook CLI로만 확인) |
+| 지원됨 (0.1.9부터, 선택) | MCP 보호: `aeg install --mcp`가 별도 hook 항목을 추가. MCP 도구 호출과 MCP 리소스 읽기를 Claude Code에서는 승인 요구, Codex에서는 deny. 사용자가 승인한 `allow_mcp_tools`의 도구만 통과. 인자는 검사하지 않음 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex는 자동 테스트와 hook CLI로만 확인) |
 | 지원됨 (0.1.2부터) | Codex 제거: `aeg uninstall --target codex`; 다른 hook과 TOML 설정/주석 보존, diff 확인과 백업 |
 | 지원됨 (0.1.2부터) | 프로젝트 내부 일반 파일의 제한된 셸 읽기: `cat`, `head`/`tail`, 출력 전용 `sed -n`, `rg --no-config`, `Get-Content` 및 단순 출력 pipeline |
 | 지원됨 (0.1.7부터) | `git diff`, `git show`, `git log -p`의 비밀 파일 제외: 추적 파일과 이력 모두. 객체 ID는 커밋으로만 해석 (Claude Code 2.1.316, Windows 실제 세션에서 확인. Codex CLI 0.166.0은 `git diff`, `git log -p`를 Windows 실제 세션에서 확인) |
 | 지원됨 (0.1.5부터) | 파일을 바꾸지 않는 명령 자동 허용: `ls`, `pwd`, `echo`, `grep`, `wc`, `test`, 읽기 전용 `git`(`status`, `diff`, `log`, `show`, `blame`, `branch` 조회 등). `git`은 0.1.7부터 작업 폴더나 상위 폴더에 `.git`이 있을 때만. 0.1.8부터 작업 폴더가 프로젝트 밖이면 이 명령들 모두 deny |
-| 지원됨 (0.1.5부터) | 프로젝트 승인 정책: `.aeg/policy.json`으로 경로와 명령을 승인. 에이전트는 이 파일을 수정할 수 없음. 승인한 명령은 0.1.8부터 프로젝트 안에서만 자동 허용 |
+| 지원됨 (0.1.5부터) | 프로젝트 승인 정책: 사람이 `aeg policy`로 경로와 명령을 승인. 승인한 명령은 0.1.8부터 프로젝트 안에서만 자동 허용 |
 | 지원 안 됨 | 에이전트가 쓴 코드를 승인된 명령이 실행할 때 그 코드의 동작 판정. [우리가 못 막는 것](#우리가-못-막는-것) 참고 |
 | 지원됨 | Codex substrate에서 `ask`/`defer`를 `deny`로 격상: Codex에서 `ask`가 실행 차단 안전망으로 동작하지 않는 실측 결과 반영 |
 | 부분 지원 / 확인 중 | Bash 동적/난독화 명령: 변수 치환, 명령 치환, 중첩 셸, `find -delete`/`xargs` 등은 정밀 판별하지 못하면 자동 허용하지 않고 `ask`/`defer`로 보냄 (Codex substrate에서는 `deny`로 격상) |
@@ -222,7 +222,7 @@ aeg uninstall --scope local
 - 플러그인을 켠 모든 프로젝트에 hook이 걸립니다. 프로젝트별 설정 파일은 바꾸지 않습니다.
 - PATH에 Python 3.10 이상(`python3` 또는 `python`)이 있어야 합니다. hook 명령은 `sh` 문법이므로 Windows에서는 Git Bash가 필요합니다. 둘 중 하나가 없으면 hook이 시작되지 못하고, `onFailure: block` 설정에 따라 도구 호출이 막힙니다. 이 설정은 Claude Code v2.1.295 이상에서 동작합니다. 그보다 낮은 버전에서는 시작되지 못한 hook이 도구 호출을 막지 못합니다.
 - 기록 폴더 `.aeg/`가 없으면 hook이 처음 호출될 때 만듭니다. 내부 `.gitignore`를 함께 넣습니다.
-- `aeg policy`, `aeg explain`, `aeg doctor`, `aeg evidence`와 Codex 설치, MCP 보호는 `pip` 설치가 필요합니다. 플러그인만 쓰면 `.aeg/policy.json`을 직접 편집합니다.
+- `aeg policy`, `aeg explain`, `aeg doctor`, `aeg evidence`와 Codex 설치, MCP 보호는 `pip` 설치가 필요합니다. 플러그인만 사용해도 기본 보호는 동작합니다. 개인 예외를 등록하려면 같은 버전의 CLI를 설치하세요.
 - 플러그인과 `aeg install`을 함께 쓰면 호출마다 두 번 판정합니다. 하나만 쓰세요.
 
 Codex 대상은 명시적으로 설치해야 합니다.
@@ -272,7 +272,7 @@ aeg install --target codex --mcp
 
 - 기존 hook과 별도로 MCP용 hook 항목을 하나 더 등록합니다. 기존 항목은 바꾸지 않습니다.
 - 켜면 MCP 도구 호출과 MCP 리소스 읽기(Claude Code `ReadMcpResourceTool`, Codex `read_mcp_resource`)는 Claude Code에서 매번 승인을 묻고, Codex에서는 막힙니다. Codex는 `ask`를 강제하지 않기 때문입니다.
-- 믿는 도구는 `.aeg/policy.json`의 `allow_mcp_tools`에 정확한 이름(`mcp__서버__도구`)으로 적으면 승인 없이 통과합니다. `*` 같은 패턴은 쓸 수 없고, 리소스 읽기는 목록에 넣을 수 없습니다.
+- 믿는 도구는 `aeg policy add --mcp-tool`로 정확한 이름(`mcp__서버__도구`)을 승인하면 승인 없이 통과합니다. `*` 같은 패턴은 쓸 수 없고, 리소스 읽기는 목록에 넣을 수 없습니다.
 - 장승은 MCP 도구에 넘기는 인자를 검사하지 않습니다. 목록에 넣은 도구가 파일을 읽거나 코드를 실행하면 `.env`도 읽을 수 있습니다. 이런 도구는 목록에 넣지 마세요.
 - **Codex는 MCP hook을 새 hook으로 봅니다. `/hooks`에서 따로 승인해야 하며, 승인 전에는 MCP 호출을 검사하지 않습니다.** 기존 장승 hook의 승인은 그대로 유지됩니다. 설치 미리보기에서 기존 항목도 바뀌면(예: 다른 가상환경에서 실행) 그 항목도 다시 승인해야 합니다. Codex CLI 0.166.0(Windows)에서 MCP 항목을 추가한 뒤에도 기존 항목이 계속 판정하고, 새 항목은 승인 전까지 실행되지 않는 것을 확인했습니다.
 - 끄려면 `aeg uninstall --mcp`(Codex는 `aeg uninstall --target codex --mcp`)를 실행합니다. 기존 hook은 남습니다. `aeg uninstall`은 두 항목을 모두 제거합니다.
@@ -351,7 +351,9 @@ macOS의 `/var` 별칭처럼 신뢰한 프로젝트 루트의 별칭은 정규�
 
 ### 프로젝트 승인 정책 (0.1.5부터)
 
-내장 규칙이 정상 작업을 막으면 `.aeg/policy.json`으로 프로젝트별 예외를 둘 수 있습니다. 에이전트는 어떤 도구로도 `.aeg/`에 쓸 수 없으므로 사람만 이 파일을 바꿀 수 있습니다. `.aeg/`는 보통 Git에서 제외되므로 이 설정은 해당 PC에만 적용됩니다.
+업그레이드와 설치 관련 변경: [0.3.2 릴리스 노트](docs/release_0.3.2.md).
+
+0.3.2부터 개인 예외는 저장소 밖의 사용자별 저장소에 프로젝트별로 보관합니다. 체크아웃의 `.aeg/policy.json`만으로는 권한이 넓어지지 않습니다. 이전 버전에서 사용하던 예외를 유지하려면 **본인이 의도한 목록인지 먼저 검토한 뒤** 해당 프로젝트에서 `aeg policy adopt`를 실행하세요. 이전 일회 승인은 자동으로 옮기지 않습니다.
 
 0.2.0부터 JSON을 직접 쓰지 않고 명령으로 추가할 수 있습니다. 변경 내용을 diff로 보여 주고 확인(`y/N`)을 받으며, hook이 무시할 값은 쓰지 않습니다. 사용자가 일반 터미널에서 실행하세요. 에이전트의 tool call로는 차단됩니다.
 
@@ -363,7 +365,7 @@ aeg policy add --protect infra/ --mcp-tool mcp__github__get_issue
 aeg policy preset python   # python, node, git 가운데 하나
 ```
 
-`preset`은 흔히 쓰는 명령 묶음을 `allow_commands`에 넣습니다. `python`은 `pytest`, `ruff check`, `mypy` 등, `node`는 `npm test`, `npm run build`, `npx tsc --noEmit` 등, `git`은 `git add`, `git commit`, `git fetch`, `git switch -c`입니다. **승인한 명령은 묻지 않고 실행되며, 대부분 프로젝트의 코드(테스트, 스크립트, git hook)를 실행합니다.** 에이전트가 쓴 코드를 확인 없이 실행해도 되는 명령만 넣으세요. `python`, `node`, `bash` 같은 인터프리터 이름만 넣지 마세요. 에이전트가 쓴 어떤 코드든 묻지 않고 실행되며, 그 코드는 `.aeg/policy.json`을 고치거나 장승을 해제할 수도 있습니다. 장승이 막는 것은 `aeg policy`, `python -m jangseung.cli ...`처럼 명령줄에 드러난 호출입니다.
+`preset`은 흔히 쓰는 명령 묶음을 `allow_commands`에 넣습니다. `python`은 `pytest`, `ruff check`, `mypy` 등, `node`는 `npm test`, `npm run build`, `npx tsc --noEmit` 등, `git`은 `git add`, `git commit`, `git fetch`, `git switch -c`입니다. **승인한 명령은 묻지 않고 실행되며, 대부분 프로젝트의 코드(테스트, 스크립트, git hook)를 실행합니다.** 에이전트가 쓴 코드를 확인 없이 실행해도 되는 명령만 넣으세요. `python`, `node`, `bash` 같은 인터프리터 이름만 넣지 마세요. 에이전트가 쓴 어떤 코드든 묻지 않고 실행되며, 그 코드는 사용자 권한으로 개인 설정을 고치거나 장승을 해제할 수도 있습니다. 장승이 막는 것은 `aeg policy`, `python -m jangseung.cli ...`처럼 명령줄에 드러난 호출입니다.
 
 ```json
 {
@@ -380,7 +382,7 @@ aeg policy preset python   # python, node, git 가운데 하나
 - `allow_commands`: 앞부분이 일치하는 단일 명령을 허용합니다. `git push`처럼 내장 규칙이 막는 명령도 풀 수 있지만 `aeg uninstall` 같은 장승 해제 명령은 풀리지 않습니다. `;`, `&&`, `|`, `>`, `$()`가 들어간 명령에는 적용되지 않고, 비밀 파일이나 보호 경로를 대상으로 하면 그대로 deny합니다. 0.2.0부터 실행되는 프로그램을 바꾸지 않는 세 가지 표기는 읽고 넘어갑니다: 따옴표로 묶인 글 안의 문자(`git commit -m 'fix(parser): #12'`), 끝의 `2>&1`, 앞의 `cd <프로젝트 안에 있는 폴더> &&`. `cd` 형태에는 조건이 있습니다. 폴더는 따옴표 없이 영문자·숫자·`_`·`-`로 된 이름(`src`, `./packages/api`)이어야 하고, 승인한 명령에 파일 이름이 없어야 합니다. `pytest`, `python -m pytest`, `npm test`는 되고 `bash scripts/run.sh`, `python tool.py`는 안 됩니다. 폴더를 옮기면 같은 상대 경로가 다른 파일을 가리키기 때문입니다. hook이 받은 환경 변수에 `CDPATH`가 있으면 `./`로 시작하는 폴더만 승인합니다. 셸 프로파일에서만 설정한 `CDPATH`는 hook이 보지 못합니다. 따옴표 안에 `$`, 백틱, 큰따옴표가 있거나, 백슬래시·기울어진 따옴표·`--%`가 함께 있거나, 따옴표가 단어 중간에서 시작하면 이전처럼 엄격하게 판정합니다. 셸마다 따옴표가 끝나는 위치가 달라질 수 있기 때문입니다. `pytest | tail`, `git commit -m "$(cat <<'EOF' ...)"` 형태는 여전히 승인되지 않습니다. 같은 세션에서 비밀 파일 이름이 든 내용을 쓴 뒤에는 승인된 명령도 사람에게 묻습니다.
 - `allow_mcp_tools` (0.1.9부터): [MCP 보호](#mcp-보호-019부터-선택)를 켠 프로젝트에서 승인 없이 통과시킬 MCP 도구의 정확한 이름입니다. 형식이 맞지 않는 이름이 하나라도 있으면 파일 전체를 무시합니다.
 
-파일이 손상되었거나 모르는 항목이 있으면 전체를 무시하고 내장 규칙만 적용합니다. `aeg doctor --hooks`가 이 상태를 알려 줍니다. 0.1.8 이하는 `allow_mcp_tools`를 모르는 항목으로 보므로, 이 항목을 넣은 파일은 전체가 무시됩니다.
+0.3.2부터 정책을 검증할 수 없으면 개인 허용 예외를 쓰지 않습니다. 원래 보호해야 할 경로를 알 수 없으므로 수정도 보수적으로 제한합니다. `aeg doctor --hooks`로 원인을 확인하세요.
 
 팀이 함께 쓰는 보호 규칙은 `.jangseung/policy.json`에 둘 수 있습니다 (0.3.0부터). 이 파일은 Git에 커밋하는 용도이며 `protect_paths`만 담을 수 있습니다. 다른 항목이 있거나 파일이 손상되면 어떤 경로를 보호하려 했는지 알 수 없으므로 모든 경로를 보호합니다(사람이 고칠 때까지 에이전트의 파일 수정이 막힙니다). 에이전트는 `.jangseung/`에 쓸 수 없습니다.
 
@@ -483,6 +485,8 @@ hook 기록에 실패해도 이미 계산된 `permissionDecision`과 exit code�
 
 호스트 위임에서 기록이 실패하면 permission decision을 만들지 않고 고정된 `systemMessage`에 실패 사유를 넣습니다. 호스트 승인 흐름은 그대로 유지합니다.
 
+0.3.2부터 PowerShell에서 확정할 수 없는 기록 대상은 `<unconfirmed-target>`로 표시합니다. 감사 장부와 달리 세션 보안 표식은 다음 판정의 입력이므로, 필요한 표식을 저장하지 못하면 해당 쓰기를 거부합니다.
+
 hook ledger의 hash chain은 중간 레코드의 변경·삭제를 탐지하기 위한 tamper-evident 장치입니다. 외부 anchor가 없는 로컬 파일이므로 마지막 레코드와 파일 전체를 함께 삭제하는 공격까지 증명하는 tamper-proof 저장소는 아닙니다.
 
 0.1.3부터 잘못된 UTF-8 ledger 행은 `UNREADABLE`로 표시하면서 다른 항목을 계속 조회합니다. artifact가 없는 run도 목록에서 `UNREADABLE`로 표시합니다. 조회는 손상된 데이터를 고치거나 재작성하지 않습니다.
@@ -506,7 +510,7 @@ Windows에서 `aeg install`로 등록한 hook과 플러그인 hook은 0.3.1부�
 ## 요구사항 / 현재 상태
 
 - **Claude Code와 Codex에서 검증됨**: Linux/WSL과 Windows 네이티브 양쪽에서 실제 Claude Code 세션과 Codex CLI 세션으로 주요 PreToolUse hook 경로가 정상 작동하는 것을 확인했습니다. Windows에서는 각 substrate의 실행 방식 차이(Claude Code hook command 실행 형태, Codex deny 응답의 종료 코드 처리, PowerShell tool 등)에 맞춰 별도로 대응했습니다. `aeg install --target claude-code`(기본값) 또는 `aeg install --target codex`로 각각 설치합니다. 두 substrate는 판정 방식이 일부 다릅니다 — Claude Code에서는 애매한 작업에 확인을 요청(ask)하지만, Codex에서는 그 확인 요청이 실행을 막는 안전망으로 동작하지 않는다는 것이 실측으로 확인되어, Codex에서는 애매한 경우 더 엄격하게 차단(deny)합니다. 다만 Codex에서 `Bash` tool name으로 전달되는 PowerShell 쓰기/삭제 명령은 아직 구조적으로 파싱하지 않습니다. 제한된 `Get-Content` 읽기는 0.1.2부터 지원합니다. 0.1.5의 변경은 자동 회귀 테스트와 hook CLI 실측으로 검증했고, Windows의 Claude Code 2.1.316 비대화형 세션에서 주요 경로를 확인했습니다. 권한 우회 모드, Codex 실제 세션의 판정, Linux/macOS 실제 세션은 재확인이 필요합니다.
-- **기본 정책은 코드에 하드코딩되어 있습니다.** 프로젝트별 예외는 `.aeg/policy.json`으로 둘 수 있습니다.
+- **기본 정책은 코드에 하드코딩되어 있습니다.** 프로젝트별 예외는 사람이 `aeg policy`로 승인할 수 있습니다.
 - **비밀(secret) 판정은 경로와 의도 기반입니다.** `.env` 같은 파일에 쓰는 시도 자체는 막지만, 파일 내용에서 실제 API 키/비밀번호 값을 스캔하는 기능은 아직 없습니다 (로드맵 예정).
 - Python 3.10 이상이 필요합니다.
 

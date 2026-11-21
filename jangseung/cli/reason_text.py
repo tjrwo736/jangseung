@@ -29,6 +29,12 @@ def explain_decision(
     """Return ``(category, summary, next_step)`` for one decision."""
 
     codes = set(reason_codes)
+    if "session_mark_recording_failed" in codes:
+        return ("state_error", "The write was denied because its required session mark could not be saved.",
+                "Check that .aeg is a writable local directory and its session marks are intact.")
+    if "unsafe_state_directory_fail_closed_deny" in codes:
+        return ("state_error", "The project state directory is unsafe or inaccessible.",
+                "Inspect .aeg from a trusted terminal; it must be an unlinked project-local directory.")
     if fail_closed:
         if codes & {"internal_judgment_error_fail_closed_deny", "input_validation_error_fail_closed_deny"}:
             return ("internal_error", "The hook could not complete validation or judgment and denied by default.",
@@ -57,7 +63,7 @@ def explain_decision(
                 "A new session starts without the hold.")
     if codes & {"shell_read_targets_secret_state_or_outside_repo", "shell_command_references_secret_path"}:
         return ("secret_or_outside_read", "The command reads a secret, protected state or a path outside the repository.",
-                "Run it yourself if it is needed, or list the path under allow_paths in .aeg/policy.json.")
+                "Run it yourself if it is needed, or approve the path with 'aeg policy add --path'.")
     if "bash_version_dependent_trailing_escape" in codes:
         return ("ambiguous_shell_syntax", "Bash versions disagree on an unquoted trailing escape; the command is denied.",
                 "Remove the dangling escape or use an explicitly quoted literal, then check the command again.")
@@ -84,7 +90,7 @@ def explain_decision(
     if codes & {MCP_TOOL_REQUIRES_APPROVAL, MCP_RESOURCE_READ_REQUIRES_APPROVAL}:
         return ("mcp_approval_required",
                 "The opt-in MCP hook requires a person's approval for this MCP call; its arguments are not inspected.",
-                "Approve it in the host if you trust the tool, or list the tool under allow_mcp_tools in .aeg/policy.json. "
+                "Approve it in the host if you trust the tool, or use 'aeg policy add --mcp-tool' from your terminal. "
                 "Resource reads cannot be listed.")
     if hook_decision == "defer":
         return ("unclassified", "Safety was not established by the current rules; this is not a finding that the command is dangerous.",

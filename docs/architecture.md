@@ -19,7 +19,7 @@
    - 비밀 파일 읽기, 명령 인자에 든 비밀 경로
 6. **허용 판정**: 다음 경우에만 allow합니다.
    - 명령이 좁은 읽기 문법을 통과하고 대상이 안전합니다(`jangseung/evidence/shell_read_only.py`). 호스트가 알린 작업 폴더도 대상으로 보므로, 프로젝트 밖에서 실행되는 명령은 경로를 적지 않아도 deny합니다. `git`은 작업 폴더에서 위로 올라가며 `.git`을 찾을 때만 해당합니다. 그 밖의 폴더는 에이전트가 쓸 수 있으므로 git이 읽을 설정을 믿을 수 없습니다.
-   - 사람이 승인한 명령이고 작업 폴더가 프로젝트 안입니다(`.aeg/policy.json`).
+   - 사람이 승인한 명령이고 작업 폴더가 프로젝트 안입니다(사용자별 승인 저장소).
    - `shell_normal_work.py`의 좁은 파일 조작 문법이며 모든 대상이 프로젝트 안의 비보호 경로입니다. 파일 종류, symlink/reparse point, hard link를 따로 검사합니다. `cp`/`mv`는 일반 파일 간, `rm`은 일반 파일 하나만 허용하며 디렉터리 재귀 작업은 포함하지 않습니다.
    - 프로젝트 안 일반 파일을 다루는 `Read`, `Write`, `Edit` 계열입니다.
    - `Grep`은 입력에 비밀 파일 제외 조건을 붙여(`updatedInput`) allow합니다. 호출 쪽 `glob`이 `.gitignore`를 넘어서므로 요청만으로는 읽을 파일을 판정할 수 없습니다. 명시한 파일에는 ripgrep이 이 조건을 적용하지 않으며, 그 파일은 경로 관문이 판정합니다.
@@ -71,7 +71,7 @@
 - `aeg evidence list`, `show`, `verify-hooks`, `repair-hooks`: `.aeg/hook_ledger.jsonl`의 hook 기록만 다룹니다. 조회는 `.aeg`를 수정하지 않습니다.
 - `aeg doctor`: Git, `.aeg/` 폴더, ignore 규칙을 확인합니다. `--hooks`를 붙이면 등록된 hook 설정과 hook 기록의 chain도 확인합니다.
 - `aeg explain`: 도구 호출을 실행하거나 기록하지 않고 판정만 설명합니다.
-- `aeg policy show`, `add`, `preset`: `.aeg/policy.json`을 diff 확인 후 고칩니다. hook과 같은 파서로 검사하므로 hook이 무시할 파일을 쓰지 않습니다. 에이전트의 호출은 장승 해제 명령과 같이 deny합니다.
+- `aeg policy show`, `add`, `preset`, `adopt`: 저장소 밖의 프로젝트별 개인 승인을 조회하거나 변경합니다. 체크아웃에서 가져온 예외는 사람의 명시적 승인이 필요합니다. hook과 같은 파서로 검사하므로 hook이 무시할 파일을 쓰지 않습니다. 에이전트의 호출은 장승 해제 명령과 같이 deny합니다.
 
 예전 버전이 남긴 `.aeg/ledger.jsonl`, `.aeg/runs/`, `.aeg/config.json`은 읽지도 고치지도 지우지도 않습니다.
 

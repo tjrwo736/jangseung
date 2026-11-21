@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from tests.approval_helpers import approve, isolate_unittest_home as setUpModule
 import os
 import subprocess
 import tempfile
@@ -149,7 +150,7 @@ class CommandsInAnotherFolderTests(_Folders):
         self.assertIn(":(top,exclude,glob,icase)", json.loads(result.stdout_json)["hookSpecificOutput"]["updatedInput"]["command"])
 
     def test_an_approved_command_does_not_follow_into_another_folder(self) -> None:
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_commands": ["pytest"]}), encoding="utf-8")
+        approve(self.root, allow_commands=["pytest"])
         self.assertEqual(self.judge("Bash", cwd=self.root / "sub", command="pytest -q").permission_decision, "allow")
         for folder in (self.other, self.plain, self.root / ".aeg"):
             with self.subTest(folder=folder.name):

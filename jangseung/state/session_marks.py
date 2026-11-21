@@ -14,14 +14,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from pathlib import Path
 TYPE_CHECKING = False
 if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
     from typing import Sequence
 
 from jangseung._clock import utc_timestamp
-from jangseung.contracts import STATE_DIR
 from jangseung.state.file_lock import exclusive_hook_lock
+from jangseung.state.paths import state_root
 
 SESSION_MARKS_FILE = "session_marks.json"
 SESSION_MARKS_LOCK_FILE = "session_marks.lock"
@@ -44,6 +45,29 @@ def session_key(session_id: object) -> str:
     return UNKNOWN_SESSION
 
 
+def _read_sessions(path: Path) -> dict:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return {}
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_MARKS_BYTES
+            or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+        raise ValueError("session marks must be a bounded, unlinked regular file")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    sessions = data.get("sessions") if isinstance(data, dict) else None
+    if not isinstance(sessions, dict) or data.get("version") != 1:
+        raise ValueError("invalid session marks")
+    for entry in sessions.values():
+        paths = entry.get("secret_naming_writes") if isinstance(entry, dict) else None
+        if not isinstance(paths, list) or not all(isinstance(item, str) for item in paths):
+            raise ValueError("invalid session mark entry")
+        if not paths:
+            # Older hooks could record a required hold with no displayable
+            # targets. Keep *that session* held, without blocking other writers.
+            entry["secret_naming_writes"] = ["<unknown>"]
+    return sessions
+
+
 def secret_naming_writes(repo_root: str | Path, session_id: object) -> tuple[str, ...] | None:
     """Paths this session wrote with text naming a secret file.
 
@@ -51,20 +75,9 @@ def secret_naming_writes(repo_root: str | Path, session_id: object) -> tuple[str
     an approval must not come back because the file that would hold it broke.
     """
 
-    path = Path(repo_root) / STATE_DIR / SESSION_MARKS_FILE
     try:
-        if path.is_symlink():
-            return None
-        if not path.exists():
-            return ()
-        if not path.is_file() or path.stat().st_size > MAX_MARKS_BYTES:
-            return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        entry = data["sessions"].get(session_key(session_id), {})
-        paths = entry.get("secret_naming_writes", [])
-        if not isinstance(paths, list) or not all(isinstance(item, str) for item in paths):
-            return None
-        return tuple(paths)
+        sessions = _read_sessions(state_root(repo_root) / SESSION_MARKS_FILE)
+        return tuple(sessions.get(session_key(session_id), {}).get("secret_naming_writes", ()))
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return None
 
@@ -72,35 +85,24 @@ def secret_naming_writes(repo_root: str | Path, session_id: object) -> tuple[str
 def mark_secret_naming_write(repo_root: str | Path, session_id: object, paths: Sequence[str]) -> None:
     """Record that this session wrote ``paths`` with text naming a secret file."""
 
-    root = Path(repo_root).resolve() / STATE_DIR
+    root = state_root(repo_root)
     if not root.is_dir():
         raise FileNotFoundError("Jangseung state is not initialized; .aeg directory is missing")
     path = root / SESSION_MARKS_FILE
-    if path.is_symlink():
-        raise ValueError("session marks must not be a symbolic link")
     key = session_key(session_id)
     with exclusive_hook_lock(root / SESSION_MARKS_LOCK_FILE):
-        sessions: dict[str, dict[str, object]] = {}
-        try:
-            if path.is_file() and path.stat().st_size <= MAX_MARKS_BYTES:
-                loaded = json.loads(path.read_text(encoding="utf-8"))["sessions"]
-                if isinstance(loaded, dict):
-                    sessions = {name: entry for name, entry in loaded.items() if isinstance(entry, dict)}
-        except (OSError, ValueError, KeyError, TypeError, RecursionError):
-            # A broken file reads as marked for every session; rewriting it restores
-            # the other sessions and keeps this one marked.
-            sessions = {}
-        entry = sessions.get(key, {})
-        known = entry.get("secret_naming_writes", [])
-        merged = list(dict.fromkeys([*(known if isinstance(known, list) else []), *paths]))
-        sessions[key] = {
+        # Never erase other sessions' holds to recover from unreadable state.
+        sessions = _read_sessions(path)
+        known = sessions.pop(key, {}).get("secret_naming_writes", [])
+        merged = list(dict.fromkeys([*known, *(paths or ("<unknown>",))]))
+        newest = dict(sorted(sessions.items(), key=lambda item: str(item[1].get("updated", "")))[-(MAX_SESSIONS - 1):])
+        newest[key] = {
             "secret_naming_writes": [str(item)[:MAX_PATH_CHARACTERS] for item in merged][-MAX_PATHS_PER_SESSION:],
             "updated": utc_timestamp(),
         }
-        newest = sorted(sessions.items(), key=lambda item: str(item[1].get("updated", "")))[-MAX_SESSIONS:]
         # ASCII output: a path may hold text UTF-8 cannot encode, such as a lone
         # surrogate, and a mark that cannot be written is an approval not held.
-        text = json.dumps({"version": 1, "sessions": dict(newest)}, ensure_ascii=True, sort_keys=True, indent=1)
+        text = json.dumps({"version": 1, "sessions": newest}, ensure_ascii=True, sort_keys=True, indent=1)
         temporary: Path | None = None
         # Imported here: the hook runs on every tool call and rarely writes a mark,
         # and ``tempfile`` costs about 10 ms to load.
@@ -112,6 +114,8 @@ def mark_secret_naming_write(repo_root: str | Path, session_id: object, paths: S
             ) as handle:
                 temporary = Path(handle.name)
                 handle.write(text + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, path)
         except BaseException:
             if temporary is not None:

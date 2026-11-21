@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+from tests.approval_helpers import approve
 import os
 from pathlib import Path
 import shutil
@@ -163,7 +164,7 @@ def test_explain_distinguishes_host_from_safe_allow(project):
 @pytest.mark.parametrize("substrate", ["claude-code", "codex"])
 def test_version_dependent_trailing_escape_is_denied(project, command, substrate):
     # Even a policy-approved executable cannot make an ambiguous command safe.
-    (project / ".aeg/policy.json").write_text(json.dumps({"allow_commands": ["pytest"]}), encoding="utf-8")
+    approve(project, allow_commands=["pytest"])
     answer = result(project, command + "\\", substrate=substrate)
     assert answer.permission_decision == "deny"
     assert answer.exit_code == (0 if substrate == "codex" else 2)

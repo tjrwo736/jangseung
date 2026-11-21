@@ -226,6 +226,17 @@ _AUDIT_GIT_SUBCOMMANDS = frozenset(
 _MAX_AUDIT_NAME_DIGITS = 3
 _MAX_AUDIT_NAME_HYPHENS = 2
 OUTSIDE_PROJECT_TARGET = "<outside-project>"
+_UNCONFIRMED_TARGET = "<unconfirmed-target>"
+# Permission checks may conservatively *guess* at shell targets. Those guesses
+# must not be written to disk: a named parameter's value may be file content.
+# Only audit a concrete path in a small, unambiguous single-cmdlet grammar.
+_PS_PATH_WORD = r"""(?u:[\w./~:\\][\w./~:\\-]*|'[\w./~:\\][\w ./~:\\-]*'|"[\w./~:\\][\w ./~:\\-]*")"""
+_PS_AUDIT_PATH = re.compile(
+    r"[ \t]*(?P<cmd>Set-Content|Add-Content|Clear-Content|Remove-Item|New-Item|ni)"
+    rf"[ \t]+(?:(?:-LiteralPath|-Path)[ \t]+)?(?P<path>{_PS_PATH_WORD})"
+    r"(?P<value>[ \t]+-Value[ \t]+[A-Za-z0-9_.]+)?[ \t]*",
+    re.IGNORECASE | re.ASCII,
+)
 
 # Read/Write/Edit of a repo-internal, non-protected file that the existing
 # engine classified as a definite LOW or MEDIUM change is "clearly safe normal
@@ -574,11 +585,10 @@ def _judge_file_or_command_call(
         updated_tool_input=updated_tool_input,
         # PowerShell targets are named from the command's own words: once normalized,
         # a provider path such as HKCU:\x can no longer be told from a project path.
-        audit_targets=_audit_targets(
-            () if hook_input.tool_name == "PowerShell" else request.target_paths,
-            (*bash_target_gate.get("targets", ()), *powershell_target_gate.get("targets", ())),
-            repo_root,
-            base_dir,
+        audit_targets=(
+            _powershell_audit_targets(hook_input, powershell_target_gate.get("targets", ()), repo_root, base_dir)
+            if hook_input.tool_name == "PowerShell" else
+            _audit_targets(request.target_paths, bash_target_gate.get("targets", ()), repo_root, base_dir)
         ),
         audit_commands=_audit_commands(hook_input),
         # A denied write puts nothing on disk, so there is nothing to mark.
@@ -599,6 +609,18 @@ def _judge_file_or_command_call(
             and secret_naming_writes(repo_root, raw_hook_input.get("session_id")) == ()
         ),
     )
+
+
+def _powershell_audit_targets(hook_input, targets, repo_root, base_dir) -> tuple[str, ...]:
+    if not targets:
+        return ()
+    command = hook_input.tool_input.get("command")
+    match = _PS_AUDIT_PATH.fullmatch(command) if isinstance(command, str) else None
+    if match and (not match["value"] or match["cmd"].lower() in {"set-content", "add-content"}):
+        path = match["path"].strip("'\"")
+        if tuple(targets) == (path,):
+            return _audit_targets((), (path,), repo_root, base_dir)
+    return (_UNCONFIRMED_TARGET,)
 
 
 def _audit_targets(
@@ -636,6 +658,10 @@ def _audit_commands(hook_input: ClaudeCodePreToolUseInput) -> tuple[str, ...]:
         return ()
     try:
         if hook_input.tool_name == "PowerShell":
+            # Multiline strings (including here-strings) contain data that can
+            # look like a command line. Do not infer program names from them.
+            if "\n" in command or "\r" in command:
+                return ("<unparsed>",)
             argvs = powershell_argvs(command)
         else:
             scan = scan_bash_command(command)
@@ -2101,7 +2127,8 @@ def _command_approved_once(
 
     command = hook_input.tool_input.get("command")
     if (
-        hook_input.tool_name not in _COMMAND_TOOL_NAMES
+        policy.error
+        or hook_input.tool_name not in _COMMAND_TOOL_NAMES
         or not isinstance(command, str)
         or GUARD_SELF_DISABLE_REASON in mapping_reasons
         or not _is_project_root_folder(base_dir, repo_root)

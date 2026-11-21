@@ -504,7 +504,9 @@ def test_the_resident_process_stops_when_idle(setup):
         "sys.argv = [launcher, 'resident-serve']\n"
         "raise SystemExit(_resident_server.serve(launcher, idle_seconds=1))\n"
     )
-    process = subprocess.Popen([sys.executable, "-I", "-S", "-c", code, str(setup.home), setup.launcher],
+    # The Windows venv python.exe is a redirector with its own PID. Start the
+    # actual interpreter so this process handle refers to the server under test.
+    process = subprocess.Popen([sys._base_executable, "-I", "-S", "-c", code, str(setup.home), setup.launcher],
                                env=setup.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         assert setup.ready() == process.pid

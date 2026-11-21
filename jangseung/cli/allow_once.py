@@ -29,13 +29,17 @@ def cmd_allow_once(
     output_stream: TextIO | None = None,
 ) -> int:
     out = output_stream if output_stream is not None else sys.stdout
-    if clear:
-        count = clear_all(project)
-        print(f"aeg allow-once: removed {count} pending approval(s).", file=out)
-        return 0
-    if status or command is None:
-        print(f"aeg allow-once: {pending_count(project)} pending approval(s).", file=out)
-        return 0
+    try:
+        if clear:
+            count = clear_all(project)
+            print(f"aeg allow-once: removed {count} pending approval(s).", file=out)
+            return 0
+        if status or command is None:
+            print(f"aeg allow-once: {pending_count(project)} pending approval(s).", file=out)
+            return 0
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        print(f"aeg allow-once: cannot access personal approvals: {exc}", file=out)
+        return 1
     if not command.strip() or len(command) > _MAX_COMMAND_CHARACTERS or "\x00" in command:
         print("aeg allow-once: give the exact command text, in quotes.", file=out)
         return 2
@@ -45,7 +49,11 @@ def cmd_allow_once(
     if tool not in TOOLS:
         print(f"aeg allow-once: --tool must be one of: {', '.join(TOOLS)}.", file=out)
         return 2
-    expires = grant_once(command, project, minutes, tool)
+    try:
+        expires = grant_once(command, project, minutes, tool)
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        print(f"aeg allow-once: cannot grant personal approval: {exc}", file=out)
+        return 1
     print("aeg allow-once: approved once, for this exact text:", file=out)
     print(f"  {command}", file=out)
     print(f"For the {tool} tool, run from the project folder itself (not a subfolder).", file=out)

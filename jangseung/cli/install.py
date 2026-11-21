@@ -262,21 +262,24 @@ def load_settings(path: Path) -> tuple[dict[str, Any] | None, bool, str | None]:
     """Return (data, existed, error). ``data`` is None only on error; an absent
     file yields ({}, False, None); an empty file yields ({}, True, None)."""
 
-    if not path.exists():
-        return ({}, False, None)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return (None, True, f"cannot read {path}: {exc}")
-    if not text.strip():
-        return ({}, True, None)
+    data, original, error = _load_settings_snapshot(path)
+    return data, original is not None or error is not None, error
+
+
+def _load_settings_snapshot(path: Path) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    """Parse and retain the exact same input for the preview and commit check."""
+    text, existed, error = _load_text_file(path)
+    if error:
+        return None, None, error
+    if not existed or not text.strip():
+        return {}, text if existed else None, None
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        return (None, True, f"{path} is not valid JSON ({exc})")
+        return None, text, f"{path} is not valid JSON ({exc})"
     if not isinstance(data, dict):
-        return (None, True, f"{path} top-level is not a JSON object")
-    return (data, True, None)
+        return None, text, f"{path} top-level is not a JSON object"
+    return data, text, None
 
 
 def build_installed_settings(
@@ -311,7 +314,14 @@ def build_installed_settings(
             changed = True
         if not changed:
             return (new_data, True)
-        entry["matcher"] = matcher
+        if entry.get("matcher") != matcher:
+            if len(entry["hooks"]) == 1:
+                entry["matcher"] = matcher
+            else:
+                # A matcher belongs to the entire group. Move only our hook;
+                # changing it in place would retarget all of the user's hooks.
+                entry["hooks"].remove(hook)
+                pretooluse.append({"matcher": matcher, "hooks": [hook]})
         hook.update(desired)
         if args is None:
             hook.pop("args", None)
@@ -470,6 +480,35 @@ def normalize_install_target(target: str) -> str:
     )
 
 
+def _repair_codex_entry_matchers(entries: Any, entry: Any, matchers: list[Any]) -> bool:
+    """Retarget managed commands without changing the scope of their siblings."""
+    import tomlkit
+    from tomlkit.items import AoT
+
+    original = entry.get("matcher")
+    if all(matcher == original for matcher in matchers):
+        return False
+    # Preserve the original group (and its metadata) for any commands that
+    # still use it. With only managed commands, repair their group in place.
+    keep = original if original in matchers else matchers[0]
+    nested = entry["hooks"]
+    for matcher in dict.fromkeys(m for m in matchers if m != keep):
+        split = tomlkit.table() if isinstance(entries, AoT) else tomlkit.inline_table()
+        split["matcher"] = matcher
+        moved = deepcopy(nested)
+        for i in reversed(range(len(matchers))):
+            if matchers[i] != matcher:
+                del moved[i]
+        split["hooks"] = moved
+        entries.append(split)
+    for i in reversed(range(len(matchers))):
+        if matchers[i] != keep:
+            del nested[i]
+    if keep != original:
+        entry["matcher"] = keep
+    return True
+
+
 def build_installed_codex_config_text(
     current_text: str,
     command: str,
@@ -500,8 +539,9 @@ def build_installed_codex_config_text(
     }
     installed = {kind: False for kind in HOOK_KINDS}
     stale = False
-    for entry in entries or []:
-        for hook in entry["hooks"]:
+    for entry in list(entries or []):
+        matchers = [entry.get("matcher")] * len(entry["hooks"])
+        for index, hook in enumerate(entry["hooks"]):
             plain = hook.unwrap()
             kind = _managed_hook_kind(plain, substrates=(None, TARGET_CODEX))
             if kind is None:
@@ -514,13 +554,15 @@ def build_installed_codex_config_text(
             wanted, wanted_windows = desired[kind]
             if wanted is None:
                 continue
-            # Re-running install repairs a command an upgrade made stale.
+            matchers[index] = CODEX_AEGIS_HOOK_MATCHER if kind == HOOK_KIND_MAIN else CODEX_MCP_HOOK_MATCHER
             if plain.get("command") != wanted:
                 hook["command"] = wanted
                 stale = True
             if wanted_windows is not None and plain.get("command_windows") != wanted_windows:
                 hook["command_windows"] = wanted_windows
                 stale = True
+        if _repair_codex_entry_matchers(entries, entry, matchers):
+            stale = True
     comments = []
     if not installed[HOOK_KIND_MAIN]:
         comments.append(_CODEX_HOOK_COMMENT)
@@ -635,7 +677,7 @@ def _cmd_install_claude_code(
     out = output_stream
 
     path = settings_path(base_dir, scope)
-    data, existed, error = load_settings(path)
+    data, original, error = _load_settings_snapshot(path)
     if error is not None:
         _write(out, f"aeg install: aborted — {error}")
         _write(out, "Please fix or remove the file manually, then retry.")
@@ -673,7 +715,7 @@ def _cmd_install_claude_code(
     if already:
         return _repair_recording_setup(base_dir, assume_yes, input_stream, out)
 
-    before_text = _json_text(data) if existed else f"(no .claude/{path.name} yet)\n"
+    before_text = original if original is not None else f"(no .claude/{path.name} yet)\n"
     after_text = _json_text(new_data)
 
     _write(out, f"aeg install: will register the Aegis PreToolUse hook in {path}")
@@ -710,7 +752,7 @@ def _cmd_install_claude_code(
         _write(out, "aeg install: cancelled; no changes written.")
         return 0
 
-    if not _write_install(base_dir, path, after_text, existed, out):
+    if not _write_install(base_dir, path, after_text, original, out):
         return 1
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
     if mcp_entry:
@@ -775,7 +817,7 @@ def _cmd_install_codex(
         _write(out, "aeg install: cancelled; no changes written.")
         return 0
 
-    if not _write_install(base_dir, path, after_text, existed, out):
+    if not _write_install(base_dir, path, after_text, before_text if existed else None, out):
         return 1
     _write(out, f"aeg install: done. Aegis PreToolUse hook registered in {path}")
     _write(out, "aeg install: IMPORTANT: Codex runs a project hook only after you trust it.")
@@ -812,12 +854,12 @@ def cmd_uninstall(
             input_stream=input_stream, output_stream=out,
         )
     path = settings_path(base_dir, scope)
-    data, existed, error = load_settings(path)
+    data, original, error = _load_settings_snapshot(path)
     if error is not None:
         _write(out, f"aeg uninstall: aborted — {error}")
         _write(out, "Please fix or remove the file manually, then retry.")
         return 1
-    if not existed:
+    if original is None:
         _write(out, f"aeg uninstall: no {path}; nothing to uninstall.")
         return 0
 
@@ -829,21 +871,21 @@ def cmd_uninstall(
             _write(out, "aeg uninstall: no Aegis PreToolUse hook found; nothing to remove.")
         return 0
 
-    before_text = _json_text(data)
     after_text = _json_text(new_data)
     _write(out, f"aeg uninstall: will remove {removed} Aegis {'MCP ' if mcp_only else ''}hook entry(ies) from {path}")
     _write(out, "  (other hooks and settings are preserved)")
     _write(out, "")
-    _write_diff(out, before_text, after_text, path)
+    _write_diff(out, original, after_text, path)
 
     if not assume_yes and not _confirm(input_stream, out):
         _write(out, "aeg uninstall: cancelled; no changes written.")
         return 0
 
     try:
+        _check_config_snapshot(path, original)
         backup = _backup_file(path)
         _write(out, f"aeg uninstall: backed up existing settings to {backup}")
-        _atomic_write_text(path, after_text)
+        _atomic_write_text(path, after_text, expected=original)
     except OSError as exc:
         _write(out, f"aeg uninstall: failed to back up or write settings: {exc}")
         return 1
@@ -1050,9 +1092,10 @@ def _cmd_uninstall_codex(
         _write(out, "aeg uninstall: cancelled; no changes written.")
         return 0
     try:
+        _check_config_snapshot(path, before)
         backup = _backup_file(path)
         _write(out, f"aeg uninstall: backed up existing config to {backup}")
-        _atomic_write_text(path, after)
+        _atomic_write_text(path, after, expected=before)
     except OSError as exc:
         _write(out, f"aeg uninstall: failed to back up or write Codex config: {exc}")
         return 1
@@ -1102,22 +1145,18 @@ def _is_windows_exe_path(path: str) -> bool:
 
 
 def _load_text_file(path: Path) -> tuple[str, bool, str | None]:
-    if not path.exists():
-        return ("", False, None)
     try:
-        return (path.read_text(encoding="utf-8"), True, None)
+        # Preserve CR/LF and all whitespace for the optimistic commit check.
+        return (path.read_bytes().decode("utf-8"), True, None)
+    except FileNotFoundError:
+        return ("", False, None)
     except (OSError, UnicodeError) as exc:
         return ("", True, f"cannot read {path}: {exc}")
 
 
 def _recording_directory(base_dir: str | Path) -> Path:
-    base = Path(base_dir).resolve()
-    root = base / ".aeg"
-    if root.is_symlink() or root.resolve().parent != base:
-        raise ValueError(".aeg must be a local directory, not a link outside the project")
-    if root.exists() and not root.is_dir():
-        raise ValueError(".aeg exists but is not a directory")
-    return root
+    from jangseung.state.paths import state_root
+    return state_root(base_dir)
 
 
 def _prepare_recording(base_dir: str | Path) -> None:
@@ -1148,22 +1187,32 @@ def _repair_recording_setup(
     return 0
 
 
-def _write_install(base_dir: str | Path, path: Path, text: str, existed: bool, out: TextIO) -> bool:
+def _write_install(base_dir: str | Path, path: Path, text: str, original: str | None, out: TextIO) -> bool:
     try:
+        _check_config_snapshot(path, original)
         _recording_directory(base_dir)  # Reject invalid state before backup/write.
-        if existed:
+        if original is not None:
             backup = _backup_file(path)
             _write(out, f"aeg install: backed up existing settings to {backup}")
         _prepare_recording(base_dir)
-        _atomic_write_text(path, text)
+        _atomic_write_text(path, text, expected=original)
     except (OSError, ValueError) as exc:
         _write(out, f"aeg install: failed to prepare recording or write config: {exc}")
         return False
     return True
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Stage complete config next to its destination, then replace atomically."""
+def _check_config_snapshot(path: Path, expected: str | None) -> None:
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        current = None
+    if current != (expected.encode("utf-8") if expected is not None else None):
+        raise OSError(f"{path} changed since the preview; rerun to review the new diff")
+
+
+def _atomic_write_text(path: Path, text: str, *, expected: str | None) -> None:
+    """Stage complete config, recheck the preview's bytes, then publish it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -1173,9 +1222,21 @@ def _atomic_write_text(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        if path.exists():
+        if expected is not None:
             shutil.copymode(path, temporary)
-        os.replace(temporary, path)
+        _check_config_snapshot(path, expected)
+        if expected is not None:
+            os.replace(temporary, path)
+        else:
+            # Atomic create-if-absent: even a new file arriving *after* the
+            # final check must win. Windows rename already refuses overwrite.
+            try:
+                if os.name == "nt":
+                    os.rename(temporary, path)
+                else:
+                    os.link(temporary, path)
+            except FileExistsError as exc:
+                raise OSError(f"{path} appeared since the preview; rerun to review the new diff") from exc
     finally:
         if temporary is not None:
             try:
@@ -1195,7 +1256,8 @@ _CODEX_MCP_HOOK_COMMENT = (
 )
 _MCP_INSTALLED_NOTE = (
     "MCP tool calls and MCP resource reads now need approval (denied on Codex) unless "
-    ".aeg/policy.json lists the tool under allow_mcp_tools. Remove only this hook with "
+    "you approve the exact name with aeg policy add --mcp-tool <exact-name> (personal allow_mcp_tools). "
+    "Remove only this hook with "
     "aeg uninstall --mcp."
 )
 

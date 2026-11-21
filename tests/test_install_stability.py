@@ -11,7 +11,9 @@ import tomlkit
 
 from jangseung.cli.hook_run import run_aeg_hook_run
 from jangseung.cli.install import (
-    build_installed_codex_config_text,
+    AEGIS_HOOK_MATCHER, CLAUDE_CODE_MCP_HOOK_MATCHER, CODEX_AEGIS_HOOK_MATCHER,
+    CODEX_MCP_HOOK_MATCHER, HOOK_KIND_MAIN, HOOK_KIND_MCP,
+    build_installed_codex_config_text, build_installed_settings,
     build_uninstalled_codex_config_text, build_uninstalled_settings,
     cmd_install, cmd_uninstall, is_aegis_hook, resolve_hook_command,
 )
@@ -190,8 +192,130 @@ def test_readonly_temp_is_cleaned_on_replace_failure(tmp_path):
     try:
         with patch("jangseung.cli.install.os.replace", side_effect=PermissionError("read only")):
             with pytest.raises(PermissionError):
-                _atomic_write_text(config, "new")
+                _atomic_write_text(config, "new", expected="original")
         assert config.read_text(encoding="utf-8") == "original"
         assert list(tmp_path.iterdir()) == [config]
     finally:
         config.chmod(0o600)
+
+
+@pytest.mark.parametrize("target", ["claude-code", "codex"])
+@pytest.mark.parametrize("operation,change", [
+    ("install", "line endings"), ("install", "created"), ("install", "removed"),
+    ("uninstall", "edited"), ("uninstall", "removed"),
+])
+def test_confirmed_diff_never_overwrites_intervening_edit(tmp_path, target, operation, change):
+    config = tmp_path / (".codex/config.toml" if target == "codex" else ".claude/settings.json")
+    config.parent.mkdir()
+    original = b"model = 'mine'\n" if target == "codex" else b'{"model": "mine"}\n'
+    if change != "created":
+        config.write_bytes(original)
+    if operation == "uninstall":
+        assert cmd_install(tmp_path, target=target, assume_yes=True, output_stream=io.StringIO()) == 0
+        original = config.read_bytes()
+    previous_backups = list(config.parent.glob("*.aegis-backup-*"))
+    replacement = original.replace(b"\n", b"\r\n") if change == "line endings" else original.replace(b"mine", b"theirs")
+    out = io.StringIO()
+
+    class EditThenConfirm(io.StringIO):
+        def readline(self):
+            assert "proposed change" in out.getvalue()
+            if change == "removed":
+                config.unlink()
+            else:
+                config.write_bytes(replacement)
+            return "y\n"
+
+    run = cmd_install if operation == "install" else cmd_uninstall
+    assert run(tmp_path, target=target, input_stream=EditThenConfirm(), output_stream=out) == 1
+    assert "changed since the preview" in out.getvalue()
+    if change == "removed":
+        assert not config.exists()
+    else:
+        assert config.read_bytes() == replacement
+    assert list(config.parent.glob("*.aegis-backup-*")) == previous_backups
+    assert not list(config.parent.glob(".aeg-config-*"))
+    if operation == "install":
+        assert not (tmp_path / ".aeg").exists()
+
+
+@pytest.mark.parametrize("target", ["claude-code", "codex"])
+@pytest.mark.parametrize("operation", ["install", "uninstall"])
+def test_yes_rechecks_file_after_staging(tmp_path, target, operation):
+    config = tmp_path / (".codex/config.toml" if target == "codex" else ".claude/settings.json")
+    config.parent.mkdir()
+    initial = b"model = 'mine'\n" if target == "codex" else b'{"model":"mine"}\n'
+    config.write_bytes(initial)
+    if operation == "uninstall":
+        assert cmd_install(tmp_path, target=target, assume_yes=True, output_stream=io.StringIO()) == 0
+    new_bytes = config.read_bytes().replace(b"mine", b"changed")
+    out = io.StringIO()
+    run = cmd_install if operation == "install" else cmd_uninstall
+    with patch("jangseung.cli.install.os.fsync", side_effect=lambda fd: config.write_bytes(new_bytes)):
+        assert run(tmp_path, target=target, assume_yes=True, output_stream=out) == 1
+    assert "changed since the preview" in out.getvalue()
+    assert config.read_bytes() == new_bytes
+    assert not list(config.parent.glob(".aeg-config-*"))
+
+
+def test_competing_first_create_wins_even_after_final_check(tmp_path):
+    from jangseung.cli.install import _atomic_write_text
+
+    operation = "rename" if os.name == "nt" else "link"
+    publish = getattr(os, operation)
+    config = tmp_path / "new-config"
+
+    def publish_after_external_create(staged, destination):
+        config.write_bytes(b"first")
+        return publish(staged, destination)
+
+    with patch(f"jangseung.cli.install.os.{operation}", side_effect=publish_after_external_create):
+        with pytest.raises(OSError, match="appeared since the preview"):
+            _atomic_write_text(config, "second", expected=None)
+    assert config.read_bytes() == b"first"
+    assert list(tmp_path.iterdir()) == [config]
+
+
+@pytest.mark.parametrize("kind,matcher,command", [
+    (HOOK_KIND_MAIN, AEGIS_HOOK_MATCHER, "aeg hook-run"),
+    (HOOK_KIND_MCP, CLAUDE_CODE_MCP_HOOK_MATCHER, "aeg hook-run --mcp"),
+])
+def test_claude_repair_preserves_mixed_group_scope(kind, matcher, command):
+    user = {"type": "command", "command": "custom", "timeout": 7}
+    managed = {"type": "command", "command": command, "timeout": 3}
+    original = {"model": "mine", "hooks": {"PreToolUse": [
+        {"matcher": "Read", "description": "my group", "hooks": [user, managed]},
+    ]}}
+    result, already = build_installed_settings(original, command, matcher=matcher, kind=kind)
+    assert not already
+    assert result == {"model": "mine", "hooks": {"PreToolUse": [
+        {"matcher": "Read", "description": "my group", "hooks": [user]},
+        {"matcher": matcher, "hooks": [{**managed, "onFailure": "block"}]},
+    ]}}
+    assert build_installed_settings(result, command, matcher=matcher, kind=kind) == (result, True)
+
+
+@pytest.mark.parametrize("inline", [True, False])
+@pytest.mark.parametrize("mixed", [True, False])
+def test_codex_repair_stale_main_and_mcp_matchers(inline, mixed):
+    main = {"type": "command", "command": "aeg hook-run --substrate codex", "timeout": 4}
+    mcp = {**main, "command": main["command"] + " --mcp"}
+    user = {"type": "command", "command": "my-mcp-hook", "timeout": 7}
+    groups = ([{"matcher": "Old", "owner": "mine", "hooks": [main, user, mcp]}] if mixed else
+              [{"matcher": "Old", "hooks": [main]}, {"matcher": "OldMCP", "hooks": [mcp]}])
+    if inline:
+        values = tomlkit.array()
+        for group in groups:
+            entry = tomlkit.inline_table()
+            entry.update(group)
+            values.append(entry)
+        groups = values
+    original = "# ownership comment\n" + tomlkit.dumps({"model": "mine", "hooks": {"PreToolUse": groups}})
+    result, already = build_installed_codex_config_text(original, main["command"], mcp_command=mcp["command"])
+    assert not already
+    assert "# ownership comment" in result
+    expected_groups = [{"matcher": "Old", "owner": "mine", "hooks": [user]}] if mixed else []
+    expected_groups += [{"matcher": CODEX_AEGIS_HOOK_MATCHER, "hooks": [main]},
+                        {"matcher": CODEX_MCP_HOOK_MATCHER, "hooks": [mcp]}]
+    assert tomlkit.parse(result).unwrap() == {"model": "mine", "hooks": {"PreToolUse": expected_groups}}
+    assert build_installed_codex_config_text(result, main["command"], mcp_command=mcp["command"]) == (result, True)
