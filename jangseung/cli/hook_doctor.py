@@ -8,7 +8,7 @@ import shutil
 import stat
 from typing import Any
 
-from jangseung.classify.hook_policy import load_hook_policy
+from jangseung.classify.hook_policy import NOTICE_LEGACY_GRANTS_IGNORED, NOTICE_NO_PERSONAL_STORAGE, load_hook_policy
 from jangseung.cli.install import (
     CLAUDE_CODE_MCP_HOOK_MATCHER, CLAUDE_HOOK_ON_FAILURE, CODEX_AEGIS_HOOK_MATCHER, CODEX_MCP_HOOK_MATCHER,
     DIRECT_HOOK_FLAGS, HOOK_KIND_MAIN, HOOK_KIND_MCP, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
@@ -256,6 +256,13 @@ def _policy_check(repo: Path) -> DoctorCheck:
     if policy.error is not None:
         return DoctorCheck(name, FAIL, "Policy restrictions could not be verified. Personal grants are not in effect.",
                            fix_hint=f"Run aeg policy show and inspect the personal and checkout policies ({policy.error}).")
+    if NOTICE_NO_PERSONAL_STORAGE in policy.notices:
+        return DoctorCheck(name, WARN, "Your profile folder cannot hold personal approvals, so none apply. "
+                           "The built-in rules and any protect_paths are in effect.",
+                           fix_hint="The profile folder must be a real folder (not a link) that only you can write.")
+    if NOTICE_LEGACY_GRANTS_IGNORED in policy.notices:
+        return DoctorCheck(name, WARN, "Approvals listed in .aeg/policy.json are no longer used.",
+                           fix_hint="Review them with aeg policy adopt, or remove them from that file.")
     if not policy.present:
         return DoctorCheck(name, PASS, "No project policy; the built-in rules apply.")
     return DoctorCheck(name, PASS, "Policies are readable. Only personally approved exceptions are effective.",

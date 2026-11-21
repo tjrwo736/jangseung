@@ -22,7 +22,15 @@ _MAX_STDIN = 1_048_576
 def session_problems(repo: Path, *, plugin: bool) -> list[str]:
     """Short names of what is wrong; empty when protection looks intact."""
 
-    from jangseung.classify.hook_policy import load_hook_policy
+    return session_report(repo, plugin=plugin)[0]
+
+
+def session_report(repo: Path, *, plugin: bool) -> tuple[list[str], list[str]]:
+    """``(problems, notes)``: what weakens protection, and what a person should know that does not."""
+
+    from jangseung.classify.hook_policy import (
+        NOTICE_LEGACY_GRANTS_IGNORED, NOTICE_NO_PERSONAL_STORAGE, load_hook_policy,
+    )
     from jangseung.state.doctor import FAIL, WARN
     from jangseung.state.paths import state_root
 
@@ -45,16 +53,24 @@ def session_problems(repo: Path, *, plugin: bool) -> list[str]:
     policy = load_hook_policy(repo)
     if policy.error is not None:
         problems.append(f"policy restrictions could not be verified; personal grants are not in effect ({policy.error})")
+    notes: list[str] = []
+    if NOTICE_LEGACY_GRANTS_IGNORED in policy.notices:
+        notes.append("approvals in .aeg/policy.json are no longer used; review them with 'aeg policy adopt' "
+                     "or remove them from that file")
+    if NOTICE_NO_PERSONAL_STORAGE in policy.notices:
+        # A problem, not a note: protect_paths the person kept there are not applied either.
+        problems.append("your profile folder cannot hold personal approvals or protections (it is missing, a link, "
+                        "or writable by others), so none apply")
     try:
         state = state_root(repo)
     except (OSError, ValueError):
         problems.append(".aeg is not a safe local folder, so tool calls are blocked")
-        return problems
+        return problems, notes
     if state.exists() and not os.access(state, os.W_OK | os.X_OK):
         problems.append(".aeg is not a writable folder, so decisions are not recorded")
     elif not plugin and not state.exists():
         problems.append(".aeg is missing, so decisions are not recorded")
-    return problems
+    return problems, notes
 
 
 def run_session_check(arguments: Sequence[str], *, stdin: TextIO, stdout: TextIO) -> int:
@@ -70,16 +86,18 @@ def run_session_check(arguments: Sequence[str], *, stdin: TextIO, stdout: TextIO
         working = payload.get("cwd") if isinstance(payload, dict) else None
         start = Path(working) if isinstance(working, str) and Path(working).is_dir() else Path.cwd()
         repo = Path(resolve_hook_project_root(start))
-        problems = session_problems(repo, plugin=plugin)
+        problems, notes = session_report(repo, plugin=plugin)
     except Exception:  # noqa: BLE001 - a check that cannot run says so instead of staying silent.
-        problems = ["the self-check could not run"]
+        problems, notes = ["the self-check could not run"], []
+    parts = []
     if problems:
-        message = (
-            "Jangseung: protection may be off or weakened in this project: "
-            + "; ".join(problems[:4])
-            + ". Run: aeg doctor --hooks"
-        )
-        stdout.write(json.dumps({"systemMessage": message}) + "\n")
+        parts.append("protection may be off or weakened in this project: " + "; ".join(problems[:4])
+                     + ". Run: aeg doctor --hooks")
+    if notes:
+        # Not a weakening: something the person approved no longer applies.
+        parts.append("Note: " + "; ".join(notes) + ". Run: aeg policy show")
+    if parts:
+        stdout.write(json.dumps({"systemMessage": "Jangseung: " + " ".join(parts)}) + "\n")
     else:
         stdout.write("{}\n")
     return 0
@@ -92,4 +110,4 @@ def main(arguments: Sequence[str]) -> int:
         return 0
 
 
-__all__ = ["main", "run_session_check", "session_problems"]
+__all__ = ["main", "run_session_check", "session_problems", "session_report"]
