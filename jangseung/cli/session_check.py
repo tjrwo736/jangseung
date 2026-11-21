@@ -24,6 +24,7 @@ def session_problems(repo: Path, *, plugin: bool) -> list[str]:
 
     from jangseung.classify.hook_policy import load_hook_policy
     from jangseung.state.doctor import FAIL, WARN
+    from jangseung.state.paths import state_root
 
     problems: list[str] = []
     if not plugin:
@@ -43,9 +44,13 @@ def session_problems(repo: Path, *, plugin: bool) -> list[str]:
                 problems.append("the hook is not set to block a call when it cannot start (onFailure)")
     policy = load_hook_policy(repo)
     if policy.error is not None:
-        problems.append(f"the project policy is ignored ({policy.error})")
-    state = repo / ".aeg"
-    if state.exists() and (state.is_symlink() or not state.is_dir() or not os.access(state, os.W_OK | os.X_OK)):
+        problems.append(f"policy restrictions could not be verified; personal grants are not in effect ({policy.error})")
+    try:
+        state = state_root(repo)
+    except (OSError, ValueError):
+        problems.append(".aeg is not a safe local folder, so tool calls are blocked")
+        return problems
+    if state.exists() and not os.access(state, os.W_OK | os.X_OK):
         problems.append(".aeg is not a writable folder, so decisions are not recorded")
     elif not plugin and not state.exists():
         problems.append(".aeg is missing, so decisions are not recorded")

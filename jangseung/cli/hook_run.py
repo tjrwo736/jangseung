@@ -23,9 +23,9 @@ modified by this module):
   program names of a command and a hash of the input. Neither holds file content,
   command text or arguments. Only ``updatedInput``, read by the host alone,
   returns the tool's own input with secrets left out.
-* recording is append-only and tamper-evident.  A recording failure never
-  changes the permission decision or process exit code; it adds a safe reason
-  code to the response instead.
+* the audit ledger is append-only and tamper-evident. An audit failure adds a
+  reason without changing the decision. A required session mark is different:
+  the write is denied if that mark cannot be saved.
 
 This module does not install a hook, modify ``.claude/settings.json``, execute
 Claude Code itself, execute any tool, or call a provider/model/network.  Its
@@ -57,6 +57,7 @@ from jangseung.evidence.hook_judgment_engine_alignment import (
     judge_pretooluse_with_aeg_engine,
 )
 from jangseung.state.hook_ledger import append_hook_decision_record
+from jangseung.state.paths import state_root
 from jangseung.state.session_marks import mark_secret_naming_write, session_key
 
 
@@ -166,6 +167,14 @@ def _render_hook_response(
     working_dir: str | Path | None,
 ) -> HookRunResult:
     effective_substrate = _normalize_substrate(substrate)
+
+    try:
+        state_root(repo_root)
+    except (OSError, ValueError, RuntimeError):
+        return _deny_result(
+            "unsafe_state_directory_fail_closed_deny", hook_decision=DENY,
+            fail_closed=True, substrate=effective_substrate,
+        )
 
     try:
         payload = json.loads(raw_stdin_text)
@@ -312,7 +321,7 @@ def resolve_hook_project_root(
             return candidate.resolve()
     current = Path(working_dir).resolve()
     for candidate in (current, *current.parents):
-        if (candidate / STATE_DIR).is_dir() or (candidate / ".git").exists():
+        if os.path.lexists(candidate / STATE_DIR) or (candidate / ".git").exists():
             return candidate
     return current
 
@@ -397,12 +406,14 @@ def run_aeg_hook_run(
         except Exception:  # noqa: BLE001
             spent = False
         if not spent:
-            result = _deny_result(
-                ALLOW_ONCE_NOT_SPENT_REASON,
-                hook_decision=result.hook_decision,
-                fail_closed=True,
-                substrate=result.substrate,
-            )
+            result = _deny_for_state_failure(result, ALLOW_ONCE_NOT_SPENT_REASON)
+    # A required mark is an enforcement prerequisite, not best-effort audit
+    # metadata. Decide the final outcome before appending or emitting it.
+    if result.written_text_names_secret_file:
+        try:
+            mark_secret_naming_write(repo_root, result.session_id, result.audit_targets)
+        except Exception:  # noqa: BLE001 - no write may proceed without its hold.
+            result = _deny_for_state_failure(result, SESSION_MARK_RECORDING_FAILED_REASON)
     try:
         append_hook_decision_record(
             repo_root,
@@ -420,11 +431,6 @@ def run_aeg_hook_run(
         )
     except Exception:  # noqa: BLE001 - recording failure must not change the judgment.
         result = _with_recording_failure(result)
-    if result.written_text_names_secret_file:
-        try:
-            mark_secret_naming_write(repo_root, result.session_id, result.audit_targets)
-        except Exception:  # noqa: BLE001 - the write was already judged; say the mark is missing.
-            result = _with_recording_failure(result, SESSION_MARK_RECORDING_FAILED_REASON)
     try:
         stdout.write(result.stdout_json + "\n")
     except Exception:  # noqa: BLE001 - with no response to read, only exit 2 can block.
@@ -527,18 +533,18 @@ def run_aeg_hook_run_from_process(
 def ensure_recording_directory(repo_root: str | Path) -> bool:
     """Create ``.aeg/`` the way ``aeg install`` does; never touch one that exists.
 
-    A failure only means this call goes unrecorded, which the response then says.
+    A missing directory prevents recording and any write that requires a mark.
+    An unsafe existing directory blocks judgment entirely.
     """
 
     try:
-        base = Path(repo_root).resolve()
-        root = base / STATE_DIR
-        if root.is_symlink() or root.exists():
-            return root.is_dir() and not root.is_symlink()
+        root = state_root(repo_root)
+        if root.exists():
+            return True
         root.mkdir()
         (root / ".gitignore").write_text("*\n", encoding="utf-8")
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 
@@ -549,12 +555,13 @@ def _deny_result(
     fail_closed: bool,
     extra_reason_codes: tuple[str, ...] = (),
     substrate: str = SUBSTRATE_CLAUDE_CODE,
+    tool_name: str = "unknown",
 ) -> HookRunResult:
     reason_codes = (reason_code, *extra_reason_codes)
     reason = _reason_string(
         permission_decision=PERMISSION_DENY,
         hook_decision=hook_decision,
-        tool_name=None,
+        tool_name=tool_name,
         decision_reasons=reason_codes,
         substrate=substrate,
         fail_closed=fail_closed,
@@ -572,8 +579,19 @@ def _deny_result(
         fail_closed=fail_closed,
         reason=reason,
         reason_codes=reason_codes,
-        tool_name="unknown",
+        tool_name=tool_name,
         substrate=substrate,
+    )
+
+
+def _deny_for_state_failure(result: HookRunResult, reason_code: str) -> HookRunResult:
+    denied = _deny_result(
+        reason_code, hook_decision=DENY, fail_closed=True,
+        substrate=result.substrate, tool_name=result.tool_name,
+    )
+    return replace(
+        denied, session_id=result.session_id, audit_targets=result.audit_targets,
+        audit_commands=result.audit_commands, input_hash=result.input_hash,
     )
 
 

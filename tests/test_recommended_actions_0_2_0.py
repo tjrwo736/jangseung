@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+from tests.approval_helpers import approve, isolate_unittest_home as setUpModule
+from jangseung.state.approvals import approval_root
 import re
 import shutil
 import tempfile
@@ -53,7 +55,7 @@ class ProjectCase(unittest.TestCase):
         (self.root / ".aeg").mkdir()
 
     def write_policy(self, **policy):
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+        approve(self.root, **policy)
 
     def payload(self, tool, tool_input, *, mode="default", session="s1"):
         data = {"tool_name": tool, "tool_input": tool_input, "tool_use_id": "t1", "cwd": str(self.root)}
@@ -300,7 +302,7 @@ class SecretNamingWriteTests(ProjectCase):
     def test_a_missing_state_folder_is_reported_not_hidden(self):
         shutil.rmtree(self.root / ".aeg")
         code, output = self.run_hook("Write", self.LEAK)
-        self.assertEqual((code, output["permissionDecision"]), (0, "allow"))
+        self.assertEqual((code, output["permissionDecision"]), (2, "deny"))
         self.assertIn("session_mark_recording_failed", output["permissionDecisionReason"])
 
 
@@ -410,6 +412,7 @@ class PolicyCommandTests(ProjectCase):
                 self.assertFalse(policy_path(self.root).exists())
 
     def test_a_broken_file_is_not_overwritten(self):
+        approval_root(self.root, create=True)
         policy_path(self.root).write_text('{"unknown_key": []}', encoding="utf-8")
         code, text = self.add(commands=["pytest"], assume_yes=True)
         self.assertEqual(code, 1)
@@ -423,10 +426,11 @@ class PolicyCommandTests(ProjectCase):
         self.assertEqual(self.judge("Bash", {"command": "npm test"}, mode=None).permission_decision, "allow")
         self.assertEqual(self.add(preset="nope", assume_yes=True)[0], 2)
 
-    def test_state_folder_is_created_with_its_ignore_file(self):
+    def test_approving_never_creates_checkout_state(self):
         shutil.rmtree(self.root / ".aeg")
         self.add(commands=["pytest"], assume_yes=True)
-        self.assertEqual((self.root / ".aeg" / ".gitignore").read_text(encoding="utf-8"), "*\n")
+        self.assertFalse((self.root / ".aeg").exists())
+        self.assertFalse(policy_path(self.root).is_relative_to(self.root))
 
     def test_show_reports_content_and_errors(self):
         out = io.StringIO()

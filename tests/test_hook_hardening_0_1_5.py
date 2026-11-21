@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from tests.approval_helpers import approve, isolate_unittest_home as setUpModule
 import os
 import subprocess
 import sys
@@ -194,7 +195,7 @@ class GuardSelfProtectionTests(_Fixture):
         for path in (".claude/commands/x.md", ".claude/agents/y.md", ".claude/skills/z/SKILL.md"):
             with self.subTest(path=path):
                 self.assertIn(self.judge("Write", file_path=path, content="x").permission_decision, {"ask", "deny"})
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [".claude/commands"]}), encoding="utf-8")
+        approve(self.root, allow_paths=[".claude/commands"])
         self.assertEqual(self.judge("Write", file_path=".claude/commands/x.md", content="x").permission_decision, "allow")
 
     def test_guard_commands_cannot_disable_it(self):
@@ -816,11 +817,12 @@ class LedgerTests(unittest.TestCase):
 
 class PolicyFileTests(_Fixture):
     def setUp(self) -> None:
-        self.policy = self.root / ".aeg" / "policy.json"
+        from jangseung.state.approvals import approval_root
+        self.policy = approval_root(self.root, create=True) / "policy.json"
         self.addCleanup(lambda: self.policy.unlink(missing_ok=True))
 
     def _write(self, **data) -> None:
-        self.policy.write_text(json.dumps(data), encoding="utf-8")
+        approve(self.root, **data)
 
     def test_allow_commands_approves_exact_prefixes_only(self):
         self._write(allow_commands=["pytest", "npm test"])
@@ -890,7 +892,7 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(install.is_aegis_hook({"type": "command", "command": sys.executable, "args": ["-I", "-m", "jangseung.cli", "hook-run"]}))
         self.assertFalse(install.is_aegis_hook({"type": "command", "command": "python -m other.cli hook-run"}))
 
-    def test_reinstall_upgrades_a_stale_hook_in_place(self):
+    def test_reinstall_upgrades_a_stale_hook_without_retargeting_its_sibling(self):
         from jangseung.cli.install import AEGIS_HOOK_MATCHER, build_installed_settings
 
         stale = {"hooks": {"PreToolUse": [{"matcher": "Write|Edit|Bash|Read", "hooks": [
@@ -899,12 +901,12 @@ class InstallerTests(unittest.TestCase):
         ]}]}}
         settings, already = build_installed_settings(stale, "/venv/bin/aeg hook-run", matcher=AEGIS_HOOK_MATCHER)
         self.assertFalse(already)
-        entry = settings["hooks"]["PreToolUse"][0]
-        self.assertEqual(entry["matcher"], AEGIS_HOOK_MATCHER)
-        self.assertEqual(entry["hooks"][0]["command"], "/venv/bin/aeg hook-run")
-        self.assertEqual(entry["hooks"][0]["onFailure"], "block")
-        self.assertEqual(entry["hooks"][0]["timeout"], 5)
-        self.assertEqual(entry["hooks"][1], {"type": "command", "command": "other-hook"})
+        self.assertEqual(settings["hooks"]["PreToolUse"], [
+            {"matcher": "Write|Edit|Bash|Read", "hooks": [{"type": "command", "command": "other-hook"}]},
+            {"matcher": AEGIS_HOOK_MATCHER, "hooks": [
+                {"type": "command", "command": "/venv/bin/aeg hook-run", "onFailure": "block", "timeout": 5},
+            ]},
+        ])
         again, already = build_installed_settings(settings, "/venv/bin/aeg hook-run", matcher=AEGIS_HOOK_MATCHER)
         self.assertTrue(already)
         self.assertEqual(again, settings)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jangseung.contracts import SAFE_DEFAULT, STATE_DIR
 from jangseung.state import git
-from jangseung.state.hook_ledger import state_root
+from jangseung.state.paths import state_root
 
 
 PASS = "PASS"
@@ -235,7 +235,14 @@ def _state_unavailable_checks(reason: str) -> list[DoctorCheck]:
 
 def _state_checks(repo: Path) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
-    root = state_root(repo)
+    try:
+        root = state_root(repo)
+    except (OSError, ValueError):
+        return [
+            DoctorCheck("folder-local state path", FAIL, ".aeg must be an unlinked project-local directory.",
+                        fix_hint="Inspect the state directory from a trusted terminal; its contents were not inspected."),
+            _tracked_count_check(repo, ".env", ".env tracked file count"),
+        ]
     state_path = str(root)
 
     checks.append(

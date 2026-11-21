@@ -236,6 +236,9 @@ def test_windows_claude_code_install_prefers_the_direct_form(monkeypatch):
 
 
 def test_the_direct_program_is_the_base_interpreter_and_never_a_store_alias(monkeypatch, tmp_path):
+    # Model a non-venv install independently of the Python running pytest.
+    # The following test separately covers editable and installed venv layouts.
+    monkeypatch.setattr(install.sys, "prefix", install.sys.base_prefix)
     base = tmp_path / "Python314" / "python.exe"
     venv = tmp_path / "venv" / "Scripts" / "python.exe"
     for path in (base, venv):

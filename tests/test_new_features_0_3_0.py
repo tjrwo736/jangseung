@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import io
 import json
+from tests.approval_helpers import approve
+from jangseung.state.approvals import approval_root
 import os
 from pathlib import Path
 import shlex
@@ -104,7 +106,7 @@ def test_ordinary_files_stay_editable(project, path):
 
 
 def test_a_person_can_open_a_review_file_or_instructions(project):
-    (project / ".aeg/policy.json").write_text(json.dumps({"allow_paths": ["CLAUDE.md", "justfile"]}), encoding="utf-8")
+    approve(project, allow_paths=["CLAUDE.md", "justfile"])
     assert edit(project, "CLAUDE.md").permission_decision == "allow"
     assert edit(project, "justfile").permission_decision == "allow"
     assert edit(project, "AGENTS.md").permission_decision == "ask"
@@ -254,7 +256,7 @@ def test_allow_once_works_for_claude_code_too_and_is_recorded(project):
     assert answer["permissionDecision"] == "allow"
     ledger = (project / ".aeg/hook_ledger.jsonl").read_text(encoding="utf-8").splitlines()
     assert "hook_allow_once_approved_command" in json.loads(ledger[-1])["reason_codes"]
-    assert "docker ps" not in (project / ".aeg/allow_once.json").read_text(encoding="utf-8")
+    assert "docker ps" not in (approval_root(project) / "allow_once.json").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("command", ["cat .env", "cp .env x.txt", "aeg uninstall --yes", "rm -rf .git",
@@ -291,13 +293,13 @@ def test_an_approval_that_cannot_be_spent_is_not_used(project):
 def test_a_damaged_or_linked_approval_file_approves_nothing(project):
     from jangseung.state.allow_once import approved_once
 
-    path = project / ".aeg/allow_once.json"
+    path = approval_root(project, create=True) / "allow_once.json"
     path.write_text("{broken", encoding="utf-8")
     assert not approved_once("docker ps", project)
     future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
     from jangseung.state.allow_once import command_key
 
-    path.write_text(json.dumps({"entries": {command_key("docker ps", "Bash"): future}}), encoding="utf-8")
+    path.write_text(json.dumps({"version": 1, "entries": {command_key("docker ps", "Bash"): future}}), encoding="utf-8")
     assert not approved_once("docker ps", project)  # further away than any grant can be
 
 
@@ -366,7 +368,7 @@ def test_session_check_speaks_about_a_broken_policy_and_a_missing_program(projec
 
     cmd_install(project, assume_yes=True, output_stream=io.StringIO())
     (project / ".aeg/policy.json").write_text("{broken", encoding="utf-8")
-    assert "policy is ignored" in _session_check(project)["systemMessage"]
+    assert "policy restrictions could not be verified; personal grants are not in effect" in _session_check(project)["systemMessage"]
     (project / ".aeg/policy.json").unlink()
     settings = project / ".claude/settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))

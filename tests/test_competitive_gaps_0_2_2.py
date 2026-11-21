@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+from tests.approval_helpers import approve
 import os
 import subprocess
 import sys
@@ -110,7 +111,7 @@ def test_a_wildcard_after_cd_that_reaches_no_secret_is_not_denied(project, comma
 
 
 def test_a_path_opened_by_policy_is_not_caught_by_a_wildcard(project):
-    (project / ".aeg/policy.json").write_text(json.dumps({"allow_paths": ["certs/server.pem"]}), encoding="utf-8")
+    approve(project, allow_paths=["certs/server.pem"])
     assert decision(project, "cat certs/*") != "deny"
     assert decision(project, "cat .en*") == "deny"
 
@@ -217,7 +218,7 @@ def test_a_commit_message_about_destruction_is_not_a_destroy_command(project):
 
 def test_a_person_can_approve_a_destroy_prefix_for_the_project(project):
     assert decision(project, "aws s3 rm s3://scratch/tmp.txt") == "deny"
-    (project / ".aeg/policy.json").write_text(json.dumps({"allow_commands": ["aws s3 rm"]}), encoding="utf-8")
+    approve(project, allow_commands=["aws s3 rm"])
     assert decision(project, "aws s3 rm s3://scratch/tmp.txt") == "allow"
     assert decision(project, "aws s3 rb s3://scratch") == "deny"
 
@@ -244,7 +245,7 @@ def test_the_kind_code_is_a_fixed_family_name_and_never_command_text(project):
 
 
 def test_an_approved_command_carries_no_danger_kind(project):
-    (project / ".aeg/policy.json").write_text(json.dumps({"allow_commands": ["npm publish"]}), encoding="utf-8")
+    approve(project, allow_commands=["npm publish"])
     answer = result(project, "npm publish")
     assert answer.permission_decision == "allow"
     assert not any(code.startswith("dangerous_command_kind:") for code in answer.reason_codes)

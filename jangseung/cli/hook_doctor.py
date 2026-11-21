@@ -8,7 +8,7 @@ import shutil
 import stat
 from typing import Any
 
-from jangseung.classify.hook_policy import HOOK_POLICY_FILE, load_hook_policy
+from jangseung.classify.hook_policy import load_hook_policy
 from jangseung.cli.install import (
     CLAUDE_CODE_MCP_HOOK_MATCHER, CLAUDE_HOOK_ON_FAILURE, CODEX_AEGIS_HOOK_MATCHER, CODEX_MCP_HOOK_MATCHER,
     DIRECT_HOOK_FLAGS, HOOK_KIND_MAIN, HOOK_KIND_MCP, INSTALL_TARGETS, LEGACY_MODULE_ARGS,
@@ -18,6 +18,7 @@ from jangseung.state import git
 from jangseung.state.doctor import DoctorCheck, FAIL, PASS, WARN
 from jangseung.state.file_lock import _pid_is_dead
 from jangseung.state.hook_ledger import verify_hook_ledger
+from jangseung.state.paths import state_root
 
 MAX_CONFIG_BYTES = 1_048_576
 MAX_LEDGER_BYTES = 16 * 1_048_576
@@ -208,11 +209,12 @@ def _executable_check(prefix: str, hook: dict[str, Any]) -> DoctorCheck:
 
 
 def _recording_checks(repo: Path) -> list[DoctorCheck]:
-    root = repo / ".aeg"
     name = "hook recording directory"
     try:
-        if root.is_symlink() or root.resolve() != root or (root.exists() and not root.is_dir()):
-            return [DoctorCheck(name, FAIL, ".aeg must be an unlinked project-local directory.")]
+        root = state_root(repo)
+    except (OSError, ValueError):
+        return [DoctorCheck(name, FAIL, ".aeg must be an unlinked project-local directory.")]
+    try:
         if not root.exists():
             return [DoctorCheck(name, WARN, "Recording directory is absent; hook decisions cannot be recorded yet.",
                                 fix_hint="Rerun aeg install for the intended target and approve recording setup.")]
@@ -252,11 +254,11 @@ def _policy_check(repo: Path) -> DoctorCheck:
     name = "hook policy file"
     policy = load_hook_policy(repo)
     if policy.error is not None:
-        return DoctorCheck(name, FAIL, "The policy file is invalid, so it is ignored and only the built-in rules apply.",
-                           fix_hint=f"Review .aeg/{HOOK_POLICY_FILE} ({policy.error}).")
+        return DoctorCheck(name, FAIL, "Policy restrictions could not be verified. Personal grants are not in effect.",
+                           fix_hint=f"Run aeg policy show and inspect the personal and checkout policies ({policy.error}).")
     if not policy.present:
         return DoctorCheck(name, PASS, "No project policy; the built-in rules apply.")
-    return DoctorCheck(name, PASS, "Project policy is readable and in effect.",
+    return DoctorCheck(name, PASS, "Policies are readable. Only personally approved exceptions are effective.",
                        details=(("allow_paths", str(len(policy.paths.allow_paths))),
                                 ("protect_paths", str(len(policy.paths.protect_paths))),
                                 ("allow_commands", str(len(policy.allow_commands))),

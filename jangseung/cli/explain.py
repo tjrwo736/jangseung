@@ -58,6 +58,7 @@ _FIXED_CODES = frozenset({
     "invalid_or_unsupported_pretooluse_input_fail_closed_deny",
     "input_validation_error_fail_closed_deny",
     "internal_judgment_error_fail_closed_deny",
+    "unsafe_state_directory_fail_closed_deny",
     "hook_decision_recording_failed",
     "output_excludes_read_protected_files",
     "claude_default_host_permission_flow",

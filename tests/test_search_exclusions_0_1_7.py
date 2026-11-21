@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from tests.approval_helpers import approve, isolate_unittest_home as setUpModule
 import os
 import shlex
 import shutil
@@ -194,7 +195,7 @@ class GrepUpdatedInputTests(_Project):
                 self.assertNotIn("updatedInput", output)
 
     def test_policy_approvals_reach_the_search(self) -> None:
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [".env", ".env.example"]}), encoding="utf-8")
+        approve(self.root, allow_paths=[".env", ".env.example"])
         words = self.output(self.judge("Grep", pattern="x"))["updatedInput"]["glob"].split()
         self.assertFalse(_excluded(".env", tuple(words)))
         self.assertTrue(_excluded(".env.local", tuple(words)))
@@ -205,7 +206,7 @@ class GrepUpdatedInputTests(_Project):
     def test_a_partly_approved_rule_stays_excluded_but_the_file_can_be_named(self) -> None:
         (self.root / "tests" / "fixtures").mkdir(parents=True)
         (self.root / "tests" / "fixtures" / "a.pem").write_text("x\n", encoding="utf-8")
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": ["tests/fixtures/*.pem"]}), encoding="utf-8")
+        approve(self.root, allow_paths=["tests/fixtures/*.pem"])
         walked = self.output(self.judge("Grep", pattern="x", path="tests/fixtures"))
         self.assertEqual(tuple(walked["updatedInput"]["glob"].split()), EXCLUSIONS)
         self.assertEqual(self.judge("Grep", pattern="x", path="tests/fixtures/a.pem").permission_decision, "allow")
@@ -747,7 +748,7 @@ class GitProgramPathTests(_Project):
 
     def test_a_person_cannot_open_them_through_the_policy(self) -> None:
         self.config("[core]\n\thooksPath = .githooks\n")
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [".githooks"]}), encoding="utf-8")
+        approve(self.root, allow_paths=[".githooks"])
         self.assertProtected(".githooks/x")
 
     def test_a_broken_policy_file_keeps_the_protection(self) -> None:
@@ -967,7 +968,7 @@ class GitOutputTests(_Project):
             self.assertNotIn("'", word)
 
     def test_policy_reopens_a_whole_file_rule_only(self) -> None:
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [".env", ".env.local"]}), encoding="utf-8")
+        approve(self.root, allow_paths=[".env", ".env.local"])
         command = self.updated("git diff")
         self.assertNotIn("**/.env'", command)
         self.assertIn("**/.env.*'", command)
@@ -976,7 +977,7 @@ class GitOutputTests(_Project):
     def test_policy_does_not_reopen_a_folder_rule(self) -> None:
         for approved in ("secrets", ".aws", ".docker", ".docker/config.json"):
             with self.subTest(approved=approved):
-                (self.root / ".aeg" / "policy.json").write_text(json.dumps({"allow_paths": [approved]}), encoding="utf-8")
+                approve(self.root, allow_paths=[approved])
                 self.assertEqual(self.updated("git diff"), f"git diff -- ':/' {self.TAIL}")
                 self.assertEqual(self.output(self.judge("Grep", pattern="x"))["updatedInput"]["glob"], " ".join(EXCLUSIONS))
 

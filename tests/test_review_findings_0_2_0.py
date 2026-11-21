@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+from tests.approval_helpers import approve, isolate_unittest_home as setUpModule
 import os
 import shutil
 import tempfile
@@ -39,7 +40,7 @@ class Case(unittest.TestCase):
         (self.root / "README.md").write_text("x\n", encoding="utf-8")
 
     def policy(self, **policy):
-        (self.root / ".aeg" / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+        approve(self.root, **policy)
 
     def payload(self, tool, tool_input, mode=None):
         data = {"tool_name": tool, "tool_input": tool_input, "tool_use_id": "t", "cwd": str(self.root), "session_id": "s"}
@@ -178,6 +179,25 @@ class GuardCommandSpellingTests(Case):
 
 
 class RecordContentTests(Case):
+    def test_powershell_only_audits_unambiguous_path_operands(self):
+        sample = "exampleContentForAudit"
+        cases = (
+            ("Set-Content -Val " + sample + " report.txt", ["<unconfirmed-target>"]),
+            ("Add-Content -Encoding utf8 -Value " + sample + " report.txt", ["<unconfirmed-target>"]),
+            ("Set-Content -LiteralPath 'report file.txt' -Value " + sample, ["report file.txt"]),
+            ("Set-Content -LiteralPath '한글 문서.txt' -Value " + sample, ["한글 문서.txt"]),
+        )
+        for command, expected in cases:
+            with self.subTest(command=command):
+                record = self.record("PowerShell", {"command": command})
+                self.assertEqual(record["targets"], expected)
+                self.assertNotIn(sample, json.dumps(record))
+
+    def test_multiline_powershell_audit_does_not_infer_program_names(self):
+        record = self.record("PowerShell", {"command": "Write-Output @'\nordinary sample text\n'@"})
+        self.assertEqual(record["commands"], ["<unparsed>"])
+        self.assertNotIn("ordinary sample text", json.dumps(record))
+
     def test_8_strings_arguments_and_home_paths_stay_out_of_the_record(self):
         cases = (
             ("PowerShell", {"command": "'Tr0ub4dor' > notes.txt"}, "commands", ["<other>"]),

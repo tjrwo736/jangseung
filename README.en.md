@@ -137,12 +137,12 @@ This is the scope based on the current implementation and on actual measurement.
 | Supported | Normal file work allow: clearly safe reads/writes/edits inside the repo are not interrupted |
 | Supported | Target-aware decisions for Codex `apply_patch` tool calls: deny for protected paths, allow for normal paths (measured, including native Windows hook exit code handling). Since 0.1.8, files inside the project get the same decision even when written as absolute paths (Codex CLI 0.166.0, verified in a real Windows session) |
 | Supported | Project-local Codex install: `aeg install --target codex` |
-| Supported (since 0.1.9, opt-in) | MCP protection: `aeg install --mcp` adds a separate hook entry. MCP tool calls and MCP resource reads require approval in Claude Code and are deny in Codex. Only tools written in `allow_mcp_tools` in `.aeg/policy.json` pass. Arguments are not inspected (Claude Code 2.1.316, verified in a real Windows session. Codex verified only by automated tests and the hook CLI) |
+| Supported (since 0.1.9, opt-in) | MCP protection: `aeg install --mcp` adds a separate hook entry. MCP tool calls and MCP resource reads require approval in Claude Code and are deny in Codex. Only personally approved `allow_mcp_tools` entries pass. Arguments are not inspected (Claude Code 2.1.316, verified in a real Windows session. Codex verified only by automated tests and the hook CLI) |
 | Supported (since 0.1.2) | Codex removal: `aeg uninstall --target codex`; preserves other hooks and TOML settings/comments, with diff confirmation and backup |
 | Supported (since 0.1.2) | Limited shell reads of ordinary files inside the project: `cat`, `head`/`tail`, output-only `sed -n`, `rg --no-config`, `Get-Content`, and simple output pipelines |
 | Supported (since 0.1.7) | Secret-file exclusion in `git diff`, `git show`, `git log -p`: both tracked files and history. Object IDs are interpreted only as commits (Claude Code 2.1.316, verified in a real Windows session. For Codex CLI 0.166.0, `git diff` and `git log -p` were verified in a real Windows session) |
 | Supported (since 0.1.5) | Auto-allow of commands that do not change files: `ls`, `pwd`, `echo`, `grep`, `wc`, `test`, read-only `git` (`status`, `diff`, `log`, `show`, `blame`, `branch` listing, etc.). Since 0.1.7, `git` only when the working folder or a parent folder has `.git`. Since 0.1.8, all of these commands are deny when the working folder is outside the project |
-| Supported (since 0.1.5) | Project approval policy: approve paths and commands with `.aeg/policy.json`. The agent cannot modify this file. Since 0.1.8, approved commands are auto-allowed only inside the project |
+| Supported (since 0.1.5) | Project approval policy: a person approves paths and commands with `aeg policy`. Since 0.1.8, approved commands are auto-allowed only inside the project |
 | Not supported | Judging the behavior of code written by the agent when an approved command runs it. See [What we cannot block](#what-we-cannot-block) |
 | Supported | Escalating `ask`/`defer` to `deny` on the Codex substrate: reflects the measured result that `ask` does not work as an execution-blocking safety net in Codex |
 | Partial / under verification | Bash dynamic/obfuscated commands: variable substitution, command substitution, nested shells, `find -delete`/`xargs`, etc. are not auto-allowed when they cannot be determined precisely, and are sent to `ask`/`defer` (escalated to `deny` on the Codex substrate) |
@@ -222,7 +222,7 @@ You can also use it as a Claude Code plugin, without `pip` and `aeg install`.
 - The hook is attached to every project where the plugin is turned on. Per-project settings files are not changed.
 - Python 3.10 or later (`python3` or `python`) must be on PATH. The hook command uses `sh` syntax, so Git Bash is required on Windows. If either one is missing, the hook fails to start, and tool calls are blocked according to the `onFailure: block` setting. This setting works on Claude Code v2.1.295 or later. On a lower version, a hook that fails to start does not block tool calls.
 - If the record folder `.aeg/` does not exist, the hook creates it the first time it is called. An internal `.gitignore` is added with it.
-- `aeg policy`, `aeg explain`, `aeg doctor`, `aeg evidence`, Codex install, and MCP protection require the `pip` install. If you use only the plugin, edit `.aeg/policy.json` directly.
+- `aeg policy`, `aeg explain`, `aeg doctor`, `aeg evidence`, Codex install, and MCP protection require the `pip` install. The plugin alone provides default protection. Install the matching CLI to manage personal exceptions.
 - If you use the plugin and `aeg install` together, every call is judged twice. Use only one.
 
 The Codex target must be installed explicitly.
@@ -272,7 +272,7 @@ aeg install --target codex --mcp
 
 - It registers one more hook entry for MCP, separate from the existing hook. The existing entry is not changed.
 - When it is on, MCP tool calls and MCP resource reads (Claude Code `ReadMcpResourceTool`, Codex `read_mcp_resource`) ask for approval every time in Claude Code and are blocked in Codex. This is because Codex does not enforce `ask`.
-- Tools you trust pass without approval if you write their exact names (`mcp__server__tool`) in `allow_mcp_tools` in `.aeg/policy.json`. Patterns such as `*` cannot be used, and resource reads cannot be put in the list.
+- Tools you trust pass without approval if you approve their exact names (`mcp__server__tool`) with `aeg policy add --mcp-tool`. Patterns such as `*` cannot be used, and resource reads cannot be put in the list.
 - Jangseung does not inspect the arguments passed to MCP tools. If a tool in the list reads files or runs code, it can read `.env` too. Do not put such tools in the list.
 - **Codex treats the MCP hook as a new hook. It must be approved separately in `/hooks`, and MCP calls are not inspected before approval.** Approval of the existing Jangseung hook is kept as it is. If the existing entry also changes in the install preview (for example, when run from a different virtual environment), that entry must be approved again as well. On Codex CLI 0.166.0 (Windows), we verified that after the MCP entry was added the existing entry kept making decisions, and the new entry did not run until approved.
 - To turn it off, run `aeg uninstall --mcp` (`aeg uninstall --target codex --mcp` for Codex). The existing hook remains. `aeg uninstall` removes both entries.
@@ -351,7 +351,12 @@ Aliases of the trusted project root, such as macOS's `/var`, are normalized; lin
 
 ### Project approval policy (since 0.1.5)
 
-If the built-in rules block normal work, you can set per-project exceptions with `.aeg/policy.json`. The agent cannot write to `.aeg/` with any tool, so only a person can change this file. `.aeg/` is usually excluded from Git, so this setting applies only to that PC.
+Upgrade steps: [0.3.2 release notes](docs/release_0.3.2.en.md). Unlike an audit
+append, a required security session mark must be saved before a write can
+proceed. Uncertain PowerShell audit targets are reported as
+`<unconfirmed-target>` instead of recording guessed operands.
+
+From 0.3.2, personal exceptions live in a per-user store outside the checkout, scoped to the project. A checkout's `.aeg/policy.json` alone cannot grant permissions. To retain exceptions from an older version, **review them as your own approvals** before running `aeg policy adopt` in the project. Old one-time grants are not imported.
 
 Since 0.2.0 you can add entries with a command instead of writing JSON by hand. It shows the change as a diff and asks for confirmation (`y/N`), and it does not write values the hook would ignore. The user should run it in a regular terminal. It is blocked as an agent tool call.
 
@@ -363,7 +368,7 @@ aeg policy add --protect infra/ --mcp-tool mcp__github__get_issue
 aeg policy preset python   # one of python, node, git
 ```
 
-`preset` puts a bundle of commonly used commands into `allow_commands`. `python` is `pytest`, `ruff check`, `mypy`, etc.; `node` is `npm test`, `npm run build`, `npx tsc --noEmit`, etc.; `git` is `git add`, `git commit`, `git fetch`, `git switch -c`. **Approved commands run without asking, and most of them run the project's code (tests, scripts, git hooks).** Put in only commands for which it is acceptable to run code written by the agent without confirmation. Do not add a bare interpreter name such as `python`, `node` or `bash`. Any code the agent wrote would then run without a question, and that code can also change `.aeg/policy.json` or turn Jangseung off. What Jangseung blocks is a call visible on the command line, such as `aeg policy` or `python -m jangseung.cli ...`.
+`preset` puts a bundle of commonly used commands into `allow_commands`. `python` is `pytest`, `ruff check`, `mypy`, etc.; `node` is `npm test`, `npm run build`, `npx tsc --noEmit`, etc.; `git` is `git add`, `git commit`, `git fetch`, `git switch -c`. **Approved commands run without asking, and most of them run the project's code (tests, scripts, git hooks).** Put in only commands for which it is acceptable to run code written by the agent without confirmation. Do not add a bare interpreter name such as `python`, `node` or `bash`. Any code the agent wrote would then run without a question, and that code can also change user-owned settings or turn Jangseung off. What Jangseung blocks is a call visible on the command line, such as `aeg policy` or `python -m jangseung.cli ...`.
 
 ```json
 {
@@ -380,7 +385,7 @@ aeg policy preset python   # one of python, node, git
 - `allow_commands`: allows a single command whose leading part matches. It can release commands the built-in rules block, such as `git push`, but commands that disable Jangseung, such as `aeg uninstall`, are not released. It does not apply to commands containing `;`, `&&`, `|`, `>`, `$()`, and if the target is a secret file or a protected path, the result stays deny. Since 0.2.0, three notations that do not change the program being run are read past: characters inside quoted text (`git commit -m 'fix(parser): #12'`), a trailing `2>&1`, and a leading `cd <folder that is inside the project> &&`. The `cd` form has conditions. The folder must be written without quotes as a name made of letters, digits, `_` and `-` (`src`, `./packages/api`), and the approved command must contain no file name. `pytest`, `python -m pytest` and `npm test` qualify; `bash scripts/run.sh` and `python tool.py` do not, because after changing folders the same relative path points at a different file. If `CDPATH` is in the environment the hook receives, only a folder that starts with `./` is approved. A `CDPATH` set only in a shell profile is not visible to the hook. If there is `$`, a backtick or a double quote inside the quotes, or a backslash, a curly quote, or `--%` is present with them, or a quote starts in the middle of a word, it is judged strictly as before. This is because the position where a quote ends can differ from shell to shell. Forms such as `pytest | tail` and `git commit -m "$(cat <<'EOF' ...)"` are still not approved. After content containing a secret file name has been written in the same session, even approved commands are put to a person.
 - `allow_mcp_tools` (since 0.1.9): the exact names of MCP tools to pass without approval in projects where [MCP protection](#mcp-protection-since-019-opt-in) is turned on. If even one name does not match the format, the whole file is ignored.
 
-If the file is corrupted or has an unknown entry, the whole file is ignored and only the built-in rules apply. `aeg doctor --hooks` reports this state. 0.1.8 and earlier treat `allow_mcp_tools` as an unknown entry, so a file containing this entry is ignored in full.
+Since 0.3.2, an unverifiable policy disables personal grants and conservatively protects paths whose restrictions cannot be established. Use `aeg doctor --hooks` to diagnose it.
 
 Protection a team shares can go in `.jangseung/policy.json` (since 0.3.0). This file is meant to be committed and may hold `protect_paths` only. With any other key, or a damaged file, which paths were meant cannot be known, so every path is protected until a person fixes it. Agents cannot write `.jangseung/`.
 
@@ -506,7 +511,7 @@ Since 0.2.0, the reason returned to the host when blocking or asking starts with
 ## Requirements / current status
 
 - **Verified on Claude Code and Codex**: On both Linux/WSL and native Windows, we confirmed with real Claude Code sessions and Codex CLI sessions that the main PreToolUse hook paths work correctly. On Windows, we handled separately the differences in how each substrate executes (the form in which Claude Code runs the hook command, exit code handling for Codex deny responses, the PowerShell tool, etc.). Install each with `aeg install --target claude-code` (default) or `aeg install --target codex`. The two substrates differ in part in how decisions are made — in Claude Code it requests confirmation (ask) for unclear operations, but measurement confirmed that in Codex that confirmation request does not work as a safety net that blocks execution, so in Codex unclear cases are blocked more strictly (deny). However, PowerShell write/delete commands passed in Codex under the `Bash` tool name are not yet parsed structurally. Limited `Get-Content` reads are supported since 0.1.2. The 0.1.5 changes were verified by automated regression tests and hook CLI measurement, and the main paths were confirmed in a non-interactive Claude Code 2.1.316 session on Windows. Permission bypass modes, decisions in real Codex sessions, and real Linux/macOS sessions need re-verification.
-- **The default policy is hardcoded in the code.** Per-project exceptions can be set with `.aeg/policy.json`.
+- **The default policy is hardcoded in the code.** A person can set per-project exceptions using `aeg policy`.
 - **Secret decisions are based on path and intent.** The attempt to write to a file such as `.env` is itself blocked, but there is not yet a feature that scans file contents for actual API key/password values (planned on the roadmap).
 - Python 3.10 or later is required.
 

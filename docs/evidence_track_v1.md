@@ -62,6 +62,11 @@ record or the complete file was not deleted.
 
 ## Recording failure policy
 
+Since 0.3.2 this policy applies to audit appends, not to authorization
+state: a write requiring a session mark is denied if that mark cannot be
+stored. An ambiguous PowerShell operand is not an audit filename;
+the recorder receives a fixed placeholder instead of the operand.
+
 The default is **preserve the judgment**. A recorder failure does not change
 `permissionDecision` or the substrate-specific exit code. The response reason
 codes gain `hook_decision_recording_failed`.

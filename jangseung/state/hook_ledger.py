@@ -13,6 +13,7 @@ import json
 import os
 from jangseung.records import dataclass
 import re
+import stat
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 
@@ -21,9 +22,9 @@ if TYPE_CHECKING:  # typing costs about 2 ms to import on every hook call
     from typing import Any
 
 from jangseung._clock import utc_timestamp
-from jangseung.contracts import STATE_DIR
 from jangseung.evidence.ledger_integrity import is_sha256_hex
 from jangseung.state.file_lock import exclusive_hook_lock as _exclusive_lock
+from jangseung.state.paths import state_root
 
 HOOK_LEDGER_FILE = "hook_ledger.jsonl"
 HOOK_LEDGER_LOCK_FILE = "hook_ledger.lock"
@@ -124,8 +125,21 @@ class HookLedgerRepair:
     quarantine_path: str | None
 
 
-def state_root(repo_root: str | Path) -> Path:
-    return Path(repo_root).resolve() / STATE_DIR
+def _ledger_info(path: Path) -> os.stat_result | None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or (
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise ValueError("hook ledger must be an unlinked regular file")
+    return info
+
+
+def hook_ledger_size(repo_root: str | Path) -> int:
+    info = _ledger_info(state_root(repo_root) / HOOK_LEDGER_FILE)
+    return 0 if info is None else info.st_size
 
 
 def append_hook_decision_record(
@@ -162,8 +176,7 @@ def append_hook_decision_record(
         raise FileNotFoundError("Aegis state is not initialized; .aeg directory is missing")
     ledger_path = root / HOOK_LEDGER_FILE
     lock_path = root / HOOK_LEDGER_LOCK_FILE
-    if ledger_path.is_symlink():
-        raise ValueError("hook ledger must not be a symbolic link")
+    _ledger_info(ledger_path)
     if lock_path.is_symlink():
         raise ValueError("hook ledger lock must not be a symbolic link")
     with _exclusive_lock(lock_path):
@@ -242,9 +255,12 @@ def _clear_head_markers(root: Path) -> None:
 
 
 def hook_ledger_needs_repair(repo_root: str | Path) -> bool:
-    if any(not item.readable for item in read_hook_ledger(repo_root)):
-        return True
-    return _has_torn_tail(state_root(repo_root) / HOOK_LEDGER_FILE)
+    # A missing/empty file needs no repair. Inaccessible paths are not a
+    # damaged line to quarantine; do not offer to modify them.
+    items = read_hook_ledger(repo_root)
+    if items and items[0].line_number == 0:
+        raise ValueError(items[0].error)
+    return any(not item.readable for item in items)
 
 
 @dataclass(frozen=True)
@@ -267,15 +283,16 @@ def archive_hook_ledger(repo_root: str | Path) -> HookLedgerArchive:
         raise FileNotFoundError("Aegis state is not initialized; .aeg directory is missing")
     ledger_path = root / HOOK_LEDGER_FILE
     lock_path = root / HOOK_LEDGER_LOCK_FILE
-    if ledger_path.is_symlink() or lock_path.is_symlink():
-        raise ValueError("hook ledger and its lock must not be symbolic links")
+    _ledger_info(ledger_path)
+    if lock_path.is_symlink():
+        raise ValueError("hook ledger lock must not be a symbolic link")
     with _exclusive_lock(lock_path):
         if not ledger_path.is_file():
             return HookLedgerArchive(0, None)
         items = read_hook_ledger(repo_root)
         if not items:
             return HookLedgerArchive(0, None)
-        if hook_ledger_needs_repair(repo_root):
+        if any(not item.readable for item in items):
             raise ValueError("hook ledger is damaged; run aeg evidence repair-hooks first")
         tail = items[-1].record
         raw = ledger_path.read_bytes()
@@ -330,24 +347,22 @@ def repair_hook_ledger(repo_root: str | Path) -> HookLedgerRepair:
         raise FileNotFoundError("Aegis state is not initialized; .aeg directory is missing")
     ledger_path = root / HOOK_LEDGER_FILE
     lock_path = root / HOOK_LEDGER_LOCK_FILE
-    if ledger_path.is_symlink():
-        raise ValueError("hook ledger must not be a symbolic link")
+    _ledger_info(ledger_path)
     if lock_path.is_symlink():
         raise ValueError("hook ledger lock must not be a symbolic link")
     with _exclusive_lock(lock_path):
         items = read_hook_ledger(repo_root)
         first_damaged = next((item for item in items if not item.readable), None)
-        if not hook_ledger_needs_repair(repo_root):
+        if first_damaged is None:
             return HookLedgerRepair(len(items), 0, None)
+        if first_damaged.line_number == 0:
+            raise ValueError("hook ledger cannot be inspected; no repair performed")
 
         raw = ledger_path.read_bytes()
         kept_items = [
             item for item in items
-            if item.readable and (first_damaged is None or item.line_number < first_damaged.line_number)
+            if item.readable and item.line_number < first_damaged.line_number
         ]
-        if first_damaged is None:
-            # read_hook_ledger accepted the final line, but it was never terminated.
-            kept_items = kept_items[:-1]
         lines = raw.split(b"\n")
         kept_line_count = kept_items[-1].line_number if kept_items else 0
         kept = b"".join(line + b"\n" for line in lines[:kept_line_count])
@@ -504,13 +519,14 @@ def _verified_tail_record(ledger_path: Path) -> dict[str, Any] | None:
 def read_hook_ledger(repo_root: str | Path) -> list[HookLedgerItem]:
     """Read all hook lines oldest-first and annotate chain damage."""
 
-    ledger_path = state_root(repo_root) / HOOK_LEDGER_FILE
-    if ledger_path.is_symlink():
-        return [HookLedgerItem(0, False, None, "hook ledger symbolic link is refused")]
-    if not ledger_path.is_file():
-        return []
     try:
+        ledger_path = state_root(repo_root) / HOOK_LEDGER_FILE
+        if _ledger_info(ledger_path) is None:
+            return []
         lines = ledger_path.read_bytes().split(b"\n")
+    except ValueError as exc:
+        # The two validators above use fixed messages with no file contents.
+        return [HookLedgerItem(0, False, None, str(exc))]
     except OSError as exc:
         return [HookLedgerItem(0, False, None, f"hook ledger unreadable: {exc.__class__.__name__}")]
 
@@ -518,6 +534,9 @@ def read_hook_ledger(repo_root: str | Path) -> list[HookLedgerItem]:
     expected_previous_hash = HOOK_RECORD_HASH_GENESIS
     expected_sequence = 1
     for line_number, raw_line in enumerate(lines, start=1):
+        if line_number == len(lines) and raw_line:
+            items.append(HookLedgerItem(line_number, False, None, "incomplete final entry (missing LF)"))
+            break
         if not raw_line.strip():
             continue
         try:
@@ -703,6 +722,7 @@ __all__ = [
     "compute_hook_record_hash",
     "find_hook_record",
     "hook_ledger_needs_repair",
+    "hook_ledger_size",
     "read_hook_ledger",
     "repair_hook_ledger",
     "verify_hook_ledger",
